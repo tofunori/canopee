@@ -794,6 +794,8 @@ struct PDFKitView: NSViewRepresentable {
                   !text.isEmpty else {
                 hasActiveSelection = false
                 parent.selectedText = ""
+                // Clear selection file
+                try? "(no text currently selected)".write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
                 if isDragging { overlay?.clearSelection() }
                 return
             }

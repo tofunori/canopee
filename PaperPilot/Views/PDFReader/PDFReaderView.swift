@@ -5,19 +5,20 @@ import PDFKit
 struct PDFReaderView: View {
     let paperID: PersistentIdentifier
     var isSplitMode: Bool = false
+    var isActive: Bool = true
+    @Binding var showTerminal: Bool
+    @Binding var selectedText: String
     @Environment(\.modelContext) private var modelContext
     @State private var document: PDFDocument?
     @State private var currentTool: AnnotationTool = .pointer
     @State private var currentColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
-    @State private var showAnnotationSidebar = true
+    @State private var showAnnotationSidebar = false
     @State private var hasUnsavedChanges = false
     @State private var annotationRefreshToken = UUID()
     @State private var selectedAnnotation: PDFAnnotation?
     @State private var isEditingNote = false
     @State private var editingNoteText = ""
     @State private var undoAction: (() -> Void)?
-    @State private var showAIPanel = false
-    @State private var selectedText = ""
 
     private var paper: Paper? {
         try? modelContext.fetch(
@@ -31,8 +32,9 @@ struct PDFReaderView: View {
                 currentTool: $currentTool,
                 currentColor: $currentColor,
                 selectedAnnotation: selectedAnnotation,
-                showTerminal: $showAIPanel,
+                showTerminal: $showTerminal,
                 showAnnotations: $showAnnotationSidebar,
+
                 onSave: savePDF,
                 onDeleteSelected: deleteSelectedAnnotation,
                 onDeleteAll: deleteAllAnnotations,
@@ -78,10 +80,6 @@ struct PDFReaderView: View {
                         .frame(width: 250)
                     }
 
-                    if showAIPanel {
-                        Divider()
-                        TerminalPanel(document: document, selectedText: selectedText)
-                    }
                 }
             } else {
                 ContentUnavailableView(
@@ -96,6 +94,9 @@ struct PDFReaderView: View {
             if isSplitMode { showAnnotationSidebar = false }
         }
         .onChange(of: paperID) { loadDocument() }
+        .onChange(of: isActive) {
+            if isActive { writePaperContext() }
+        }
         .onDisappear { autoSave() }
         .onChange(of: selectedAnnotation) {
             if let annotation = selectedAnnotation, annotation.type == "Text" {
@@ -152,17 +153,35 @@ struct PDFReaderView: View {
         selectedAnnotation = nil
         if !paper.isRead { paper.isRead = true }
 
-        // Write full PDF text + CLAUDE.md for Claude Code integration
-        if let doc = document {
-            DispatchQueue.global(qos: .utility).async {
-                var fullText = "Title: \(paper.title)\nAuthors: \(paper.authors)\n\n"
-                for i in 0..<doc.pageCount {
-                    if let page = doc.page(at: i), let text = page.string {
-                        fullText += "--- Page \(i + 1) ---\n\(text)\n\n"
-                    }
+        writePaperContext()
+    }
+
+    private func writePaperContext() {
+        guard let doc = document, let paper else { return }
+        // Clear selection when switching papers
+        try? "(no text currently selected)".write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
+        selectedText = ""
+
+        DispatchQueue.global(qos: .utility).async {
+            var fullText = """
+            ========================================
+            CURRENTLY OPEN PAPER IN CANOPÉE
+            ========================================
+            Title: \(paper.title)
+            Authors: \(paper.authors)
+            Year: \(paper.year.map(String.init) ?? "unknown")
+            Journal: \(paper.journal ?? "unknown")
+            DOI: \(paper.doi ?? "unknown")
+            Pages: \(doc.pageCount)
+            ========================================
+
+            """
+            for i in 0..<doc.pageCount {
+                if let page = doc.page(at: i), let text = page.string {
+                    fullText += "--- Page \(i + 1) ---\n\(text)\n\n"
                 }
-                try? fullText.write(toFile: "/tmp/canopee_paper.txt", atomically: true, encoding: .utf8)
             }
+            try? fullText.write(toFile: "/tmp/canopee_paper.txt", atomically: true, encoding: .utf8)
         }
     }
 

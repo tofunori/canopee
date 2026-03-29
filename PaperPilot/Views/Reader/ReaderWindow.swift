@@ -4,6 +4,8 @@ import SwiftData
 struct ReaderWindow: View {
     let initialPaperID: PersistentIdentifier
     @Environment(\.modelContext) private var modelContext
+    @State private var showTerminal = false
+    @State private var selectedText = ""
 
     private var paper: Paper? {
         try? modelContext.fetch(
@@ -12,7 +14,7 @@ struct ReaderWindow: View {
     }
 
     var body: some View {
-        PDFReaderView(paperID: initialPaperID)
+        PDFReaderView(paperID: initialPaperID, showTerminal: $showTerminal, selectedText: $selectedText)
             .navigationTitle(paper?.title ?? "Article")
             .frame(minWidth: 700, minHeight: 500)
     }

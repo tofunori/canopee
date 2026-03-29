@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftTerm
 import PDFKit
+import MetalKit
 
 // MARK: - Terminal Tab
 
@@ -9,7 +10,7 @@ struct TerminalTab: Identifiable {
     var title: String = "Terminal"
 }
 
-// MARK: - Terminal Panel with Tabs
+// MARK: - Terminal Panel with Tabs (SwiftTerm + Metal GPU)
 
 struct TerminalPanel: View {
     let document: PDFDocument?
@@ -17,6 +18,14 @@ struct TerminalPanel: View {
     @State private var tabs: [TerminalTab] = [TerminalTab()]
     @State private var selectedTabID: UUID? = nil
     @State private var terminalViews: [UUID: LocalProcessTerminalView] = [:]
+    @State private var currentTheme = 0
+    @State private var currentFontSize: CGFloat = 16
+    @State private var isSplit = false
+    @State private var splitTerminalViews: [UUID: LocalProcessTerminalView] = [:]
+    @State private var splitTabs: [TerminalTab] = [TerminalTab()]
+    @State private var focusedPane: PaneID = .top
+
+    enum PaneID { case top, bottom }
 
     private var currentTabID: UUID {
         selectedTabID ?? tabs.first!.id
@@ -36,7 +45,7 @@ struct TerminalPanel: View {
 
                 Spacer()
 
-                // New tab button
+                // New tab
                 Button(action: addTab) {
                     Image(systemName: "plus")
                         .font(.caption)
@@ -45,6 +54,16 @@ struct TerminalPanel: View {
                 .buttonStyle(.plain)
                 .help("Nouveau terminal")
 
+                // Split horizontal
+                Button(action: { isSplit.toggle() }) {
+                    Image(systemName: isSplit ? "rectangle.split.1x2.fill" : "rectangle.split.1x2")
+                        .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .foregroundStyle(isSplit ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Split horizontal")
+
                 // Theme picker
                 Menu {
                     ForEach(0..<Self.themes.count, id: \.self) { i in
@@ -52,9 +71,7 @@ struct TerminalPanel: View {
                             applyTheme(i)
                         } label: {
                             HStack {
-                                if i == currentTheme {
-                                    Image(systemName: "checkmark")
-                                }
+                                if i == currentTheme { Image(systemName: "checkmark") }
                                 Text(Self.themes[i].name)
                             }
                         }
@@ -66,6 +83,26 @@ struct TerminalPanel: View {
                 }
                 .buttonStyle(.plain)
                 .help("Thème du terminal")
+
+                // Font size
+                Menu {
+                    ForEach([12, 13, 14, 15, 16, 17, 18, 20, 24], id: \.self) { size in
+                        Button {
+                            applyFontSize(CGFloat(size))
+                        } label: {
+                            HStack {
+                                if Int(currentFontSize) == size { Image(systemName: "checkmark") }
+                                Text("\(size) pt")
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "textformat.size")
+                        .font(.caption)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help("Taille de la police")
                 .padding(.trailing, 6)
             }
             .frame(height: 26)
@@ -94,19 +131,54 @@ struct TerminalPanel: View {
                 Divider()
             }
 
-            // Terminal views (ZStack to keep all alive)
-            ZStack {
-                ForEach(tabs) { tab in
-                    TerminalViewWrapper(
-                        tabID: tab.id,
-                        terminalViews: $terminalViews
-                    )
-                    .opacity(tab.id == currentTabID ? 1 : 0)
-                    .allowsHitTesting(tab.id == currentTabID)
+            // Terminal views with optional split
+            VSplitView {
+                // Top pane
+                VStack(spacing: 0) {
+                    if isSplit {
+                        paneHeader(.top)
+                    }
+                    ZStack {
+                        ForEach(tabs) { tab in
+                            TerminalViewWrapper(
+                                tabID: tab.id,
+                                terminalViews: $terminalViews,
+                                isActive: tab.id == currentTabID,
+                                fontSize: currentFontSize,
+                                theme: Self.themes[currentTheme]
+                            )
+                            .opacity(tab.id == currentTabID ? 1 : 0)
+                            .allowsHitTesting(tab.id == currentTabID)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { focusedPane = .top }
                 }
+
+                // Bottom pane
+                VStack(spacing: 0) {
+                    if isSplit {
+                        paneHeader(.bottom)
+                    }
+                    ZStack {
+                        ForEach(splitTabs) { tab in
+                            TerminalViewWrapper(
+                                tabID: tab.id,
+                                terminalViews: $splitTerminalViews,
+                                isActive: isSplit,
+                                fontSize: currentFontSize,
+                                theme: Self.themes[currentTheme]
+                            )
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { focusedPane = .bottom }
+                }
+                .frame(minHeight: isSplit ? 100 : 0, maxHeight: isSplit ? .infinity : 0)
+                .opacity(isSplit ? 1 : 0)
             }
         }
-        .frame(minWidth: 300, idealWidth: 400, maxWidth: 600)
+        .frame(minWidth: 200, maxWidth: .infinity)
         .onAppear {
             selectedTabID = tabs.first?.id
         }
@@ -123,7 +195,6 @@ struct TerminalPanel: View {
             Text(tab.title)
                 .font(.caption2)
                 .lineLimit(1)
-
             if tabs.count > 1 {
                 Button(action: { closeTab(tab) }) {
                     Image(systemName: "xmark")
@@ -145,28 +216,20 @@ struct TerminalPanel: View {
         .onTapGesture { selectedTabID = tab.id }
     }
 
-    // MARK: - Themes
+    // MARK: - Themes (Kaku-inspired)
 
-    private static let themes: [(name: String, bg: NSColor, fg: NSColor, cursor: NSColor)] = [
+    static let themes: [(name: String, bg: NSColor, fg: NSColor, cursor: NSColor)] = [
+        ("Kaku Dark", NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1), NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1), NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1)),
         ("Sombre", NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1), .white, .green),
         ("Dracula", NSColor(red: 0.16, green: 0.16, blue: 0.21, alpha: 1), NSColor(red: 0.97, green: 0.97, blue: 0.95, alpha: 1), NSColor(red: 0.94, green: 0.47, blue: 0.60, alpha: 1)),
         ("Monokai", NSColor(red: 0.15, green: 0.16, blue: 0.13, alpha: 1), NSColor(red: 0.97, green: 0.97, blue: 0.94, alpha: 1), NSColor(red: 0.65, green: 0.89, blue: 0.18, alpha: 1)),
-        ("Solarized Dark", NSColor(red: 0.0, green: 0.17, blue: 0.21, alpha: 1), NSColor(red: 0.51, green: 0.58, blue: 0.59, alpha: 1), NSColor(red: 0.71, green: 0.54, blue: 0.0, alpha: 1)),
         ("Nord", NSColor(red: 0.18, green: 0.20, blue: 0.25, alpha: 1), NSColor(red: 0.85, green: 0.87, blue: 0.91, alpha: 1), NSColor(red: 0.53, green: 0.75, blue: 0.82, alpha: 1)),
-        ("Clair", NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1), NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1), .blue),
-        ("Gruvbox", NSColor(red: 0.16, green: 0.15, blue: 0.13, alpha: 1), NSColor(red: 0.92, green: 0.86, blue: 0.70, alpha: 1), NSColor(red: 0.98, green: 0.74, blue: 0.18, alpha: 1)),
         ("Tokyo Night", NSColor(red: 0.10, green: 0.11, blue: 0.18, alpha: 1), NSColor(red: 0.66, green: 0.70, blue: 0.84, alpha: 1), NSColor(red: 0.48, green: 0.51, blue: 0.93, alpha: 1)),
+        ("Gruvbox", NSColor(red: 0.16, green: 0.15, blue: 0.13, alpha: 1), NSColor(red: 0.92, green: 0.86, blue: 0.70, alpha: 1), NSColor(red: 0.98, green: 0.74, blue: 0.18, alpha: 1)),
+        ("Clair", NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1), NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1), .blue),
     ]
 
-    @State private var currentTheme = 0
-
-    // MARK: - Tab Management
-
-    private func addTab() {
-        let tab = TerminalTab()
-        tabs.append(tab)
-        selectedTabID = tab.id
-    }
+    // MARK: - Actions
 
     private func applyTheme(_ index: Int) {
         currentTheme = index
@@ -176,6 +239,58 @@ struct TerminalPanel: View {
             tv.nativeForegroundColor = theme.fg
             tv.caretColor = theme.cursor
         }
+    }
+
+    private func applyFontSize(_ size: CGFloat) {
+        currentFontSize = size
+        for (_, tv) in terminalViews {
+            tv.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        }
+    }
+
+    @ViewBuilder
+    private func paneHeader(_ pane: PaneID) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(focusedPane == pane ? Color.green : Color.gray.opacity(0.3))
+                .frame(width: 6, height: 6)
+            Text(pane == .top ? "Haut" : "Bas")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button(action: { closePane(pane) }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Fermer ce split")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .background(focusedPane == pane ? Color.accentColor.opacity(0.08) : Color.clear)
+        .onTapGesture { focusedPane = pane }
+    }
+
+    private func closePane(_ pane: PaneID) {
+        if pane == .bottom {
+            isSplit = false
+        } else if pane == .top && isSplit {
+            // Close top: move bottom to top
+            tabs = splitTabs
+            terminalViews = splitTerminalViews
+            splitTabs = [TerminalTab()]
+            splitTerminalViews = [:]
+            selectedTabID = tabs.first?.id
+            isSplit = false
+        }
+        focusedPane = .top
+    }
+
+    private func addTab() {
+        let tab = TerminalTab()
+        tabs.append(tab)
+        selectedTabID = tab.id
     }
 
     private func closeTab(_ tab: TerminalTab) {
@@ -190,22 +305,31 @@ struct TerminalPanel: View {
     }
 }
 
-// MARK: - SwiftTerm NSViewRepresentable
+// MARK: - SwiftTerm + Metal NSViewRepresentable
 
 struct TerminalViewWrapper: NSViewRepresentable {
     let tabID: UUID
     @Binding var terminalViews: [UUID: LocalProcessTerminalView]
+    let isActive: Bool
+    let fontSize: CGFloat
+    let theme: (name: String, bg: NSColor, fg: NSColor, cursor: NSColor)
 
-    func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let tv = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
-        tv.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    func makeNSView(context: Context) -> FocusAwareLocalProcessTerminalView {
+        let tv = FocusAwareLocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         tv.optionAsMetaKey = false
+        tv.nativeBackgroundColor = theme.bg
+        tv.nativeForegroundColor = theme.fg
+        tv.caretColor = theme.cursor
+        tv.shouldCaptureFocusFromClicks = isActive
 
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
         env.append("CANOPEE_SELECTION=/tmp/canopee_selection.txt")
         env.append("CANOPEE_PAPER=/tmp/canopee_paper.txt")
         tv.startProcess(executable: shell, args: ["-l"], environment: env, execName: shell)
+
+        enableMetalWhenReady(for: tv)
 
         DispatchQueue.main.async {
             self.terminalViews[tabID] = tv
@@ -214,7 +338,148 @@ struct TerminalViewWrapper: NSViewRepresentable {
         return tv
     }
 
-    func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {}
+    func updateNSView(_ nsView: FocusAwareLocalProcessTerminalView, context: Context) {
+        nsView.shouldCaptureFocusFromClicks = isActive
+    }
 
-    static func dismantleNSView(_ nsView: LocalProcessTerminalView, coordinator: ()) {}
+    static func dismantleNSView(_ nsView: FocusAwareLocalProcessTerminalView, coordinator: ()) {}
+
+    private func enableMetalWhenReady(for tv: FocusAwareLocalProcessTerminalView, remainingAttempts: Int = 40) {
+        guard remainingAttempts > 0 else { return }
+        guard tv.window != nil else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                enableMetalWhenReady(for: tv, remainingAttempts: remainingAttempts - 1)
+            }
+            return
+        }
+
+        do {
+            try tv.setUseMetal(true)
+            if tv.isUsingMetalRenderer {
+                tv.metalBufferingMode = .perRowPersistent
+                // Ensure MTKView forwards events to terminal
+                for subview in tv.subviews {
+                    if let mtkView = subview as? MTKView {
+                        mtkView.nextResponder = tv
+                    }
+                }
+                tv.activateInputFocus()
+                print("[Canopée] Metal GPU rendering active ✓")
+            }
+        } catch {
+            print("[Canopée] Metal not available, using CoreGraphics: \(error)")
+        }
+    }
+}
+
+/// Transparent view that forwards all mouse/scroll events to a target view
+final class EventForwardingView: NSView {
+    weak var target: NSView?
+
+    init(frame: NSRect, target: NSView) {
+        self.target = target
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func scrollWheel(with event: NSEvent) {
+        target?.scrollWheel(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        target?.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        target?.mouseUp(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        target?.mouseDragged(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        target?.rightMouseDown(with: event)
+    }
+}
+
+final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView {
+    var shouldCaptureFocusFromClicks = true
+    private var clickMonitor: Any?
+
+    deinit {
+        removeClickMonitor()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            removeClickMonitor()
+        } else {
+            installClickMonitorIfNeeded()
+            installScrollMonitor()
+        }
+    }
+
+    func activateInputFocus() {
+        guard let window else { return }
+        if window.firstResponder !== self {
+            window.makeFirstResponder(self)
+        }
+    }
+
+    private var scrollMonitor: Any?
+
+    func installScrollMonitor() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, let window = self.window else { return event }
+            guard event.window === window else { return event }
+            let point = self.convert(event.locationInWindow, from: nil)
+            guard self.bounds.contains(point), event.deltaY != 0 else { return event }
+
+            let terminal = self.getTerminal()
+            // If app has enabled mouse reporting, send scroll as button events
+            if terminal.mouseMode != .off {
+                let cols = terminal.cols
+                let rows = terminal.rows
+                let cellW = self.bounds.width / CGFloat(max(1, cols))
+                let cellH = self.bounds.height / CGFloat(max(1, rows))
+                let col = max(0, Int(point.x / cellW))
+                let row = max(0, Int((self.frame.height - point.y) / cellH))
+
+                // SGR: button 64 = scroll up, 65 = scroll down
+                let button = event.deltaY > 0 ? 64 : 65
+                let seq = "\u{1b}[<\(button);\(col + 1);\(row + 1)M"
+                self.send(txt: seq)
+                return nil // consume the event
+            }
+
+            return event // let SwiftTerm handle buffer scroll
+        }
+    }
+
+    private func installClickMonitorIfNeeded() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] event in
+            guard let self else { return event }
+            guard shouldCaptureFocusFromClicks, let window = self.window else { return event }
+            guard event.window === window else { return event }
+            let point = self.convert(event.locationInWindow, from: nil)
+            guard self.bounds.contains(point) else { return event }
+            if window.firstResponder !== self {
+                window.makeFirstResponder(self)
+            }
+            return event
+        }
+    }
+
+    private func removeClickMonitor() {
+        guard let clickMonitor else { return }
+        NSEvent.removeMonitor(clickMonitor)
+        self.clickMonitor = nil
+    }
 }

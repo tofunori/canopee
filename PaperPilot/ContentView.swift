@@ -19,7 +19,9 @@ struct MainWindow: View {
     @State private var openTabs: [TabItem] = [.library]
     @State private var selectedTab: TabItem = .library
     @State private var paperToOpen: UUID? = nil
-    @State private var splitPaperID: UUID? = nil // second pane
+    @State private var splitPaperID: UUID? = nil
+    @State private var showTerminal = false
+    @State private var selectedText = ""
 
     /// Paper tabs only (no library)
     private var openPaperIDs: [UUID] {
@@ -64,31 +66,45 @@ struct MainWindow: View {
 
             Divider()
 
-            // Content — keep all views alive, show/hide with opacity
-            ZStack {
-                LibraryView(paperToOpen: $paperToOpen)
-                    .opacity(selectedTab == .library ? 1 : 0)
-                    .allowsHitTesting(selectedTab == .library)
+            // Content + resizable shared terminal
+            HSplitView {
+                // Main content — keep all views alive
+                ZStack {
+                    LibraryView(paperToOpen: $paperToOpen)
+                        .opacity(selectedTab == .library ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .library)
 
-                ForEach(openPaperIDs, id: \.self) { paperId in
-                    if let paper = allPapers.first(where: { $0.id == paperId }) {
-                        Group {
-                            if let splitID = splitPaperID,
-                               splitID != paperId,
-                               let splitPaper = allPapers.first(where: { $0.id == splitID }),
-                               selectedTab == .paper(paperId) {
-                                HSplitView {
-                                    PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true)
-                                    PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true)
+                    ForEach(openPaperIDs, id: \.self) { paperId in
+                        if let paper = allPapers.first(where: { $0.id == paperId }) {
+                            Group {
+                                let isActive = selectedTab == .paper(paperId)
+                                if let splitID = splitPaperID,
+                                   splitID != paperId,
+                                   isActive {
+                                    if let splitPaper = allPapers.first(where: { $0.id == splitID }) {
+                                        HSplitView {
+                                            PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal, selectedText: $selectedText)
+                                            PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal, selectedText: $selectedText)
+                                        }
+                                    }
+                                } else {
+                                    PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal, selectedText: $selectedText)
                                 }
-                            } else {
-                                PDFReaderView(paperID: paper.persistentModelID)
                             }
+                            .opacity(selectedTab == .paper(paperId) ? 1 : 0)
+                            .allowsHitTesting(selectedTab == .paper(paperId))
                         }
-                        .opacity(selectedTab == .paper(paperId) ? 1 : 0)
-                        .allowsHitTesting(selectedTab == .paper(paperId))
                     }
                 }
+
+                // Shared terminal — always mounted, hidden when not needed
+                TerminalPanel(document: nil, selectedText: selectedText)
+                    .frame(
+                        minWidth: showTerminal && selectedTab != .library ? 250 : 0,
+                        idealWidth: showTerminal && selectedTab != .library ? 400 : 0,
+                        maxWidth: showTerminal && selectedTab != .library ? .infinity : 0
+                    )
+                    .opacity(showTerminal && selectedTab != .library ? 1 : 0)
             }
         }
         .onChange(of: paperToOpen) {
