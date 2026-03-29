@@ -1,0 +1,13 @@
+# Xcode generated projects (regenerate with xcodegen)
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+*.xcworkspace/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Build
+build/
