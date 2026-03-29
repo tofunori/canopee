@@ -14,6 +14,7 @@ struct LaTeXEditorView: View {
     @State private var splitLayout: SplitLayout = .horizontal
     @State private var editorFontSize: CGFloat = 14
     @State private var editorTheme: Int = 0
+    @State private var lastModified: Date?
 
     enum SplitLayout: String {
         case horizontal
@@ -63,8 +64,6 @@ struct LaTeXEditorView: View {
          NSColor(red: 0.83, green: 0.21, blue: 0.51, alpha: 1),
          NSColor(red: 0.80, green: 0.29, blue: 0.09, alpha: 1)),
     ]
-    @State private var fileWatcher: DispatchSourceFileSystemObject?
-    @State private var lastModified: Date?
 
     private var projectRoot: URL { fileURL.deletingLastPathComponent() }
     private var errorLines: Set<Int> {
@@ -285,7 +284,7 @@ struct LaTeXEditorView: View {
 
     private func saveFile() {
         try? text.write(to: fileURL, atomically: true, encoding: .utf8)
-        lastModified = Date()
+        lastModified = modificationDate()
         compile()
     }
 
@@ -324,26 +323,29 @@ struct LaTeXEditorView: View {
         }
     }
 
-    // MARK: - File Watching
+    // MARK: - File Watching (polling-based for reliability with external editors)
+
+    @State private var pollTimer: Timer?
 
     private func startFileWatcher() {
-        let fd = open(fileURL.path, O_EVTONLY)
-        guard fd >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd, eventMask: [.write, .rename], queue: .main
-        )
-        source.setEventHandler {
-            let currentMod = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
-            if let currentMod, currentMod != lastModified { loadFile() }
+        lastModified = modificationDate()
+        // Poll every 1 second — more reliable than DispatchSource for atomic writes
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            let currentMod = modificationDate()
+            if let currentMod, currentMod != lastModified {
+                lastModified = currentMod
+                loadFile()
+            }
         }
-        source.setCancelHandler { close(fd) }
-        source.resume()
-        fileWatcher = source
     }
 
     private func stopFileWatcher() {
-        fileWatcher?.cancel()
-        fileWatcher = nil
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
+    private func modificationDate() -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
     }
 }
 
