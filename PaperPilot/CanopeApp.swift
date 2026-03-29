@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 @main
-struct PaperPilotApp: App {
+struct CanopeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -22,7 +22,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         kill(-pgid, SIGTERM)
 
         // Clean up temp files
-        try? FileManager.default.removeItem(atPath: "/tmp/canopee_selection.txt")
-        try? FileManager.default.removeItem(atPath: "/tmp/canopee_paper.txt")
+        try? FileManager.default.removeItem(atPath: "/tmp/canope_selection.txt")
+        try? FileManager.default.removeItem(atPath: "/tmp/canope_paper.txt")
     }
 }

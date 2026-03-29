@@ -60,8 +60,8 @@ A native macOS scientific paper reader, annotator, LaTeX editor, and AI assistan
 - **Option key support** — Option+key produces macOS special characters
 
 ### Claude Code Integration
-- **PDF context** — full paper text written to `/tmp/canopee_paper.txt` (auto-updates on tab switch)
-- **Selection sync** — selected text (PDF or LaTeX) written to `/tmp/canopee_selection.txt` in real-time
+- **PDF context** — full paper text written to `/tmp/canope_paper.txt` (auto-updates on tab switch)
+- **Selection sync** — selected text (PDF or LaTeX) written to `/tmp/canope_selection.txt` in real-time
 - **Source tagging** — selections tagged with `[Source: PDF reader]` or `[Source: LaTeX editor]`
 - **CLAUDE.md instructions** — Claude Code automatically reads paper context and selection
 - **Bi-directional workflow** — edit LaTeX in Claude Code terminal, changes auto-reload in the editor
@@ -107,10 +107,10 @@ cd canopee
 xcodegen generate
 
 # Build from command line
-xcodebuild -project Canopée.xcodeproj -scheme PaperPilot -destination 'platform=macOS' build
+xcodebuild -project Canope.xcodeproj -scheme Canope -destination 'platform=macOS' build
 
 # Or open in Xcode
-open Canopée.xcodeproj
+open Canope.xcodeproj
 # Then Cmd+R to build and run
 ```
 
@@ -118,7 +118,7 @@ open Canopée.xcodeproj
 
 ```
 PaperPilot/
-├── PaperPilotApp.swift              # App entry point, process cleanup
+├── CanopeApp.swift                  # App entry point, process cleanup
 ├── ContentView.swift                # Main window: tabs, split view, terminal
 ├── Models/
 │   ├── Paper.swift                  # SwiftData model (title, authors, DOI, rating, labels...)
@@ -160,15 +160,15 @@ Canopée writes context files that Claude Code reads automatically:
 
 | File | Content | Updated when |
 |------|---------|-------------|
-| `/tmp/canopee_paper.txt` | Full text of the currently open paper | Tab switch |
-| `/tmp/canopee_selection.txt` | Currently selected text (PDF or LaTeX) | Selection changes |
+| `/tmp/canope_paper.txt` | Full text of the currently open paper | Tab switch |
+| `/tmp/canope_selection.txt` | Currently selected text (PDF or LaTeX) | Selection changes |
 
 Add this to your `~/.claude/CLAUDE.md` for automatic integration:
 
 ```markdown
 ## Canopée
-- `/tmp/canopee_paper.txt` — currently open paper (read when user asks about "the paper")
-- `/tmp/canopee_selection.txt` — selected text (read when user asks about "the selection")
+- `/tmp/canope_paper.txt` — currently open paper (read when user asks about "the paper")
+- `/tmp/canope_selection.txt` — selected text (read when user asks about "the selection")
 - Do NOT use pdf-selection skill (reads from Skim, not Canopée)
 ```
 

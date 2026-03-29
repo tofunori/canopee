@@ -325,8 +325,8 @@ struct TerminalViewWrapper: NSViewRepresentable {
 
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
-        env.append("CANOPEE_SELECTION=/tmp/canopee_selection.txt")
-        env.append("CANOPEE_PAPER=/tmp/canopee_paper.txt")
+        env.append("CANOPE_SELECTION=/tmp/canope_selection.txt")
+        env.append("CANOPE_PAPER=/tmp/canope_paper.txt")
         tv.startProcess(executable: shell, args: ["-l"], environment: env, execName: shell)
 
         enableMetalWhenReady(for: tv)
@@ -364,10 +364,10 @@ struct TerminalViewWrapper: NSViewRepresentable {
                     }
                 }
                 tv.activateInputFocus()
-                print("[Canopée] Metal GPU rendering active ✓")
+                print("[Canope] Metal GPU rendering active ✓")
             }
         } catch {
-            print("[Canopée] Metal not available, using CoreGraphics: \(error)")
+            print("[Canope] Metal not available, using CoreGraphics: \(error)")
         }
     }
 }

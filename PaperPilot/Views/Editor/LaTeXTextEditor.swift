@@ -13,21 +13,28 @@ struct LaTeXTextEditor: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        // Force light appearance so the text system doesn't dim our custom dark-theme colors
+        scrollView.appearance = NSAppearance(named: .aqua)
+        scrollView.contentView.appearance = scrollView.appearance
 
         let textView = NSTextView()
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true
         textView.isRichText = false
+        textView.usesAdaptiveColorMappingForDarkAppearance = false
+        textView.drawsBackground = true
+        textView.appearance = scrollView.appearance
         textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.backgroundColor = NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1) // Kaku dark bg
+        textView.backgroundColor = NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1)
         textView.textColor = NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1)
-        textView.insertionPointColor = NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1) // Purple cursor
+        textView.insertionPointColor = NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1)
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.textContainerInset = NSSize(width: 4, height: 8)
         textView.autoresizingMask = [.width]
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
@@ -41,6 +48,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
 
         // Set initial text
         textView.string = text
+        context.coordinator.applyTheme(to: textView)
         context.coordinator.applyHighlighting()
 
         return scrollView
@@ -48,21 +56,27 @@ struct LaTeXTextEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        if textView.string != text {
+
+        let textChanged = textView.string != text
+        let themeChanged = context.coordinator.theme?.name != theme?.name
+        let fontChanged = context.coordinator.fontSize != fontSize
+
+        if textChanged {
             let selectedRange = textView.selectedRange()
             textView.string = text
             textView.setSelectedRange(selectedRange)
         }
-        // Update font size
+
         context.coordinator.fontSize = fontSize
-        // Update theme
         if let theme {
             context.coordinator.theme = theme
-            textView.backgroundColor = theme.bg
-            textView.insertionPointColor = theme.env
         }
         context.coordinator.errorLines = errorLines
-        context.coordinator.applyHighlighting()
+        context.coordinator.applyTheme(to: textView)
+
+        if textChanged || themeChanged || fontChanged {
+            context.coordinator.applyHighlighting()
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -81,6 +95,28 @@ struct LaTeXTextEditor: NSViewRepresentable {
             self.parent = parent
         }
 
+        @MainActor
+        func applyTheme(to textView: NSTextView) {
+            let t = theme
+            let fg = t?.fg ?? NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1)
+            let bg = t?.bg ?? NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1)
+            let cursor = t?.env ?? NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1)
+            let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+
+            textView.font = font
+            textView.backgroundColor = bg
+            textView.textColor = fg
+            textView.insertionPointColor = cursor
+            textView.selectedTextAttributes = [
+                .backgroundColor: cursor.withAlphaComponent(0.35),
+                .foregroundColor: NSColor.white,
+            ]
+            textView.typingAttributes = [
+                .font: font,
+                .foregroundColor: fg,
+            ]
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = textView, !isUpdating else { return }
             parent.text = textView.string
@@ -94,11 +130,11 @@ struct LaTeXTextEditor: NSViewRepresentable {
             if range.length > 0 {
                 let selected = (textView.string as NSString).substring(with: range)
                 let content = "[Source: LaTeX editor]\n\(selected)"
-                try? content.write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
+                try? content.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
             }
-            // Don't clear — let the PDF reader or editor that was last used keep its selection
         }
 
+        @MainActor
         func applyHighlighting() {
             guard let textView = textView else { return }
             isUpdating = true
@@ -113,6 +149,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
             let braceColor = t?.brace ?? NSColor(red: 1.0, green: 0.79, blue: 0.52, alpha: 1)
 
             let text = textView.string
+            guard !text.isEmpty else { return }
             let fullRange = NSRange(location: 0, length: text.utf16.count)
             let storage = textView.textStorage!
             let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -129,6 +166,10 @@ struct LaTeXTextEditor: NSViewRepresentable {
             highlight(storage, text: text, pattern: #"[\[\]]"#, color: braceColor.withAlphaComponent(0.7))
 
             storage.endEditing()
+            textView.typingAttributes = [
+                .font: font,
+                .foregroundColor: fg,
+            ]
         }
 
         private func highlight(_ storage: NSTextStorage, text: String, pattern: String, color: NSColor) {

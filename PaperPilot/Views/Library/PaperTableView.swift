@@ -329,16 +329,16 @@ struct PaperTableView: View {
     private func handleImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
-            print("[PaperPilot] fileImporter returned \(urls.count) URLs")
+            print("[Canope] fileImporter returned \(urls.count) URLs")
             for url in urls {
-                print("[PaperPilot] importing: \(url.lastPathComponent)")
+                print("[Canope] importing: \(url.lastPathComponent)")
                 let accessed = url.startAccessingSecurityScopedResource()
-                print("[PaperPilot] security scope accessed: \(accessed)")
+                print("[Canope] security scope accessed: \(accessed)")
                 defer { if accessed { url.stopAccessingSecurityScopedResource() } }
                 importPDF(from: url)
             }
         case .failure(let error):
-            print("[PaperPilot] fileImporter error: \(error)")
+            print("[Canope] fileImporter error: \(error)")
         }
     }
 
@@ -353,10 +353,10 @@ struct PaperTableView: View {
     }
 
     private func importPDF(from url: URL) {
-        print("[PaperPilot] importPDF called for: \(url.lastPathComponent)")
+        print("[Canope] importPDF called for: \(url.lastPathComponent)")
         do {
             let (fileName, metadata) = try PDFFileManager.importPDF(from: url)
-            print("[PaperPilot] imported as \(fileName), title: \(metadata.title ?? "nil")")
+            print("[Canope] imported as \(fileName), title: \(metadata.title ?? "nil")")
             let paper = Paper(title: metadata.title ?? url.deletingPathExtension().lastPathComponent, fileName: fileName)
             paper.authors = metadata.authors ?? ""
             paper.year = metadata.year

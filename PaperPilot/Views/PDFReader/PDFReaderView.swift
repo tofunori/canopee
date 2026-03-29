@@ -159,7 +159,7 @@ struct PDFReaderView: View {
     private func writePaperContext() {
         guard let doc = document, let paper else { return }
         // Clear selection when switching papers
-        try? "(no text currently selected)".write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
+        try? "(no text currently selected)".write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
         selectedText = ""
 
         DispatchQueue.global(qos: .utility).async {
@@ -181,7 +181,7 @@ struct PDFReaderView: View {
                     fullText += "--- Page \(i + 1) ---\n\(text)\n\n"
                 }
             }
-            try? fullText.write(toFile: "/tmp/canopee_paper.txt", atomically: true, encoding: .utf8)
+            try? fullText.write(toFile: "/tmp/canope_paper.txt", atomically: true, encoding: .utf8)
         }
     }
 

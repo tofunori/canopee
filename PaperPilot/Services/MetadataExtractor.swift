@@ -74,7 +74,7 @@ struct MetadataExtractor {
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
-        request.setValue("Canopee/0.1 (mailto:canopee@example.com)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Canope/0.1 (mailto:canope@example.com)", forHTTPHeaderField: "User-Agent")
 
         URLSession.shared.dataTask(with: request) { data, response, error in
             let result: PaperMetadata?

@@ -795,7 +795,7 @@ struct PDFKitView: NSViewRepresentable {
                 hasActiveSelection = false
                 parent.selectedText = ""
                 // Clear selection file
-                try? "(no text currently selected)".write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
+                try? "(no text currently selected)".write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
                 if isDragging { overlay?.clearSelection() }
                 return
             }
@@ -804,7 +804,7 @@ struct PDFKitView: NSViewRepresentable {
             parent.selectedText = text
             // Write selection to temp file so Claude Code can read it
             let content = "[Source: PDF reader]\n\(text)"
-            try? content.write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
+            try? content.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
             updateSelectionOverlay()
         }
 
