@@ -307,6 +307,7 @@ struct PDFKitView: NSViewRepresentable {
     @Binding var currentTool: AnnotationTool
     @Binding var currentColor: NSColor
     @Binding var selectedAnnotation: PDFAnnotation?
+    @Binding var selectedText: String
     let onDocumentChanged: @MainActor () -> Void
     @Binding var undoAction: (() -> Void)?
 
@@ -792,11 +793,15 @@ struct PDFKitView: NSViewRepresentable {
                   let text = selection.string,
                   !text.isEmpty else {
                 hasActiveSelection = false
+                parent.selectedText = ""
                 if isDragging { overlay?.clearSelection() }
                 return
             }
             hasActiveSelection = true
             isDragging = true
+            parent.selectedText = text
+            // Write selection to temp file so Claude Code can read it
+            try? text.write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
             updateSelectionOverlay()
         }
 

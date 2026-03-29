@@ -1,15 +1,22 @@
 name: Canopée
 options:
-  bundleIdPrefix: com.paperpilot
+  bundleIdPrefix: com.canopee
   deploymentTarget:
     macOS: "14.0"
   groupSortPosition: top
+
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: "1.2.0"
 
 targets:
   PaperPilot:
     type: application
     platform: macOS
     sources: [PaperPilot]
+    dependencies:
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.canopee.app

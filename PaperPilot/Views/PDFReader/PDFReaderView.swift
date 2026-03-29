@@ -16,6 +16,8 @@ struct PDFReaderView: View {
     @State private var isEditingNote = false
     @State private var editingNoteText = ""
     @State private var undoAction: (() -> Void)?
+    @State private var showAIPanel = false
+    @State private var selectedText = ""
 
     private var paper: Paper? {
         try? modelContext.fetch(
@@ -37,12 +39,14 @@ struct PDFReaderView: View {
             Divider()
 
             if let document {
-                HSplitView {
+                HStack(spacing: 0) {
+                    // PDF viewer — takes all available space
                     PDFKitView(
                         document: document,
                         currentTool: $currentTool,
                         currentColor: $currentColor,
                         selectedAnnotation: $selectedAnnotation,
+                        selectedText: $selectedText,
                         onDocumentChanged: {
                             hasUnsavedChanges = true
                             annotationRefreshToken = UUID()
@@ -53,8 +57,10 @@ struct PDFReaderView: View {
                     .onKeyPress(phases: .down) { press in
                         handleKeyPress(press)
                     }
+                    .frame(maxWidth: .infinity)
 
                     if showAnnotationSidebar {
+                        Divider()
                         AnnotationSidebarView(
                             document: document,
                             selectedAnnotation: $selectedAnnotation,
@@ -67,6 +73,12 @@ struct PDFReaderView: View {
                             }
                         )
                         .id(annotationRefreshToken)
+                        .frame(width: 250)
+                    }
+
+                    if showAIPanel {
+                        Divider()
+                        TerminalPanel(document: document, selectedText: selectedText)
                     }
                 }
             } else {
@@ -78,11 +90,20 @@ struct PDFReaderView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: { showAnnotationSidebar.toggle() }) {
-                    Image(systemName: "sidebar.right")
-                        .symbolVariant(showAnnotationSidebar ? .none : .slash)
+                HStack(spacing: 8) {
+                    Button(action: { showAIPanel.toggle() }) {
+                        Image(systemName: showAIPanel ? "terminal.fill" : "terminal")
+                            .foregroundStyle(showAIPanel ? .green : .secondary)
+                    }
+                    .help("Terminal (⌘⇧T)")
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+
+                    Button(action: { showAnnotationSidebar.toggle() }) {
+                        Image(systemName: "sidebar.right")
+                            .symbolVariant(showAnnotationSidebar ? .none : .slash)
+                    }
+                    .help("Annotations")
                 }
-                .help("Annotations")
             }
         }
         .navigationTitle(paper?.title ?? "Article")
@@ -146,6 +167,19 @@ struct PDFReaderView: View {
         document = PDFDocument(url: paper.fileURL)
         selectedAnnotation = nil
         if !paper.isRead { paper.isRead = true }
+
+        // Write full PDF text + CLAUDE.md for Claude Code integration
+        if let doc = document {
+            DispatchQueue.global(qos: .utility).async {
+                var fullText = "Title: \(paper.title)\nAuthors: \(paper.authors)\n\n"
+                for i in 0..<doc.pageCount {
+                    if let page = doc.page(at: i), let text = page.string {
+                        fullText += "--- Page \(i + 1) ---\n\(text)\n\n"
+                    }
+                }
+                try? fullText.write(toFile: "/tmp/canopee_paper.txt", atomically: true, encoding: .utf8)
+            }
+        }
     }
 
     private func savePDF() {
