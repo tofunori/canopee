@@ -803,7 +803,8 @@ struct PDFKitView: NSViewRepresentable {
             isDragging = true
             parent.selectedText = text
             // Write selection to temp file so Claude Code can read it
-            try? text.write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
+            let content = "[Source: PDF reader]\n\(text)"
+            try? content.write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
             updateSelectionOverlay()
         }
 

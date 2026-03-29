@@ -12,6 +12,7 @@ enum SidebarSelection: Hashable {
 enum TabItem: Hashable {
     case library
     case paper(UUID)
+    case editor(String) // file path as string (URL isn't Hashable)
 }
 
 struct MainWindow: View {
@@ -22,10 +23,22 @@ struct MainWindow: View {
     @State private var splitPaperID: UUID? = nil
     @State private var showTerminal = false
     @State private var selectedText = ""
+    @State private var isOpeningTeX = false
 
-    /// Paper tabs only (no library)
     private var openPaperIDs: [UUID] {
         openTabs.compactMap { if case .paper(let id) = $0 { return id } else { return nil } }
+    }
+
+    private var openEditorPaths: [String] {
+        openTabs.compactMap { if case .editor(let path) = $0 { return path } else { return nil } }
+    }
+
+    func openTeXFile(_ url: URL) {
+        let tab = TabItem.editor(url.path)
+        if !openTabs.contains(tab) {
+            openTabs.append(tab)
+        }
+        selectedTab = tab
     }
 
     var body: some View {
@@ -39,6 +52,14 @@ struct MainWindow: View {
                 )
 
                 Divider().frame(height: 20)
+
+                // Open .tex file
+                Button(action: { isOpeningTeX = true }) {
+                    Image(systemName: "doc.badge.plus")
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .help("Ouvrir un fichier .tex (⌘O)")
 
                 // Split toggle
                 if case .paper = selectedTab {
@@ -95,6 +116,13 @@ struct MainWindow: View {
                             .allowsHitTesting(selectedTab == .paper(paperId))
                         }
                     }
+
+                    // Editor tabs
+                    ForEach(openEditorPaths, id: \.self) { path in
+                        LaTeXEditorView(fileURL: URL(fileURLWithPath: path), showTerminal: $showTerminal)
+                            .opacity(selectedTab == .editor(path) ? 1 : 0)
+                            .allowsHitTesting(selectedTab == .editor(path))
+                    }
                 }
 
                 // Shared terminal — always mounted, hidden when not needed
@@ -116,6 +144,16 @@ struct MainWindow: View {
             selectedTab = tab
             paperToOpen = nil
         }
+        .fileImporter(
+            isPresented: $isOpeningTeX,
+            allowedContentTypes: [.init(filenameExtension: "tex")!],
+            allowsMultipleSelection: false
+        ) { result in
+            if let urls = try? result.get(), let url = urls.first {
+                openTeXFile(url)
+            }
+        }
+        .keyboardShortcut("o", modifiers: .command)
     }
 }
 
@@ -149,6 +187,8 @@ struct TabBar: View {
         case .library: return "Bibliothèque"
         case .paper(let id):
             return allPapers.first(where: { $0.id == id })?.title ?? "Article"
+        case .editor(let path):
+            return URL(fileURLWithPath: path).lastPathComponent
         }
     }
 
@@ -168,9 +208,17 @@ struct TabButton: View {
     let onSelect: () -> Void
     let onClose: (() -> Void)?
 
+    private var tabIcon: String {
+        switch tab {
+        case .library: return "books.vertical"
+        case .paper: return "doc.text"
+        case .editor: return "doc.plaintext"
+        }
+    }
+
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: tab == .library ? "books.vertical" : "doc.text")
+            Image(systemName: tabIcon)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Text(title)
