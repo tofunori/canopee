@@ -64,25 +64,29 @@ struct MainWindow: View {
 
             Divider()
 
-            // Content
+            // Content — keep all views alive, show/hide with opacity
             ZStack {
-                if selectedTab == .library {
-                    LibraryView(paperToOpen: $paperToOpen)
-                }
+                LibraryView(paperToOpen: $paperToOpen)
+                    .opacity(selectedTab == .library ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .library)
 
                 ForEach(openPaperIDs, id: \.self) { paperId in
-                    if selectedTab == .paper(paperId),
-                       let paper = allPapers.first(where: { $0.id == paperId }) {
-                        if let splitID = splitPaperID,
-                           splitID != paperId,
-                           let splitPaper = allPapers.first(where: { $0.id == splitID }) {
-                            HSplitView {
-                                PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true)
-                                PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true)
+                    if let paper = allPapers.first(where: { $0.id == paperId }) {
+                        Group {
+                            if let splitID = splitPaperID,
+                               splitID != paperId,
+                               let splitPaper = allPapers.first(where: { $0.id == splitID }),
+                               selectedTab == .paper(paperId) {
+                                HSplitView {
+                                    PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true)
+                                    PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true)
+                                }
+                            } else {
+                                PDFReaderView(paperID: paper.persistentModelID)
                             }
-                        } else {
-                            PDFReaderView(paperID: paper.persistentModelID)
                         }
+                        .opacity(selectedTab == .paper(paperId) ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .paper(paperId))
                     }
                 }
             }

@@ -31,6 +31,8 @@ struct PDFReaderView: View {
                 currentTool: $currentTool,
                 currentColor: $currentColor,
                 selectedAnnotation: selectedAnnotation,
+                showTerminal: $showAIPanel,
+                showAnnotations: $showAnnotationSidebar,
                 onSave: savePDF,
                 onDeleteSelected: deleteSelectedAnnotation,
                 onDeleteAll: deleteAllAnnotations,
@@ -86,24 +88,6 @@ struct PDFReaderView: View {
                     "Impossible d'ouvrir le PDF",
                     systemImage: "exclamationmark.triangle"
                 )
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: 8) {
-                    Button(action: { showAIPanel.toggle() }) {
-                        Image(systemName: showAIPanel ? "terminal.fill" : "terminal")
-                            .foregroundStyle(showAIPanel ? .green : .secondary)
-                    }
-                    .help("Terminal (⌘⇧T)")
-                    .keyboardShortcut("t", modifiers: [.command, .shift])
-
-                    Button(action: { showAnnotationSidebar.toggle() }) {
-                        Image(systemName: "sidebar.right")
-                            .symbolVariant(showAnnotationSidebar ? .none : .slash)
-                    }
-                    .help("Annotations")
-                }
             }
         }
         .navigationTitle(paper?.title ?? "Article")

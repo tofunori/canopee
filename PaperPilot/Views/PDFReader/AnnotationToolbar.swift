@@ -6,6 +6,8 @@ struct AnnotationToolbar: View {
     @Binding var currentTool: AnnotationTool
     @Binding var currentColor: NSColor
     let selectedAnnotation: PDFAnnotation?
+    @Binding var showTerminal: Bool
+    @Binding var showAnnotations: Bool
     var onSave: () -> Void
     var onDeleteSelected: () -> Void
     var onDeleteAll: () -> Void
@@ -99,6 +101,26 @@ struct AnnotationToolbar: View {
             }
             .help("Enregistrer (⌘S)")
             .keyboardShortcut("s", modifiers: .command)
+
+            Divider()
+                .frame(height: 20)
+                .padding(.horizontal, 2)
+
+            // Terminal toggle
+            Button(action: { showTerminal.toggle() }) {
+                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                    .foregroundStyle(showTerminal ? .green : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Terminal")
+
+            // Annotations sidebar toggle
+            Button(action: { showAnnotations.toggle() }) {
+                Image(systemName: "sidebar.right")
+                    .symbolVariant(showAnnotations ? .none : .slash)
+            }
+            .buttonStyle(.plain)
+            .help("Annotations")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
