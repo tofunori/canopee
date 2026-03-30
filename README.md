@@ -114,6 +114,45 @@ open Canope.xcodeproj
 # Then Cmd+R to build and run
 ```
 
+## Releases
+
+### Build a DMG locally
+
+```bash
+./scripts/build-release-dmg.sh
+```
+
+That creates a distributable DMG in `build/release/`.
+
+### Publish a GitHub release
+
+The repo now includes a workflow at `.github/workflows/release-dmg.yml`.
+
+- Push a tag like `v0.1.0`, or run the workflow manually from GitHub.
+- The workflow builds `Canope.app`, packages it as a `.dmg`, uploads it as an artifact, and attaches it to a GitHub Release.
+
+Example:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+### Important macOS distribution note
+
+The workflow can publish a DMG immediately, but a smooth macOS install experience needs Apple signing and notarization.
+
+- Without Apple Developer signing/notarization, users can still download the app, but macOS Gatekeeper will warn them.
+- To ship a cleaner public release, add these GitHub repository secrets:
+  - `APPLE_DEVELOPER_CERTIFICATE_P12`
+  - `APPLE_DEVELOPER_CERTIFICATE_PASSWORD`
+  - `APPLE_DEVELOPER_IDENTITY`
+  - `APPLE_TEAM_ID`
+  - `APPLE_ID`
+  - `APPLE_APP_SPECIFIC_PASSWORD`
+
+When those secrets are present, the release workflow will sign the app, notarize the DMG, and staple the notarization ticket automatically.
+
 ## Architecture
 
 ```

@@ -1,0 +1,124 @@
+name: Release DMG
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Publish as a prerelease"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+            PRERELEASE="${{ inputs.prerelease }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            PRERELEASE="false"
+          fi
+
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "version_suffix=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Import Developer ID certificate
+        if: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12 != '' && secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD != '' && secrets.APPLE_DEVELOPER_IDENTITY != '' && secrets.APPLE_TEAM_ID != '' }}
+        env:
+          CERTIFICATE_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/canope-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERTIFICATE_PATH="$RUNNER_TEMP/canope-signing.p12"
+
+          if echo "$CERTIFICATE_P12" | base64 --decode > "$CERTIFICATE_PATH" 2>/dev/null; then
+            true
+          else
+            echo "$CERTIFICATE_P12" | base64 -D > "$CERTIFICATE_PATH"
+          fi
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Build release DMG
+        env:
+          VERSION_SUFFIX: ${{ steps.meta.outputs.version_suffix }}
+          CODE_SIGN_STYLE_OVERRIDE: ${{ secrets.APPLE_DEVELOPER_IDENTITY != '' && 'Manual' || '' }}
+          CODE_SIGN_IDENTITY_OVERRIDE: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          DEVELOPMENT_TEAM_OVERRIDE: ${{ secrets.APPLE_TEAM_ID }}
+          ENABLE_HARDENED_RUNTIME_OVERRIDE: ${{ secrets.APPLE_DEVELOPER_IDENTITY != '' && 'YES' || '' }}
+        run: ./scripts/build-release-dmg.sh
+
+      - name: Notarize DMG
+        if: ${{ secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_DEVELOPER_IDENTITY != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: ./scripts/notarize-dmg.sh "build/release/Canope-${{ steps.meta.outputs.version_suffix }}.dmg"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Canope-${{ steps.meta.outputs.version_suffix }}-dmg
+          path: build/release/Canope-${{ steps.meta.outputs.version_suffix }}.dmg
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          DMG_PATH: build/release/Canope-${{ steps.meta.outputs.version_suffix }}.dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG_PATH" --clobber
+            exit 0
+          fi
+
+          RELEASE_ARGS=("$TAG" "$DMG_PATH" --title "Canope $TAG" --generate-notes)
+
+          if [[ "$PRERELEASE" == "true" ]]; then
+            RELEASE_ARGS+=(--prerelease)
+          fi
+
+          gh release create "${RELEASE_ARGS[@]}"
