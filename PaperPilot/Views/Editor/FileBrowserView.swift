@@ -7,99 +7,302 @@ struct FileItem: Identifiable, Hashable {
     let isDirectory: Bool
     var children: [FileItem]?
 
-    var icon: String {
-        if isDirectory { return "folder.fill" }
+    var displayIcon: String {
+        if isDirectory { return "" }
         switch url.pathExtension.lowercased() {
-        case "tex": return "doc.text"
-        case "bib": return "book.closed"
-        case "sty", "cls": return "gearshape"
-        case "pdf": return "doc.richtext"
-        case "png", "jpg", "jpeg", "eps", "svg": return "photo"
-        case "log", "aux", "out": return "doc"
-        default: return "doc.text"
+        case "tex": return ""
+        case "bib": return ""
+        case "pdf": return ""
+        case "png", "jpg", "jpeg", "eps", "svg": return ""
+        case "md", "txt": return ""
+        case "sty", "cls": return ""
+        case "log", "aux", "out": return ""
+        default: return ""
         }
     }
 
-    var iconColor: Color {
-        if isDirectory { return .blue }
+    var color: Color {
+        if isDirectory { return Color(red: 0.55, green: 0.7, blue: 0.9) } // soft blue
         switch url.pathExtension.lowercased() {
-        case "tex": return .green
-        case "bib": return .orange
-        case "sty", "cls": return .purple
-        case "pdf": return .red
-        case "png", "jpg", "jpeg", "eps", "svg": return .pink
-        default: return .secondary
+        case "tex": return Color(red: 0.6, green: 0.85, blue: 0.6) // soft green
+        case "bib": return Color(red: 0.85, green: 0.75, blue: 0.55) // warm tan
+        case "pdf": return Color(red: 0.85, green: 0.6, blue: 0.6) // muted rose
+        case "png", "jpg", "jpeg", "eps", "svg": return Color(red: 0.8, green: 0.65, blue: 0.8) // soft lavender
+        case "md", "txt": return Color(white: 0.7) // soft gray
+        case "sty", "cls": return Color(red: 0.7, green: 0.6, blue: 0.8) // muted purple
+        case "log", "aux", "out": return Color(white: 0.35)
+        default: return Color(white: 0.5)
         }
     }
 }
 
 struct FileBrowserView: View {
-    let rootURL: URL
+    let initialRootURL: URL
     let onOpenFile: (URL) -> Void
+    @State private var currentDir: URL
     @State private var items: [FileItem] = []
     @State private var expandedDirs: Set<URL> = []
+    @State private var selectedIndex: Int = 0
+    @FocusState private var isFocused: Bool
+
+    private let bgColor = Color(nsColor: NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1))
+
+    init(rootURL: URL, onOpenFile: @escaping (URL) -> Void) {
+        self.initialRootURL = rootURL
+        self.onOpenFile = onOpenFile
+        self._currentDir = State(initialValue: rootURL)
+    }
+
+    // Flat list of visible items for keyboard navigation
+    private var flatItems: [FileItem] {
+        var result: [FileItem] = []
+        func flatten(_ items: [FileItem]) {
+            for item in items {
+                result.append(item)
+                if item.isDirectory && expandedDirs.contains(item.url), let children = item.children {
+                    flatten(children)
+                }
+            }
+        }
+        flatten(items)
+        return result
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "folder")
+            // Header with current path
+            HStack(spacing: 4) {
+                Text(" \(currentDir.lastPathComponent)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundStyle(.blue)
-                Text(rootURL.lastPathComponent)
-                    .font(.caption)
-                    .fontWeight(.semibold)
                     .lineLimit(1)
                 Spacer()
                 Button(action: refresh) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption2)
+                    Text("↻")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(bgColor.opacity(0.8))
 
-            Divider()
+            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
 
-            List {
-                ForEach(items) { item in
-                    fileRow(item)
+            // File list
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        // ".." to go up
+                        let canGoUp = currentDir.path != "/"
+                        if canGoUp {
+                            Button(action: goUp) {
+                                HStack(spacing: 0) {
+                                    Spacer().frame(width: 4)
+                                    Text(" ..")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.yellow)
+                                    Spacer()
+                                }
+                                .frame(height: 19)
+                                .frame(maxWidth: .infinity)
+                                .background(selectedIndex == -1 ? Color.white.opacity(0.08) : Color.clear)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .id("parent")
+                        }
+
+                        // Only top-level items — renderItem handles recursion
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            renderItem(item, depth: 0, index: flatIndex(for: item))
+                                .id(item.id)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .background(bgColor)
+                .focused($isFocused)
+                .onKeyPress(.upArrow) {
+                    moveSelection(-1)
+                    scrollTo(proxy)
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    moveSelection(1)
+                    scrollTo(proxy)
+                    return .handled
+                }
+                .onKeyPress(.leftArrow) {
+                    collapseOrGoUp()
+                    return .handled
+                }
+                .onKeyPress(.rightArrow) {
+                    expandOrEnter()
+                    return .handled
+                }
+                .onKeyPress(.return) {
+                    activateSelected()
+                    return .handled
                 }
             }
-            .listStyle(.sidebar)
         }
-        .frame(minWidth: 150, idealWidth: 200, maxWidth: 300)
-        .onAppear { refresh() }
+        .frame(minWidth: 140, idealWidth: 190, maxWidth: 280)
+        .onAppear {
+            refresh()
+            isFocused = true
+        }
+        .onChange(of: currentDir) {
+            refresh()
+            selectedIndex = 0
+        }
+    }
+
+    private func itemDepth(_ item: FileItem) -> Int {
+        // Calculate depth based on URL relative to currentDir
+        let base = currentDir.pathComponents.count
+        let itemComponents = item.url.deletingLastPathComponent().pathComponents.count
+        return max(0, itemComponents - base)
     }
 
     @ViewBuilder
-    private func fileRow(_ item: FileItem) -> some View {
-        if item.isDirectory {
-            DisclosureGroup(isExpanded: Binding(
-                get: { expandedDirs.contains(item.url) },
-                set: { if $0 { expandedDirs.insert(item.url) } else { expandedDirs.remove(item.url) } }
-            )) {
-                if let children = item.children {
-                    ForEach(children) { child in
-                        AnyView(fileRow(child))
+    private func renderItem(_ item: FileItem, depth: Int, index: Int) -> some View {
+        let isExpanded = expandedDirs.contains(item.url)
+        let isSelected = selectedIndex == index
+        let indent = CGFloat(depth) * 14
+
+        Button(action: {
+            if selectedIndex == index {
+                // Second click — open
+                if item.isDirectory {
+                    expandedDirs.removeAll()
+                    currentDir = item.url
+                } else {
+                    onOpenFile(item.url)
+                }
+            } else {
+                // First click — select only
+                selectedIndex = index
+                if item.isDirectory {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if isExpanded { expandedDirs.remove(item.url) }
+                        else { expandedDirs.insert(item.url) }
                     }
                 }
-            } label: {
-                Label(item.name, systemImage: item.icon)
-                    .foregroundStyle(item.iconColor)
-                    .font(.caption)
+            }
+        }) {
+            HStack(spacing: 0) {
+                Spacer().frame(width: 4 + indent)
+
+                if item.isDirectory {
+                    Text(isExpanded ? "▾" : "▸")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10, alignment: .center)
+                } else {
+                    Spacer().frame(width: 10)
+                }
+
+                Text("\(item.isDirectory ? " " : "\(item.displayIcon) ")\(item.name)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(item.color)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer()
+            }
+            .frame(height: 19)
+            .frame(maxWidth: .infinity)
+            .background(isSelected ? Color.white.opacity(0.1) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+
+        if item.isDirectory && isExpanded, let children = item.children {
+            ForEach(children) { child in
+                AnyView(renderItem(child, depth: depth + 1, index: flatIndex(for: child)))
+            }
+        }
+    }
+
+    private func flatIndex(for item: FileItem) -> Int {
+        flatItems.firstIndex(where: { $0.id == item.id }) ?? 0
+    }
+
+    // MARK: - Navigation
+
+    private func goUp() {
+        let parent = currentDir.deletingLastPathComponent()
+        expandedDirs.removeAll()
+        currentDir = parent
+    }
+
+    private func moveSelection(_ delta: Int) {
+        let visible = flatItems
+        let newIndex = selectedIndex + delta
+        if newIndex < -1 { return }
+        if newIndex >= visible.count { return }
+        selectedIndex = newIndex
+    }
+
+    private func scrollTo(_ proxy: ScrollViewProxy) {
+        let visible = flatItems
+        if selectedIndex == -1 {
+            proxy.scrollTo("parent")
+        } else if selectedIndex >= 0 && selectedIndex < visible.count {
+            proxy.scrollTo(visible[selectedIndex].id)
+        }
+    }
+
+    private func collapseOrGoUp() {
+        let visible = flatItems
+        if selectedIndex >= 0 && selectedIndex < visible.count {
+            let item = visible[selectedIndex]
+            if item.isDirectory && expandedDirs.contains(item.url) {
+                expandedDirs.remove(item.url)
+            } else {
+                goUp()
             }
         } else {
-            Button(action: { onOpenFile(item.url) }) {
-                Label(item.name, systemImage: item.icon)
-                    .foregroundStyle(item.iconColor)
-                    .font(.caption)
+            goUp()
+        }
+    }
+
+    private func expandOrEnter() {
+        let visible = flatItems
+        if selectedIndex >= 0 && selectedIndex < visible.count {
+            let item = visible[selectedIndex]
+            if item.isDirectory {
+                if !expandedDirs.contains(item.url) {
+                    expandedDirs.insert(item.url)
+                } else {
+                    // Already expanded, move into first child
+                    moveSelection(1)
+                }
             }
-            .buttonStyle(.plain)
+        }
+    }
+
+    private func activateSelected() {
+        if selectedIndex == -1 {
+            goUp()
+            return
+        }
+        let visible = flatItems
+        guard selectedIndex >= 0 && selectedIndex < visible.count else { return }
+        let item = visible[selectedIndex]
+        if item.isDirectory {
+            // Double-enter navigates into directory
+            expandedDirs.removeAll()
+            currentDir = item.url
+        } else {
+            onOpenFile(item.url)
         }
     }
 
     private func refresh() {
-        items = scanDirectory(rootURL)
+        items = scanDirectory(currentDir)
     }
 
     private func scanDirectory(_ url: URL) -> [FileItem] {

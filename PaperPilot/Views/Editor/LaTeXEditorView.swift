@@ -4,10 +4,12 @@ import PDFKit
 struct LaTeXEditorView: View {
     let fileURL: URL
     @Binding var showTerminal: Bool
+    var onOpenPDF: ((URL) -> Void)?
     @State private var text = ""
     @State private var savedText = ""
     @State private var compiledPDF: PDFDocument?
     @State private var errors: [CompilationError] = []
+    @State private var compileOutput: String = ""
     @State private var isCompiling = false
     @State private var showFileBrowser = true
     @State private var showPDFPreview = true
@@ -78,13 +80,17 @@ struct LaTeXEditorView: View {
             Divider()
 
             // Main content: file browser | (editor / pdf split)
-            HStack(spacing: 0) {
-                // File browser (left)
+            HSplitView {
+                // File browser (left, resizable)
                 if showFileBrowser {
                     FileBrowserView(rootURL: projectRoot) { url in
-                        openFile(url)
+                        let ext = url.pathExtension.lowercased()
+                        if ext == "pdf" {
+                            onOpenPDF?(url)
+                        } else {
+                            openFile(url)
+                        }
                     }
-                    Divider()
                 }
 
                 // Editor + PDF split (horizontal or vertical)
@@ -125,10 +131,39 @@ struct LaTeXEditorView: View {
                 baselineText: savedText,
                 onTextChange: {}
             )
-            if showErrors && !errors.isEmpty {
+            if showErrors {
                 Divider()
-                CompilationErrorView(errors: errors) { _ in }
-                    .frame(height: 120)
+                VStack(alignment: .leading, spacing: 0) {
+                    // Header
+                    HStack {
+                        Image(systemName: errors.contains(where: { !$0.isWarning }) ? "xmark.circle.fill" : "checkmark.circle.fill")
+                            .foregroundStyle(errors.contains(where: { !$0.isWarning }) ? .red : .green)
+                        Text(errors.isEmpty ? "Compilation réussie" : "\(errors.filter { !$0.isWarning }.count) erreur(s), \(errors.filter { $0.isWarning }.count) avertissement(s)")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Button(action: { showErrors = false }) {
+                            Image(systemName: "xmark")
+                                .font(.caption2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.bar)
+
+                    // Console output
+                    ScrollView {
+                        Text(compileOutput.isEmpty ? "Aucune sortie" : compileOutput)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(6)
+                    }
+                }
+                .frame(height: 150)
+                .background(Color(nsColor: .controlBackgroundColor))
             }
         }
     }
@@ -151,6 +186,16 @@ struct LaTeXEditorView: View {
 
     private var editorToolbar: some View {
         HStack(spacing: 8) {
+            // Left group: file browser + LaTeX actions
+            Button(action: { showFileBrowser.toggle() }) {
+                Image(systemName: "sidebar.left")
+                    .symbolVariant(showFileBrowser ? .none : .slash)
+            }
+            .buttonStyle(.plain)
+            .help("Fichiers")
+
+            Divider().frame(height: 16)
+
             Image(systemName: "doc.plaintext")
                 .foregroundStyle(.green)
             Text(fileURL.lastPathComponent)
@@ -180,7 +225,7 @@ struct LaTeXEditorView: View {
             .help("Sauvegarder (⌘S)")
             .keyboardShortcut("s", modifiers: .command)
 
-            // Reflow paragraphs (join lines)
+            // Reflow
             Button(action: reflowParagraphs) {
                 Image(systemName: "text.justify.leading")
             }
@@ -188,23 +233,15 @@ struct LaTeXEditorView: View {
             .help("Reflow paragraphes (⌘⇧W)")
             .keyboardShortcut("w", modifiers: [.command, .shift])
 
-            Spacer()
-
-            // Toggle file browser
-            Button(action: { showFileBrowser.toggle() }) {
-                Image(systemName: "sidebar.left")
-                    .symbolVariant(showFileBrowser ? .none : .slash)
-            }
-            .buttonStyle(.plain)
-            .help("Fichiers")
-
-            // Toggle errors
+            // Console
             Button(action: { showErrors.toggle() }) {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(errors.contains(where: { !$0.isWarning }) ? .red : .secondary)
+                Image(systemName: "doc.text.below.ecg")
+                    .foregroundStyle(showErrors ? .green : errors.contains(where: { !$0.isWarning }) ? .red : .secondary)
             }
             .buttonStyle(.plain)
-            .help("Erreurs")
+            .help("Console de compilation")
+
+            Spacer()
 
             // Layout options
             Menu {
@@ -377,7 +414,8 @@ struct LaTeXEditorView: View {
             let result = await LaTeXCompiler.compile(file: fileURL)
             await MainActor.run {
                 errors = result.errors
-                if !result.errors.isEmpty { showErrors = true }
+                compileOutput = result.log
+                showErrors = true
                 if let pdfURL = result.pdfURL {
                     compiledPDF = PDFDocument(url: pdfURL)
                 }

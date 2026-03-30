@@ -19,7 +19,7 @@ struct TerminalPanel: View {
     @State private var selectedTabID: UUID? = nil
     @State private var terminalViews: [UUID: LocalProcessTerminalView] = [:]
     @State private var currentTheme = 0
-    @State private var currentFontSize: CGFloat = 16
+    @State private var currentFontSize: CGFloat = 14
     @State private var isSplit = false
     @State private var splitTerminalViews: [UUID: LocalProcessTerminalView] = [:]
     @State private var splitTabs: [TerminalTab] = [TerminalTab()]

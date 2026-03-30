@@ -13,6 +13,7 @@ enum TabItem: Hashable {
     case library
     case paper(UUID)
     case editor(String) // file path as string (URL isn't Hashable)
+    case pdfFile(String) // standalone PDF file path
 }
 
 struct MainWindow: View {
@@ -31,6 +32,18 @@ struct MainWindow: View {
 
     private var openEditorPaths: [String] {
         openTabs.compactMap { if case .editor(let path) = $0 { return path } else { return nil } }
+    }
+
+    private var openPDFPaths: [String] {
+        openTabs.compactMap { if case .pdfFile(let path) = $0 { return path } else { return nil } }
+    }
+
+    func openPDFFile(_ url: URL) {
+        let tab = TabItem.pdfFile(url.path)
+        if !openTabs.contains(tab) {
+            openTabs.append(tab)
+        }
+        selectedTab = tab
     }
 
     func openTeXFile(_ url: URL) {
@@ -119,9 +132,18 @@ struct MainWindow: View {
 
                     // Editor tabs
                     ForEach(openEditorPaths, id: \.self) { path in
-                        LaTeXEditorView(fileURL: URL(fileURLWithPath: path), showTerminal: $showTerminal)
+                        LaTeXEditorView(fileURL: URL(fileURLWithPath: path), showTerminal: $showTerminal, onOpenPDF: { url in
+                            openPDFFile(url)
+                        })
                             .opacity(selectedTab == .editor(path) ? 1 : 0)
                             .allowsHitTesting(selectedTab == .editor(path))
+                    }
+
+                    // Standalone PDF tabs
+                    ForEach(openPDFPaths, id: \.self) { path in
+                        StandalonePDFView(url: URL(fileURLWithPath: path))
+                            .opacity(selectedTab == .pdfFile(path) ? 1 : 0)
+                            .allowsHitTesting(selectedTab == .pdfFile(path))
                     }
                 }
 
@@ -189,6 +211,8 @@ struct TabBar: View {
             return allPapers.first(where: { $0.id == id })?.title ?? "Article"
         case .editor(let path):
             return URL(fileURLWithPath: path).lastPathComponent
+        case .pdfFile(let path):
+            return URL(fileURLWithPath: path).lastPathComponent
         }
     }
 
@@ -213,6 +237,7 @@ struct TabButton: View {
         case .library: return "books.vertical"
         case .paper: return "doc.text"
         case .editor: return "doc.plaintext"
+        case .pdfFile: return "doc.richtext"
         }
     }
 
@@ -300,6 +325,28 @@ struct LibraryView: View {
             if inspectedPaperID != nil && !showInspector {
                 showInspector = true
             }
+        }
+    }
+}
+
+// MARK: - Standalone PDF Viewer (for files opened from file browser)
+
+import PDFKit
+
+struct StandalonePDFView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> PDFView {
+        let pdfView = PDFView()
+        pdfView.document = PDFDocument(url: url)
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePageContinuous
+        return pdfView
+    }
+
+    func updateNSView(_ pdfView: PDFView, context: Context) {
+        if pdfView.document?.documentURL != url {
+            pdfView.document = PDFDocument(url: url)
         }
     }
 }
