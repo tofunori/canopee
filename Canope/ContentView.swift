@@ -37,6 +37,20 @@ struct MainWindow: View {
         openTabs.compactMap { if case .pdfFile(let path) = $0 { return path } else { return nil } }
     }
 
+    private var isEditorSelected: Bool {
+        if case .editor = selectedTab { return true }
+        return false
+    }
+
+    private func tabTitle(_ tab: TabItem) -> String {
+        switch tab {
+        case .library: return "Bibliothèque"
+        case .paper(let id): return allPapers.first(where: { $0.id == id })?.title ?? "Article"
+        case .editor(let path): return URL(fileURLWithPath: path).lastPathComponent
+        case .pdfFile(let path): return URL(fileURLWithPath: path).lastPathComponent
+        }
+    }
+
     func openPDFFile(_ url: URL) {
         let tab = TabItem.pdfFile(url.path)
         if !openTabs.contains(tab) {
@@ -71,51 +85,122 @@ struct MainWindow: View {
             openTabs.append(tab)
         }
         selectedTab = tab
+        Self.addRecentTeXFile(url.path)
+    }
+
+    // MARK: - Recent .tex files
+
+    private static let recentTeXKey = "recentTeXFiles"
+    private static let maxRecent = 10
+
+    static func addRecentTeXFile(_ path: String) {
+        var recents = UserDefaults.standard.stringArray(forKey: recentTeXKey) ?? []
+        recents.removeAll { $0 == path }
+        recents.insert(path, at: 0)
+        if recents.count > maxRecent { recents = Array(recents.prefix(maxRecent)) }
+        UserDefaults.standard.set(recents, forKey: recentTeXKey)
+    }
+
+    static var recentTeXFiles: [String] {
+        (UserDefaults.standard.stringArray(forKey: recentTeXKey) ?? [])
+            .filter { FileManager.default.fileExists(atPath: $0) }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Tab bar + split button
+            // Top: section tabs + action buttons
             HStack(spacing: 0) {
                 TabBar(
                     tabs: $openTabs,
                     selectedTab: $selectedTab,
-                    allPapers: allPapers
+                    allPapers: allPapers,
+                    onOpenTeX: { isOpeningTeX = true }
                 )
 
-                Divider().frame(height: 20)
-
-                // Open .tex file
-                Button(action: { isOpeningTeX = true }) {
-                    Image(systemName: "doc.badge.plus")
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.plain)
-                .help("Ouvrir un fichier .tex (⌘O)")
-
-                // Split toggle
-                if case .paper = selectedTab {
+                // Action buttons (right side, aligned with section row)
+                HStack(spacing: 2) {
+                    // Open .tex file (with recent files)
                     Menu {
-                        if splitPaperID != nil {
-                            Button("Fermer le split") { splitPaperID = nil }
+                        let recents = Self.recentTeXFiles
+                        if !recents.isEmpty {
+                            ForEach(recents, id: \.self) { path in
+                                Button {
+                                    openTeXFile(URL(fileURLWithPath: path))
+                                } label: {
+                                    Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "doc.plaintext")
+                                }
+                            }
                             Divider()
                         }
-                        ForEach(openPaperIDs, id: \.self) { id in
-                            if let paper = allPapers.first(where: { $0.id == id }) {
-                                Button(paper.title) { splitPaperID = id }
-                            }
+                        Button {
+                            isOpeningTeX = true
+                        } label: {
+                            Label("Parcourir…", systemImage: "folder")
                         }
                     } label: {
-                        Image(systemName: splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
-                            .frame(width: 32, height: 32)
+                        Image(systemName: "doc.badge.plus")
+                            .font(.system(size: 12))
+                            .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal, 4)
-                    .help("Split view")
+                    .help("Ouvrir un fichier .tex (⌘O)")
+
+                    // Split toggle
+                    if case .paper = selectedTab {
+                        Menu {
+                            if splitPaperID != nil {
+                                Button("Fermer le split") { splitPaperID = nil }
+                                Divider()
+                            }
+                            ForEach(openPaperIDs, id: \.self) { id in
+                                if let paper = allPapers.first(where: { $0.id == id }) {
+                                    Button(paper.title) { splitPaperID = id }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+                                .font(.system(size: 12))
+                                .frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Split view")
+                    }
                 }
+                .padding(.trailing, 6)
             }
-            .frame(height: 32)
+            .frame(height: 28)
             .background(.bar)
+
+            // Document tabs row (papers/PDFs from library)
+            let docTabs = openTabs.filter {
+                if case .paper = $0 { return true }
+                if case .pdfFile = $0 { return true }
+                return false
+            }
+            if !docTabs.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(docTabs, id: \.self) { tab in
+                            TabButton(
+                                tab: tab,
+                                isSelected: selectedTab == tab,
+                                title: tabTitle(tab),
+                                onSelect: { selectedTab = tab },
+                                onClose: {
+                                    if let i = openTabs.firstIndex(of: tab) {
+                                        openTabs.remove(at: i)
+                                        if selectedTab == tab {
+                                            selectedTab = i > 0 ? openTabs[i-1] : (openTabs.first ?? .library)
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                .frame(height: 26)
+                .background(.bar.opacity(0.7))
+            }
 
             Divider()
 
@@ -149,16 +234,23 @@ struct MainWindow: View {
                         }
                     }
 
-                    // Editor tabs
-                    ForEach(openEditorPaths, id: \.self) { path in
-                        LaTeXEditorView(fileURL: URL(fileURLWithPath: path), isActive: selectedTab == .editor(path), showTerminal: $showTerminal, onOpenPDF: { url in
-                            openPDFFile(url)
-                        }, onOpenInNewTab: { url in
-                            openTeXFile(url)
-                        }, openPaperIDs: openPaperIDs)
-                            .opacity(selectedTab == .editor(path) ? 1 : 0)
-                            .allowsHitTesting(selectedTab == .editor(path))
-                    }
+                    // LaTeX editor container (with its own sub-tabs)
+                    LaTeXEditorContainer(
+                        openPaths: openEditorPaths.filter { !$0.isEmpty },
+                        selectedTab: $selectedTab,
+                        showTerminal: $showTerminal,
+                        openPaperIDs: openPaperIDs,
+                        onOpenTeX: { url in openTeXFile(url) },
+                        onOpenPDF: { url in openPDFFile(url) },
+                        onCloseEditor: { path in
+                            let tab = TabItem.editor(path)
+                            if let index = openTabs.firstIndex(of: tab) {
+                                openTabs.remove(at: index)
+                            }
+                        }
+                    )
+                    .opacity(isEditorSelected ? 1 : 0)
+                    .allowsHitTesting(isEditorSelected)
 
                     // Standalone PDF tabs
                     ForEach(openPDFPaths, id: \.self) { path in
@@ -211,23 +303,58 @@ struct TabBar: View {
     @Binding var tabs: [TabItem]
     @Binding var selectedTab: TabItem
     let allPapers: [Paper]
+    var onOpenTeX: () -> Void = {}
+
+    /// The active editor tab (current selection if it's an editor, otherwise the last opened one)
+    private var editorTab: TabItem? {
+        if case .editor(let p) = selectedTab, !p.isEmpty { return selectedTab }
+        return tabs.last { if case .editor(let p) = $0 { return !p.isEmpty } else { return false } }
+    }
+
+    /// Whether the selected tab is an editor tab
+    private var isEditorSelected: Bool {
+        if case .editor = selectedTab { return true }
+        return false
+    }
+
+    /// All open editor tabs (excluding the empty placeholder)
+    private var editorTabs: [TabItem] {
+        tabs.filter { if case .editor(let p) = $0 { return !p.isEmpty } else { return false } }
+    }
+
+    /// Document tabs: papers + standalone PDFs (scrollable, bottom row)
+    private var documentTabs: [TabItem] {
+        tabs.filter {
+            if case .paper = $0 { return true }
+            if case .pdfFile = $0 { return true }
+            return false
+        }
+    }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) {
-                ForEach(tabs, id: \.self) { tab in
-                    TabButton(
-                        tab: tab,
-                        isSelected: selectedTab == tab,
-                        title: title(for: tab),
-                        onSelect: { selectedTab = tab },
-                        onClose: tab != .library ? { closeTab(tab) } : nil
-                    )
+        // Section tabs only (Bibliothèque + LaTeX)
+        HStack(spacing: 0) {
+            SectionTab(
+                icon: "books.vertical",
+                label: "Bibliothèque",
+                isSelected: selectedTab == .library
+            ) { selectedTab = .library }
+
+            SectionTab(
+                icon: "chevron.left.forwardslash.chevron.right",
+                iconColor: .green,
+                label: editorTabs.count > 1 ? "LaTeX" : (editorTab.map { title(for: $0) } ?? "LaTeX"),
+                isSelected: isEditorSelected
+            ) {
+                if let tab = editorTab {
+                    selectedTab = tab
+                } else {
+                    selectedTab = .editor("")
                 }
             }
         }
-        .frame(height: 32)
-        .background(.bar)
+        .frame(height: 28)
+        .clipped()
     }
 
     private func title(for tab: TabItem) -> String {
@@ -251,6 +378,47 @@ struct TabBar: View {
     }
 }
 
+// MARK: - Section Tab (top row — Bibliothèque / LaTeX)
+
+struct SectionTab: View {
+    let icon: String
+    var iconColor: Color? = nil
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                    .foregroundStyle(iconColor ?? (isSelected ? .primary : .secondary))
+                Text(label)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .background(
+                isSelected ? Color.white.opacity(0.06)
+                : isHovered ? Color.white.opacity(0.03)
+                : Color.clear
+            )
+            .overlay(alignment: .bottom) {
+                if isSelected {
+                    Rectangle().fill(Color.white.opacity(0.3)).frame(height: 1.5)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Document Tab (bottom row — papers / PDFs)
+
 struct TabButton: View {
     let tab: TabItem
     let isSelected: Bool
@@ -258,11 +426,13 @@ struct TabButton: View {
     let onSelect: () -> Void
     let onClose: (() -> Void)?
 
+    @State private var isHovered = false
+
     private var tabIcon: String {
         switch tab {
         case .library: return "books.vertical"
         case .paper: return "doc.text"
-        case .editor: return "doc.plaintext"
+        case .editor: return "chevron.left.forwardslash.chevron.right"
         case .pdfFile: return "doc.richtext"
         }
     }
@@ -270,12 +440,12 @@ struct TabButton: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: tabIcon)
-                .font(.caption2)
+                .font(.system(size: 10))
                 .foregroundStyle(.secondary)
             Text(title)
-                .font(.caption)
+                .font(.system(size: 11))
                 .lineLimit(1)
-                .frame(maxWidth: 150)
+                .frame(maxWidth: 160)
             if let onClose {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -283,12 +453,16 @@ struct TabButton: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .opacity(isSelected ? 1 : 0.5)
+                .opacity(isSelected || isHovered ? 1 : 0)
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        .frame(maxHeight: .infinity)
+        .background(
+            isSelected ? Color.accentColor.opacity(0.12)
+            : isHovered ? Color.white.opacity(0.05)
+            : Color.clear
+        )
         .overlay(alignment: .bottom) {
             if isSelected {
                 Rectangle().fill(Color.accentColor).frame(height: 2)
@@ -296,6 +470,7 @@ struct TabButton: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -373,6 +548,136 @@ struct StandalonePDFView: NSViewRepresentable {
     func updateNSView(_ pdfView: PDFView, context: Context) {
         if pdfView.document?.documentURL != url {
             pdfView.document = PDFDocument(url: url)
+        }
+    }
+}
+
+// MARK: - LaTeX Landing View (empty editor state)
+
+// MARK: - LaTeX Editor Container (manages multiple .tex files with sub-tabs)
+
+struct LaTeXEditorContainer: View {
+    let openPaths: [String]
+    @Binding var selectedTab: TabItem
+    @Binding var showTerminal: Bool
+    let openPaperIDs: [UUID]
+    var onOpenTeX: (URL) -> Void
+    var onOpenPDF: (URL) -> Void
+    var onCloseEditor: (String) -> Void
+
+    /// The currently active editor path
+    private var activePath: String? {
+        if case .editor(let p) = selectedTab, !p.isEmpty { return p }
+        return openPaths.last
+    }
+
+    var body: some View {
+        if openPaths.isEmpty {
+            LaTeXLandingView(onOpenTeX: onOpenTeX, onOpenPDF: onOpenPDF)
+        } else {
+            ZStack {
+                ForEach(openPaths, id: \.self) { path in
+                    let isActive = activePath == path
+                    LaTeXEditorView(
+                        fileURL: URL(fileURLWithPath: path),
+                        isActive: isActive,
+                        showTerminal: $showTerminal,
+                        onOpenPDF: onOpenPDF,
+                        onOpenInNewTab: onOpenTeX,
+                        openPaperIDs: openPaperIDs,
+                        siblingPaths: openPaths,
+                        onSwitchEditor: { selectedTab = .editor($0) },
+                        onCloseEditor: { p in
+                            onCloseEditor(p)
+                            if activePath == p {
+                                if let other = openPaths.first(where: { $0 != p }) {
+                                    selectedTab = .editor(other)
+                                } else {
+                                    selectedTab = .editor("")
+                                }
+                            }
+                        }
+                    )
+                    .opacity(isActive ? 1 : 0)
+                    .allowsHitTesting(isActive)
+                }
+            }
+        }
+    }
+}
+
+struct LaTeXLandingView: View {
+    var onOpenTeX: (URL) -> Void
+    var onOpenPDF: (URL) -> Void
+
+    /// Root directory: parent of last opened .tex, or home as fallback
+    private var rootURL: URL {
+        if let lastPath = MainWindow.recentTeXFiles.first {
+            return URL(fileURLWithPath: lastPath).deletingLastPathComponent()
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    var body: some View {
+        HSplitView {
+            FileBrowserView(rootURL: rootURL) { url in
+                let ext = url.pathExtension.lowercased()
+                if ext == "tex" || ext == "bib" || ext == "txt" || ext == "md" {
+                    onOpenTeX(url)
+                } else if ext == "pdf" {
+                    onOpenPDF(url)
+                }
+            }
+            .frame(minWidth: 200, idealWidth: 280, maxWidth: 400)
+
+            VStack(spacing: 16) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.tertiary)
+                Text("Éditeur LaTeX")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text("Ouvrez un fichier .tex depuis l'arborescence\nou utilisez le menu + en haut à droite")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+
+                // Quick access: recent files
+                let recents = MainWindow.recentTeXFiles
+                if !recents.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Récents")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 4)
+                        ForEach(recents.prefix(5), id: \.self) { path in
+                            Button {
+                                onOpenTeX(URL(fileURLWithPath: path))
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "doc.plaintext")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.green)
+                                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                                        .font(.system(size: 12))
+                                    Spacer()
+                                    Text(URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.03))
+                                .cornerRadius(4)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .frame(width: 300)
+                    .padding(.top, 8)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

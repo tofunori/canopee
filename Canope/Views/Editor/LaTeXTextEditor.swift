@@ -543,6 +543,15 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         drawChangeHighlights(in: rect)
     }
 
+    override func resetCursorRects() {
+        discardCursorRects()
+        addCursorRect(bounds, cursor: .iBeam)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.iBeam.set()
+    }
+
     override func didChangeText() {
         super.didChangeText()
         needsDisplay = true

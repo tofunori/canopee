@@ -14,6 +14,9 @@ struct LaTeXEditorView: View {
     var onOpenPDF: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
     var openPaperIDs: [UUID] = []
+    var siblingPaths: [String] = []
+    var onSwitchEditor: ((String) -> Void)?
+    var onCloseEditor: ((String) -> Void)?
     @State private var text = ""
     @State private var savedText = ""
     @State private var compiledPDF: PDFDocument?
@@ -96,6 +99,8 @@ struct LaTeXEditorView: View {
         Set(errors.filter { !$0.isWarning && $0.line > 0 }.map { $0.line })
     }
 
+    @State private var hoveredEditorPath: String?
+
     var body: some View {
         VStack(spacing: 0) {
             // Toolbar
@@ -124,6 +129,59 @@ struct LaTeXEditorView: View {
                 .allowsHitTesting(showFileBrowser)
                 .clipped()
 
+                // Right side: file tabs + editor + PDF
+                VStack(spacing: 0) {
+                    // File tabs (when multiple .tex files open)
+                    if siblingPaths.count > 1 {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 0) {
+                                ForEach(siblingPaths, id: \.self) { path in
+                                    let isCurrent = path == fileURL.path
+                                    let isHov = hoveredEditorPath == path
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.green)
+                                        Text(URL(fileURLWithPath: path).lastPathComponent)
+                                            .font(.system(size: 11))
+                                            .lineLimit(1)
+                                        if let onCloseEditor {
+                                            Button {
+                                                onCloseEditor(path)
+                                            } label: {
+                                                Image(systemName: "xmark")
+                                                    .font(.system(size: 7, weight: .bold))
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .opacity(isCurrent || isHov ? 1 : 0)
+                                        }
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 24)
+                                    .background(
+                                        isCurrent ? Color.white.opacity(0.06)
+                                        : isHov ? Color.white.opacity(0.03)
+                                        : Color.clear
+                                    )
+                                    .overlay(alignment: .bottom) {
+                                        if isCurrent {
+                                            Rectangle().fill(Color.green.opacity(0.5)).frame(height: 1.5)
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        if !isCurrent { onSwitchEditor?(path) }
+                                    }
+                                    .onHover { hoveredEditorPath = $0 ? path : nil }
+                                }
+                            }
+                        }
+                        .frame(height: 24)
+                        .background(.bar.opacity(0.5))
+                        Divider()
+                    }
+
                 // Editor + PDF split (horizontal or vertical)
                 if splitLayout == .horizontal {
                     HSplitView {
@@ -138,6 +196,7 @@ struct LaTeXEditorView: View {
                 } else {
                     editorPane
                 }
+                } // close VStack (file tabs + editor/PDF)
             }
         }
         .onChange(of: syncToLine) {
