@@ -195,6 +195,8 @@ class CursorTrackingView: NSView {
     var desiredCursor: NSCursor = .arrow
     var interactiveMode = false
     var currentTool: AnnotationTool = .pointer
+    var previewColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
+    var previewScaleFactor: CGFloat = 1.0
     private var trackingArea: NSTrackingArea?
 
     // Drag state
@@ -203,6 +205,7 @@ class CursorTrackingView: NSView {
     private var inkPath: NSBezierPath?
 
     // Callbacks
+    var onMouseDownIntercept: ((_ event: NSEvent, _ point: NSPoint) -> Bool)?
     var onRectDragComplete: ((_ start: NSPoint, _ end: NSPoint) -> Void)?
     var onInkDragComplete: ((_ path: NSBezierPath) -> Void)?
 
@@ -233,10 +236,13 @@ class CursorTrackingView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        NSColor.systemBlue.setStroke()
+        let strokeColor = AnnotationColor.normalized(previewColor)
+        let fillColor = AnnotationColor.normalized(previewColor).withAlphaComponent(0.12)
+        let previewStrokeWidth = max(1.5, 2.0 * previewScaleFactor)
 
         if let rect = dragCurrentRect {
-            NSColor.systemBlue.withAlphaComponent(0.08).setFill()
+            strokeColor.setStroke()
+            fillColor.setFill()
             let path: NSBezierPath
             switch currentTool {
             case .oval:
@@ -259,15 +265,15 @@ class CursorTrackingView: NSView {
             default:
                 path = NSBezierPath(rect: rect)
             }
-            path.lineWidth = 1.5
+            path.lineWidth = previewStrokeWidth
             path.setLineDash([4, 3], count: 2, phase: 0)
             if currentTool != .arrow { path.fill() }
             path.stroke()
         }
 
         if let ink = inkPath {
-            NSColor.systemBlue.withAlphaComponent(0.8).setStroke()
-            ink.lineWidth = 2
+            strokeColor.withAlphaComponent(0.9).setStroke()
+            ink.lineWidth = previewStrokeWidth
             ink.lineCapStyle = .round
             ink.lineJoinStyle = .round
             ink.stroke()
@@ -279,6 +285,9 @@ class CursorTrackingView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard interactiveMode else { super.mouseDown(with: event); return }
         let point = convert(event.locationInWindow, from: nil)
+        if onMouseDownIntercept?(event, point) == true {
+            return
+        }
         dragStart = point
         dragCurrentRect = nil
         if currentTool == .ink {
@@ -308,25 +317,36 @@ class CursorTrackingView: NSView {
         guard interactiveMode, let start = dragStart else { super.mouseUp(with: event); return }
 
         if currentTool == .ink, let path = inkPath {
-            inkPath = nil
-            needsDisplay = true
             dragStart = nil
             if path.bounds.width > 3 || path.bounds.height > 3 {
                 onInkDragComplete?(path)
             }
+            clearDragPreviewAsync()
             return
         }
 
-        dragCurrentRect = nil
-        needsDisplay = true
         let end = convert(event.locationInWindow, from: nil)
         dragStart = nil
 
         let width = abs(end.x - start.x)
         let height = abs(end.y - start.y)
-        guard width > 5 || height > 5 else { return }
+        guard width > 5 || height > 5 else {
+            dragCurrentRect = nil
+            needsDisplay = true
+            return
+        }
 
         onRectDragComplete?(start, end)
+        clearDragPreviewAsync()
+    }
+
+    private func clearDragPreviewAsync() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.dragCurrentRect = nil
+            self.inkPath = nil
+            self.needsDisplay = true
+        }
     }
 }
 
@@ -430,6 +450,8 @@ struct PDFKitView: NSViewRepresentable {
 
         let cursorView = CursorTrackingView()
         cursorView.translatesAutoresizingMaskIntoConstraints = false
+        cursorView.previewColor = currentColor
+        cursorView.previewScaleFactor = pdfView.scaleFactor
 
         container.addSubview(pdfView)
         container.addSubview(overlay)
@@ -453,6 +475,9 @@ struct PDFKitView: NSViewRepresentable {
         context.coordinator.pdfView = pdfView
         context.coordinator.overlay = overlay
         context.coordinator.cursorView = cursorView
+        cursorView.onMouseDownIntercept = { [weak coordinator = context.coordinator] event, location in
+            coordinator?.handleInteractiveMouseDown(event: event, at: location) ?? false
+        }
         pdfView.onPreMouseDown = { [weak coordinator = context.coordinator] event, location, pdfView in
             coordinator?.handlePreMouseDown(event: event, at: location, in: pdfView) ?? false
         }
@@ -532,6 +557,8 @@ struct PDFKitView: NSViewRepresentable {
 
         context.coordinator.pdfView?.selectionPreviewTool = currentTool
         context.coordinator.pdfView?.selectionPreviewColor = currentColor
+        context.coordinator.cursorView?.previewColor = currentColor
+        context.coordinator.cursorView?.previewScaleFactor = context.coordinator.pdfView?.scaleFactor ?? 1.0
 
         context.coordinator.updateCursor(for: currentTool)
         context.coordinator.updateAnnotationBorder()
@@ -629,11 +656,18 @@ struct PDFKitView: NSViewRepresentable {
             }
             cursorView?.desiredCursor = cursor
             // Drawing tools: make cursorView interactive
-            cursorView?.interactiveMode = tool.needsDragInteraction
+            cursorView?.interactiveMode = tool.needsDragInteraction && editingTextView == nil
             cursorView?.currentTool = tool
+            cursorView?.previewColor = currentColor
+            cursorView?.previewScaleFactor = pdfView?.scaleFactor ?? 1.0
+            cursorView?.needsDisplay = true
             cursor.set()
             updateSelectionDismissInterception()
             refreshSelectionAppearance()
+        }
+
+        private func syncCursorViewInteractivity() {
+            cursorView?.interactiveMode = currentTool.needsDragInteraction && editingTextView == nil
         }
 
         // MARK: - Undo
@@ -837,7 +871,10 @@ struct PDFKitView: NSViewRepresentable {
             editingAnnotation = annotation
             editingScrollView = scrollView
             editingTextView = textView
+            parent.selectedAnnotation = annotation
+            updateAnnotationBorder()
             documentView.addSubview(scrollView)
+            syncCursorViewInteractivity()
             pdfView.window?.makeFirstResponder(textView)
         }
 
@@ -867,6 +904,7 @@ struct PDFKitView: NSViewRepresentable {
             editingTextView = nil
             editingAnnotation = nil
 
+            syncCursorViewInteractivity()
             pdfView?.setNeedsDisplay(pdfView?.bounds ?? .zero)
             parent.onDocumentChanged()
         }
@@ -875,6 +913,29 @@ struct PDFKitView: NSViewRepresentable {
             if editingTextView != nil {
                 commitTextBoxEditing()
             }
+        }
+
+        func handleInteractiveMouseDown(event: NSEvent, at locationInCursorView: NSPoint) -> Bool {
+            guard currentTool == .textBox,
+                  let cursorView = cursorView,
+                  let pdfView = pdfView else { return false }
+
+            let locationInPDFView = cursorView.convert(locationInCursorView, to: pdfView)
+            guard let annotation = annotationAtPoint(locationInPDFView),
+                  annotation.type == "FreeText",
+                  let page = annotation.page else {
+                return false
+            }
+
+            dismissTextBoxEditing()
+            parent.selectedAnnotation = annotation
+            updateAnnotationBorder()
+
+            if event.clickCount >= 2 {
+                beginEditingTextBox(annotation, on: page)
+            }
+
+            return true
         }
 
         // MARK: - Mouse Up Monitor
@@ -929,6 +990,8 @@ struct PDFKitView: NSViewRepresentable {
         }
 
         @objc func handleViewChanged(_ notification: Notification) {
+            cursorView?.previewScaleFactor = pdfView?.scaleFactor ?? 1.0
+            cursorView?.needsDisplay = true
             updateAnnotationBorder()
         }
 
@@ -1191,6 +1254,8 @@ struct PDFKitView: NSViewRepresentable {
             guard let annotation = annotationAtPoint(locationInView),
                   annotation.type == "FreeText",
                   let page = annotation.page else { return }
+            parent.selectedAnnotation = annotation
+            updateAnnotationBorder()
             beginEditingTextBox(annotation, on: page)
         }
 
