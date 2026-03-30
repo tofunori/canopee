@@ -5,6 +5,9 @@ import MetalKit
 
 extension Notification.Name {
     static let canopeSendPromptToTerminal = Notification.Name("canopeSendPromptToTerminal")
+    static let canopeTerminalAddTab = Notification.Name("canopeTerminalAddTab")
+    static let canopeTerminalApplyTheme = Notification.Name("canopeTerminalApplyTheme")
+    static let canopeTerminalApplyFontSize = Notification.Name("canopeTerminalApplyFontSize")
 }
 
 private let preferredTerminalCursorStyle: CursorStyle = .blinkBar
@@ -27,6 +30,8 @@ struct TerminalTab: Identifiable {
 struct TerminalPanel: View {
     let document: PDFDocument?
     let isVisible: Bool
+    let topInset: CGFloat
+    let showsInlineControls: Bool
     @State private var tabs: [TerminalTab] = [TerminalTab()]
     @State private var selectedTabID: UUID? = nil
     @State private var terminalViews: [UUID: LocalProcessTerminalView] = [:]
@@ -45,6 +50,13 @@ struct TerminalPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if topInset > 0 {
+                Color.clear
+                    .frame(height: topInset)
+                    .background(.bar)
+                Divider()
+            }
+
             // Tab bar
             HStack(spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -55,59 +67,58 @@ struct TerminalPanel: View {
                     }
                 }
 
-                Spacer()
+                if showsInlineControls {
+                    Spacer()
 
-                // New tab
-                Button(action: addTab) {
-                    Image(systemName: "plus")
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .help("Nouveau terminal")
+                    Button(action: addTab) {
+                        Image(systemName: "plus")
+                            .font(.caption)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nouveau terminal")
 
-                // Theme picker
-                Menu {
-                    ForEach(0..<Self.themes.count, id: \.self) { i in
-                        Button {
-                            applyTheme(i)
-                        } label: {
-                            HStack {
-                                if i == currentTheme { Image(systemName: "checkmark") }
-                                Text(Self.themes[i].name)
+                    Menu {
+                        ForEach(0..<Self.themes.count, id: \.self) { i in
+                            Button {
+                                applyTheme(i)
+                            } label: {
+                                HStack {
+                                    if i == currentTheme { Image(systemName: "checkmark") }
+                                    Text(Self.themes[i].name)
+                                }
                             }
                         }
+                    } label: {
+                        Image(systemName: "paintpalette")
+                            .font(.caption)
+                            .frame(width: 24, height: 24)
                     }
-                } label: {
-                    Image(systemName: "paintpalette")
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .help("Thème du terminal")
+                    .buttonStyle(.plain)
+                    .help("Thème du terminal")
 
-                // Font size
-                Menu {
-                    ForEach([12, 13, 14, 15, 16, 17, 18, 20, 24], id: \.self) { size in
-                        Button {
-                            applyFontSize(CGFloat(size))
-                        } label: {
-                            HStack {
-                                if Int(currentFontSize) == size { Image(systemName: "checkmark") }
-                                Text("\(size) pt")
+                    Menu {
+                        ForEach(Self.fontSizes, id: \.self) { size in
+                            Button {
+                                applyFontSize(CGFloat(size))
+                            } label: {
+                                HStack {
+                                    if Int(currentFontSize) == size { Image(systemName: "checkmark") }
+                                    Text("\(size) pt")
+                                }
                             }
                         }
+                    } label: {
+                        Image(systemName: "textformat.size")
+                            .font(.caption)
+                            .frame(width: 24, height: 24)
                     }
-                } label: {
-                    Image(systemName: "textformat.size")
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
+                    .buttonStyle(.plain)
+                    .help("Taille de la police")
+                    .padding(.trailing, 6)
                 }
-                .buttonStyle(.plain)
-                .help("Taille de la police")
-                .padding(.trailing, 6)
             }
-            .frame(height: 26)
+            .frame(height: EditorChromeMetrics.tabBarHeight)
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
 
             Divider()
@@ -168,6 +179,18 @@ struct TerminalPanel: View {
             guard let prompt = notification.userInfo?["prompt"] as? String else { return }
             sendPromptToFocusedTerminal(prompt)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalAddTab)) { _ in
+            addTab()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalApplyTheme)) { notification in
+            guard let index = notification.userInfo?["themeIndex"] as? Int,
+                  Self.themes.indices.contains(index) else { return }
+            applyTheme(index)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalApplyFontSize)) { notification in
+            guard let size = notification.userInfo?["fontSize"] as? CGFloat else { return }
+            applyFontSize(size)
+        }
         .onChange(of: isVisible) {
             guard isVisible else { return }
             DispatchQueue.main.async {
@@ -226,6 +249,7 @@ struct TerminalPanel: View {
         ("Gruvbox", NSColor(red: 0.16, green: 0.15, blue: 0.13, alpha: 1), NSColor(red: 0.92, green: 0.86, blue: 0.70, alpha: 1), NSColor(red: 0.98, green: 0.74, blue: 0.18, alpha: 1)),
         ("Clair", NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1), NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1), .blue),
     ]
+    static let fontSizes = [12, 13, 14, 15, 16, 17, 18, 20, 24]
 
     // MARK: - Actions
 

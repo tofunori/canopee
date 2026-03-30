@@ -263,7 +263,9 @@ struct MainWindow: View {
                 // Shared terminal — always mounted, hidden when not needed
                 TerminalPanel(
                     document: nil,
-                    isVisible: showTerminal && selectedTab != .library
+                    isVisible: showTerminal && selectedTab != .library,
+                    topInset: isEditorSelected ? EditorChromeMetrics.toolbarHeight + 1 : 0,
+                    showsInlineControls: !isEditorSelected
                 )
                     .frame(
                         minWidth: showTerminal && selectedTab != .library ? 520 : 0,
@@ -614,7 +616,7 @@ struct LaTeXEditorContainer: View {
                             .opacity(isCurrent || isHov ? 1 : 0)
                         }
                         .padding(.horizontal, 10)
-                        .frame(height: 26)
+                        .frame(height: EditorChromeMetrics.tabBarHeight)
                         .background(
                             isCurrent ? Color.white.opacity(0.06)
                             : isHov ? Color.white.opacity(0.03)
@@ -631,7 +633,7 @@ struct LaTeXEditorContainer: View {
                     }
                 }
             }
-            .frame(height: 26)
+            .frame(height: EditorChromeMetrics.tabBarHeight)
             .background(.bar.opacity(0.5))
         }
     }

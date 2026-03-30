@@ -2,6 +2,11 @@ import SwiftUI
 import SwiftData
 import PDFKit
 
+enum EditorChromeMetrics {
+    static let toolbarHeight: CGFloat = 36
+    static let tabBarHeight: CGFloat = 26
+}
+
 extension Notification.Name {
     static let syncTeXScrollToLine = Notification.Name("syncTeXScrollToLine")
     static let syncTeXForwardSync = Notification.Name("syncTeXForwardSync")
@@ -150,12 +155,6 @@ struct LaTeXEditorView: View {
 
                 // Right side: file tabs + editor + PDF
                 VStack(spacing: 0) {
-                    // Editor file tabs (injected from container)
-                    if let editorTabBar {
-                        editorTabBar
-                        Divider()
-                    }
-
                 // Editor + PDF split (horizontal or vertical)
                 if splitLayout == .horizontal {
                     HSplitView {
@@ -183,6 +182,9 @@ struct LaTeXEditorView: View {
                 },
                 onSave: { note in
                     savePendingAnnotation(note: note)
+                },
+                onSaveAndSend: { note in
+                    savePendingAnnotation(note: note, sendToClaude: true)
                 }
             )
         }
@@ -340,6 +342,11 @@ struct LaTeXEditorView: View {
 
     private var editorPane: some View {
         VStack(spacing: 0) {
+            if let editorTabBar {
+                editorTabBar
+                Divider()
+            }
+
             LaTeXTextEditor(
                 text: $text,
                 errorLines: errorLines,
@@ -417,7 +424,7 @@ struct LaTeXEditorView: View {
                         }
                     }
                 }
-                .frame(height: 26)
+                .frame(height: EditorChromeMetrics.tabBarHeight)
                 .background(.bar)
                 Divider()
             }
@@ -519,8 +526,8 @@ struct LaTeXEditorView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
         .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
         .cornerRadius(4)
         .contentShape(Rectangle())
@@ -535,176 +542,238 @@ struct LaTeXEditorView: View {
     // MARK: - Toolbar
 
     private var editorToolbar: some View {
-        HStack(spacing: 8) {
-            // Left group: file browser + LaTeX actions
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    showSidebar.toggle()
+        HStack(spacing: 10) {
+            toolbarCluster {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        showSidebar.toggle()
+                    }
+                }) {
+                    Image(systemName: "sidebar.left")
+                        .symbolVariant(showSidebar ? .none : .slash)
                 }
-            }) {
-                Image(systemName: "sidebar.left")
-                    .symbolVariant(showSidebar ? .none : .slash)
+                .buttonStyle(.plain)
+                .help("Afficher la barre latérale")
+
+                toolbarInnerDivider
+
+                Image(systemName: "doc.plaintext")
+                    .foregroundStyle(.green)
+                Text(fileURL.lastPathComponent)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
-            .help("Afficher la barre latérale")
 
-            Divider().frame(height: 16)
-
-            Image(systemName: "doc.plaintext")
-                .foregroundStyle(.green)
-            Text(fileURL.lastPathComponent)
-                .font(.caption)
-                .fontWeight(.semibold)
-
-            Divider().frame(height: 16)
-
-            // Compile
-            Button(action: compile) {
-                if isCompiling {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "play.fill")
+            toolbarCluster {
+                Button(action: compile) {
+                    if isCompiling {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "play.fill")
+                    }
                 }
+                .buttonStyle(.plain)
+                .help("Compiler (⌘B)")
+                .keyboardShortcut("b", modifiers: .command)
+                .disabled(isCompiling)
+
+                Button(action: saveFile) {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .buttonStyle(.plain)
+                .help("Sauvegarder (⌘S)")
+                .keyboardShortcut("s", modifiers: .command)
+
+                Button(action: beginAnnotationFromSelection) {
+                    Image(systemName: "highlighter")
+                }
+                .buttonStyle(.plain)
+                .help("Annoter la sélection (⇧⌘A)")
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(!canCreateAnnotationFromSelection)
+
+                Button(action: reflowParagraphs) {
+                    Image(systemName: "text.justify.leading")
+                }
+                .buttonStyle(.plain)
+                .help("Reflow paragraphes (⌘⇧W)")
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+
+                Button(action: { showErrors.toggle() }) {
+                    Image(systemName: "doc.text.below.ecg")
+                        .foregroundStyle(showErrors ? .green : errors.contains(where: { !$0.isWarning }) ? .red : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Console de compilation")
             }
-            .buttonStyle(.plain)
-            .help("Compiler (⌘B)")
-            .keyboardShortcut("b", modifiers: .command)
-            .disabled(isCompiling)
 
-            // Save
-            Button(action: saveFile) {
-                Image(systemName: "square.and.arrow.down")
+            toolbarCluster {
+                Menu {
+                    let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
+                    if openPapers.isEmpty {
+                        Text("Aucun article ouvert en onglet")
+                    } else {
+                        ForEach(openPapers) { paper in
+                            Button {
+                                openReference(paper)
+                            } label: {
+                                let alreadyOpen = pdfPaneTabs.contains(.reference(paper.id))
+                                Text("\(alreadyOpen ? "✓ " : "")\(paper.authorsShort) (\(paper.year.map { String($0) } ?? "—")) — \(paper.title)")
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: pdfPaneTabs.count > 1 ? "book.fill" : "book")
+                        .foregroundStyle(pdfPaneTabs.count > 1 ? .blue : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Ouvrir un article de référence")
+
+                toolbarInnerDivider
+
+                Menu {
+                    Button {
+                        splitLayout = .horizontal
+                        showPDFPreview = true
+                    } label: {
+                        Label("Côte à côte", systemImage: "rectangle.split.2x1")
+                        if splitLayout == .horizontal { Image(systemName: "checkmark") }
+                    }
+                    Button {
+                        splitLayout = .vertical
+                        showPDFPreview = true
+                    } label: {
+                        Label("Haut / Bas", systemImage: "rectangle.split.1x2")
+                        if splitLayout == .vertical { Image(systemName: "checkmark") }
+                    }
+                    Button {
+                        splitLayout = .editorOnly
+                        showPDFPreview = false
+                    } label: {
+                        Label("Éditeur seul", systemImage: "doc.text")
+                        if splitLayout == .editorOnly { Image(systemName: "checkmark") }
+                    }
+                } label: {
+                    Image(systemName: "rectangle.split.2x1")
+                }
+                .buttonStyle(.plain)
+                .help("Disposition")
             }
-            .buttonStyle(.plain)
-            .help("Sauvegarder (⌘S)")
-            .keyboardShortcut("s", modifiers: .command)
 
-            Button(action: beginAnnotationFromSelection) {
-                Image(systemName: "highlighter")
-            }
-            .buttonStyle(.plain)
-            .help("Annoter la sélection (⇧⌘A)")
-            .keyboardShortcut("a", modifiers: [.command, .shift])
-            .disabled(!canCreateAnnotationFromSelection)
+            Spacer(minLength: 12)
 
-            // Reflow
-            Button(action: reflowParagraphs) {
-                Image(systemName: "text.justify.leading")
-            }
-            .buttonStyle(.plain)
-            .help("Reflow paragraphes (⌘⇧W)")
-            .keyboardShortcut("w", modifiers: [.command, .shift])
-
-            // Console
-            Button(action: { showErrors.toggle() }) {
-                Image(systemName: "doc.text.below.ecg")
-                    .foregroundStyle(showErrors ? .green : errors.contains(where: { !$0.isWarning }) ? .red : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Console de compilation")
-
-            Divider().frame(height: 16)
-
-            // Reference paper picker (only papers open in tabs)
-            Menu {
-                let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
-                if openPapers.isEmpty {
-                    Text("Aucun article ouvert en onglet")
-                } else {
-                    ForEach(openPapers) { paper in
+            toolbarCluster {
+                Menu {
+                    ForEach([11, 12, 13, 14, 15, 16, 18, 20, 24], id: \.self) { size in
                         Button {
-                            openReference(paper)
+                            editorFontSize = CGFloat(size)
                         } label: {
-                            let alreadyOpen = pdfPaneTabs.contains(.reference(paper.id))
-                            Text("\(alreadyOpen ? "✓ " : "")\(paper.authorsShort) (\(paper.year.map { String($0) } ?? "—")) — \(paper.title)")
+                            HStack {
+                                if Int(editorFontSize) == size { Image(systemName: "checkmark") }
+                                Text("\(size) pt")
+                            }
                         }
                     }
+                } label: {
+                    Image(systemName: "textformat.size")
                 }
-            } label: {
-                Image(systemName: pdfPaneTabs.count > 1 ? "book.fill" : "book")
-                    .foregroundStyle(pdfPaneTabs.count > 1 ? .blue : .secondary)
+                .buttonStyle(.plain)
+                .help("Taille police")
+
+                Menu {
+                    ForEach(0..<Self.editorThemes.count, id: \.self) { i in
+                        Button {
+                            editorTheme = i
+                        } label: {
+                            HStack {
+                                if i == editorTheme { Image(systemName: "checkmark") }
+                                Text(Self.editorThemes[i].name)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "paintpalette")
+                }
+                .buttonStyle(.plain)
+                .help("Thème éditeur")
             }
-            .buttonStyle(.plain)
-            .help("Ouvrir un article de référence")
 
-            Spacer()
+            toolbarCluster {
+                Button(action: { showTerminal.toggle() }) {
+                    Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                        .foregroundStyle(showTerminal ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Terminal")
 
-            // Layout options
-            Menu {
-                Button {
-                    splitLayout = .horizontal
-                    showPDFPreview = true
-                } label: {
-                    Label("Côte à côte", systemImage: "rectangle.split.2x1")
-                    if splitLayout == .horizontal { Image(systemName: "checkmark") }
-                }
-                Button {
-                    splitLayout = .vertical
-                    showPDFPreview = true
-                } label: {
-                    Label("Haut / Bas", systemImage: "rectangle.split.1x2")
-                    if splitLayout == .vertical { Image(systemName: "checkmark") }
-                }
-                Button {
-                    splitLayout = .editorOnly
-                    showPDFPreview = false
-                } label: {
-                    Label("Éditeur seul", systemImage: "doc.text")
-                    if splitLayout == .editorOnly { Image(systemName: "checkmark") }
-                }
-            } label: {
-                Image(systemName: "rectangle.split.2x1")
-            }
-            .buttonStyle(.plain)
-            .help("Disposition")
+                if showTerminal {
+                    toolbarInnerDivider
 
-            // Font size
-            Menu {
-                ForEach([11, 12, 13, 14, 15, 16, 18, 20, 24], id: \.self) { size in
-                    Button {
-                        editorFontSize = CGFloat(size)
+                    Button(action: addTerminalTab) {
+                        Image(systemName: "plus")
+                            .foregroundStyle(.green)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nouveau terminal")
+
+                    Menu {
+                        ForEach(0..<TerminalPanel.themes.count, id: \.self) { index in
+                            Button {
+                                applyTerminalTheme(index)
+                            } label: {
+                                Text(TerminalPanel.themes[index].name)
+                            }
+                        }
                     } label: {
-                        HStack {
-                            if Int(editorFontSize) == size { Image(systemName: "checkmark") }
-                            Text("\(size) pt")
-                        }
+                        Image(systemName: "paintpalette")
+                            .foregroundStyle(.green)
                     }
-                }
-            } label: {
-                Image(systemName: "textformat.size")
-            }
-            .buttonStyle(.plain)
-            .help("Taille police")
+                    .buttonStyle(.plain)
+                    .help("Thème du terminal")
 
-            // Theme
-            Menu {
-                ForEach(0..<Self.editorThemes.count, id: \.self) { i in
-                    Button {
-                        editorTheme = i
+                    Menu {
+                        ForEach(TerminalPanel.fontSizes, id: \.self) { size in
+                            Button {
+                                applyTerminalFontSize(size)
+                            } label: {
+                                Text("\(size) pt")
+                            }
+                        }
                     } label: {
-                        HStack {
-                            if i == editorTheme { Image(systemName: "checkmark") }
-                            Text(Self.editorThemes[i].name)
-                        }
+                        Image(systemName: "textformat.size")
+                            .foregroundStyle(.green)
                     }
+                    .buttonStyle(.plain)
+                    .help("Taille de la police du terminal")
                 }
-            } label: {
-                Image(systemName: "paintpalette")
             }
-            .buttonStyle(.plain)
-            .help("Thème éditeur")
-
-            // Terminal toggle
-            Button(action: { showTerminal.toggle() }) {
-                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
-                    .foregroundStyle(showTerminal ? .green : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Terminal")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        .frame(height: EditorChromeMetrics.toolbarHeight)
         .background(.bar)
+    }
+
+    private var toolbarInnerDivider: some View {
+        Divider()
+            .frame(height: 14)
+    }
+
+    private func toolbarCluster<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            content()
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+        )
     }
 
     // MARK: - File Operations
@@ -815,19 +884,28 @@ struct LaTeXEditorView: View {
         pendingAnnotation = PendingAnnotation(draft: draft, existingAnnotationID: nil)
     }
 
-    private func savePendingAnnotation(note: String) {
+    private func savePendingAnnotation(note: String, sendToClaude: Bool = false) {
         guard var draft = pendingAnnotation?.draft else { return }
         draft.note = note
 
+        let annotationToSend: LaTeXAnnotation
         if let existingAnnotationID = pendingAnnotation?.existingAnnotationID,
            let index = latexAnnotations.firstIndex(where: { $0.id == existingAnnotationID }) {
             latexAnnotations[index] = LaTeXAnnotationStore.update(latexAnnotations[index], note: note, in: text)
+            annotationToSend = latexAnnotations[index]
         } else {
-            latexAnnotations.append(LaTeXAnnotationStore.createAnnotation(from: draft))
+            let annotation = LaTeXAnnotationStore.createAnnotation(from: draft)
+            latexAnnotations.append(annotation)
+            annotationToSend = annotation
         }
         persistAnnotations()
         reconcileAnnotations()
         pendingAnnotation = nil
+
+        if sendToClaude,
+           let resolved = LaTeXAnnotationStore.resolve([annotationToSend], in: text).first {
+            sendAnnotationToClaude(resolved)
+        }
     }
 
     private func deleteAnnotation(_ annotationID: UUID) {
@@ -858,6 +936,20 @@ struct LaTeXEditorView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NotificationCenter.default.post(name: .canopeSendPromptToTerminal, object: nil, userInfo: userInfo)
         }
+    }
+
+    private func addTerminalTab() {
+        NotificationCenter.default.post(name: .canopeTerminalAddTab, object: nil)
+    }
+
+    private func applyTerminalTheme(_ index: Int) {
+        let userInfo = ["themeIndex": index]
+        NotificationCenter.default.post(name: .canopeTerminalApplyTheme, object: nil, userInfo: userInfo)
+    }
+
+    private func applyTerminalFontSize(_ size: Int) {
+        let userInfo = ["fontSize": CGFloat(size)]
+        NotificationCenter.default.post(name: .canopeTerminalApplyFontSize, object: nil, userInfo: userInfo)
     }
 
     private func annotationPrompt(for resolved: ResolvedLaTeXAnnotation) -> String {
@@ -1266,6 +1358,7 @@ private struct LaTeXAnnotationNoteSheet: View {
     let initialNote: String
     let onCancel: () -> Void
     let onSave: (String) -> Void
+    let onSaveAndSend: (String) -> Void
 
     @State private var note: String
 
@@ -1274,13 +1367,15 @@ private struct LaTeXAnnotationNoteSheet: View {
         selectedText: String,
         initialNote: String,
         onCancel: @escaping () -> Void,
-        onSave: @escaping (String) -> Void
+        onSave: @escaping (String) -> Void,
+        onSaveAndSend: @escaping (String) -> Void
     ) {
         self.title = title
         self.selectedText = selectedText
         self.initialNote = initialNote
         self.onCancel = onCancel
         self.onSave = onSave
+        self.onSaveAndSend = onSaveAndSend
         _note = State(initialValue: initialNote)
     }
 
@@ -1325,6 +1420,11 @@ private struct LaTeXAnnotationNoteSheet: View {
             HStack {
                 Button("Annuler", action: onCancel)
                 Spacer()
+                Button(initialNote.isEmpty ? "Ajouter et envoyer" : "Enregistrer et envoyer") {
+                    onSaveAndSend(trimmedNote)
+                }
+                .disabled(trimmedNote.isEmpty)
+
                 Button(initialNote.isEmpty ? "Ajouter" : "Enregistrer") {
                     onSave(trimmedNote)
                 }
