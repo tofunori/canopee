@@ -51,8 +51,33 @@ jobs:
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "version_suffix=${TAG#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve signing mode
+        id: signing
+        env:
+          APPLE_DEVELOPER_CERTIFICATE_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12 }}
+          APPLE_DEVELOPER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$APPLE_DEVELOPER_CERTIFICATE_P12" && -n "$APPLE_DEVELOPER_CERTIFICATE_PASSWORD" && -n "$APPLE_DEVELOPER_IDENTITY" && -n "$APPLE_TEAM_ID" ]]; then
+            echo "has_signing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_signing=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [[ -n "$APPLE_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" && -n "$APPLE_TEAM_ID" && -n "$APPLE_DEVELOPER_IDENTITY" ]]; then
+            echo "has_notary=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_notary=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Import Developer ID certificate
-        if: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12 != '' && secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD != '' && secrets.APPLE_DEVELOPER_IDENTITY != '' && secrets.APPLE_TEAM_ID != '' }}
+        if: ${{ steps.signing.outputs.has_signing == 'true' }}
         env:
           CERTIFICATE_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12 }}
           CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
@@ -81,14 +106,22 @@ jobs:
       - name: Build release DMG
         env:
           VERSION_SUFFIX: ${{ steps.meta.outputs.version_suffix }}
-          CODE_SIGN_STYLE_OVERRIDE: ${{ secrets.APPLE_DEVELOPER_IDENTITY != '' && 'Manual' || '' }}
-          CODE_SIGN_IDENTITY_OVERRIDE: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
-          DEVELOPMENT_TEAM_OVERRIDE: ${{ secrets.APPLE_TEAM_ID }}
-          ENABLE_HARDENED_RUNTIME_OVERRIDE: ${{ secrets.APPLE_DEVELOPER_IDENTITY != '' && 'YES' || '' }}
-        run: ./scripts/build-release-dmg.sh
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          HAS_SIGNING: ${{ steps.signing.outputs.has_signing }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$HAS_SIGNING" == "true" ]]; then
+            export CODE_SIGN_STYLE_OVERRIDE=Manual
+            export CODE_SIGN_IDENTITY_OVERRIDE="$APPLE_DEVELOPER_IDENTITY"
+            export DEVELOPMENT_TEAM_OVERRIDE="$APPLE_TEAM_ID"
+            export ENABLE_HARDENED_RUNTIME_OVERRIDE=YES
+          fi
+          ./scripts/build-release-dmg.sh
 
       - name: Notarize DMG
-        if: ${{ secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_DEVELOPER_IDENTITY != '' }}
+        if: ${{ steps.signing.outputs.has_notary == 'true' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
