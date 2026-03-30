@@ -5,6 +5,7 @@ struct LaTeXEditorView: View {
     let fileURL: URL
     @Binding var showTerminal: Bool
     @State private var text = ""
+    @State private var savedText = ""
     @State private var compiledPDF: PDFDocument?
     @State private var errors: [CompilationError] = []
     @State private var isCompiling = false
@@ -121,6 +122,7 @@ struct LaTeXEditorView: View {
                 errorLines: errorLines,
                 fontSize: editorFontSize,
                 theme: Self.editorThemes[editorTheme],
+                baselineText: savedText,
                 onTextChange: {}
             )
             if showErrors && !errors.isEmpty {
@@ -177,6 +179,14 @@ struct LaTeXEditorView: View {
             .buttonStyle(.plain)
             .help("Sauvegarder (⌘S)")
             .keyboardShortcut("s", modifiers: .command)
+
+            // Reflow paragraphs (join lines)
+            Button(action: reflowParagraphs) {
+                Image(systemName: "text.justify.leading")
+            }
+            .buttonStyle(.plain)
+            .help("Reflow paragraphes (⌘⇧W)")
+            .keyboardShortcut("w", modifiers: [.command, .shift])
 
             Spacer()
 
@@ -279,11 +289,13 @@ struct LaTeXEditorView: View {
     private func loadFile() {
         guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
         text = content
+        savedText = content
         lastModified = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
     }
 
     private func saveFile() {
         try? text.write(to: fileURL, atomically: true, encoding: .utf8)
+        savedText = text
         lastModified = modificationDate()
         compile()
     }
@@ -293,8 +305,59 @@ struct LaTeXEditorView: View {
             try? text.write(to: fileURL, atomically: true, encoding: .utf8)
             if let content = try? String(contentsOf: url, encoding: .utf8) {
                 text = content
+                savedText = content
             }
         }
+    }
+
+    /// Reflow: join paragraph lines into single lines. Visual word wrap handles display.
+    /// Preserves blank lines and LaTeX structural commands.
+    private func reflowParagraphs() {
+        let lines = text.components(separatedBy: "\n")
+        var result: [String] = []
+        var currentParagraph: [String] = []
+
+        func flushParagraph() {
+            if !currentParagraph.isEmpty {
+                result.append(currentParagraph.joined(separator: " "))
+                currentParagraph = []
+            }
+        }
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.isEmpty {
+                flushParagraph()
+                result.append("")
+                continue
+            }
+
+            let isStructural = trimmed.hasPrefix("\\begin") || trimmed.hasPrefix("\\end") ||
+                trimmed.hasPrefix("\\section") || trimmed.hasPrefix("\\subsection") ||
+                trimmed.hasPrefix("\\title") || trimmed.hasPrefix("\\author") ||
+                trimmed.hasPrefix("\\date") || trimmed.hasPrefix("\\documentclass") ||
+                trimmed.hasPrefix("\\usepackage") || trimmed.hasPrefix("\\maketitle") ||
+                trimmed.hasPrefix("\\item") || trimmed.hasPrefix("\\label") ||
+                trimmed.hasPrefix("\\input") || trimmed.hasPrefix("\\include") ||
+                trimmed.hasPrefix("\\newcommand") || trimmed.hasPrefix("\\renewcommand") ||
+                trimmed.hasPrefix("\\tableofcontents") || trimmed.hasPrefix("\\bibliography") ||
+                trimmed.hasPrefix("\\onehalfspacing") || trimmed.hasPrefix("\\setlength") ||
+                trimmed.hasPrefix("%")
+
+            if isStructural {
+                flushParagraph()
+                result.append(line)
+            } else {
+                currentParagraph.append(trimmed)
+            }
+        }
+        flushParagraph()
+
+        text = result.joined(separator: "\n")
+        savedText = text
+        try? text.write(to: fileURL, atomically: true, encoding: .utf8)
+        lastModified = modificationDate()
     }
 
     private func loadExistingPDF() {

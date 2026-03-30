@@ -6,6 +6,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
     let errorLines: Set<Int>
     var fontSize: CGFloat = 14
     var theme: (name: String, bg: NSColor, fg: NSColor, comment: NSColor, command: NSColor, math: NSColor, env: NSColor, brace: NSColor)?
+    let baselineText: String
     let onTextChange: () -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -18,7 +19,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
         scrollView.appearance = NSAppearance(named: .aqua)
         scrollView.contentView.appearance = scrollView.appearance
 
-        let textView = NSTextView()
+        let textView = ChangeTrackingTextView()
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true
@@ -34,7 +35,11 @@ struct LaTeXTextEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.textContainerInset = NSSize(width: 4, height: 8)
+        textView.gutterWidth = 38
+        textView.textContainerInset = NSSize(width: textView.gutterWidth + 6, height: 8)
+
+        // Soft word wrap — text flows to fit pane width, adjusts on resize
+        textView.textContainer?.lineBreakMode = .byWordWrapping
         textView.autoresizingMask = [.width]
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
@@ -42,24 +47,29 @@ struct LaTeXTextEditor: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
 
         textView.delegate = context.coordinator
+        context.coordinator.parent = self
         context.coordinator.textView = textView
-
+        textView.changeCoordinator = context.coordinator
         scrollView.documentView = textView
 
         // Set initial text
         textView.string = text
         context.coordinator.applyTheme(to: textView)
         context.coordinator.applyHighlighting()
+        context.coordinator.refreshChangeTracking()
 
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+        guard let textView = scrollView.documentView as? ChangeTrackingTextView else { return }
+        context.coordinator.parent = self
+        textView.changeCoordinator = context.coordinator
 
         let textChanged = textView.string != text
         let themeChanged = context.coordinator.theme?.name != theme?.name
         let fontChanged = context.coordinator.fontSize != fontSize
+        let baselineChanged = context.coordinator.baselineText != baselineText
 
         if textChanged {
             let selectedRange = textView.selectedRange()
@@ -74,7 +84,8 @@ struct LaTeXTextEditor: NSViewRepresentable {
         context.coordinator.errorLines = errorLines
         context.coordinator.applyTheme(to: textView)
 
-        if textChanged || themeChanged || fontChanged {
+        if textChanged || themeChanged || fontChanged || baselineChanged {
+            context.coordinator.refreshChangeTracking()
             context.coordinator.applyHighlighting()
         }
     }
@@ -84,19 +95,22 @@ struct LaTeXTextEditor: NSViewRepresentable {
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
-        let parent: LaTeXTextEditor
-        weak var textView: NSTextView?
+        var parent: LaTeXTextEditor
+        fileprivate weak var textView: ChangeTrackingTextView?
         var errorLines: Set<Int> = []
         var fontSize: CGFloat = 14
         var theme: (name: String, bg: NSColor, fg: NSColor, comment: NSColor, command: NSColor, math: NSColor, env: NSColor, brace: NSColor)?
+        var baselineText: String
+        private var changeHunks: [ChangeHunk] = []
         private var isUpdating = false
 
         init(parent: LaTeXTextEditor) {
             self.parent = parent
+            baselineText = parent.baselineText
         }
 
         @MainActor
-        func applyTheme(to textView: NSTextView) {
+        fileprivate func applyTheme(to textView: ChangeTrackingTextView) {
             let t = theme
             let fg = t?.fg ?? NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1)
             let bg = t?.bg ?? NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1)
@@ -115,11 +129,18 @@ struct LaTeXTextEditor: NSViewRepresentable {
                 .font: font,
                 .foregroundColor: fg,
             ]
+            textView.gutterBackgroundColor = bg
+            textView.markerColor = cursor.withAlphaComponent(0.92)
+            textView.deletedMarkerColor = NSColor.systemRed.withAlphaComponent(0.85)
+            textView.dividerColor = fg.withAlphaComponent(0.025)
+            textView.changedLineHighlightColor = cursor.withAlphaComponent(0.05)
+            textView.deletedLineHighlightColor = NSColor.systemRed.withAlphaComponent(0.04)
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = textView, !isUpdating else { return }
             parent.text = textView.string
+            refreshChangeTracking()
             applyHighlighting()
             parent.onTextChange()
         }
@@ -130,7 +151,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
             if range.length > 0 {
                 let selected = (textView.string as NSString).substring(with: range)
                 let content = "[Source: LaTeX editor]\n\(selected)"
-                try? content.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
+                try? content.write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
             }
         }
 
@@ -164,12 +185,36 @@ struct LaTeXTextEditor: NSViewRepresentable {
             highlight(storage, text: text, pattern: #"\$[^$]+\$"#, color: mathColor)
             highlight(storage, text: text, pattern: #"[{}]"#, color: braceColor)
             highlight(storage, text: text, pattern: #"[\[\]]"#, color: braceColor.withAlphaComponent(0.7))
-
             storage.endEditing()
             textView.typingAttributes = [
                 .font: font,
                 .foregroundColor: fg,
             ]
+        }
+
+        @MainActor
+        func refreshChangeTracking() {
+            guard let textView = textView else { return }
+            baselineText = parent.baselineText
+            changeHunks = ChangeHunk.compute(baselineText: baselineText, currentText: textView.string)
+            textView.changeHunks = changeHunks
+        }
+
+        @MainActor
+        func revertChange(id: UUID) {
+            guard let textView = textView,
+                  let hunk = changeHunks.first(where: { $0.id == id }) else { return }
+
+            if textView.shouldChangeText(in: hunk.currentRange, replacementString: hunk.replacementText) {
+                textView.textStorage?.beginEditing()
+                textView.textStorage?.replaceCharacters(in: hunk.currentRange, with: hunk.replacementText)
+                textView.textStorage?.endEditing()
+                textView.didChangeText()
+
+                let nsText = textView.string as NSString
+                let insertionLocation = min(hunk.currentRange.location + (hunk.replacementText as NSString).length, nsText.length)
+                textView.setSelectedRange(NSRange(location: insertionLocation, length: 0))
+            }
         }
 
         private func highlight(_ storage: NSTextStorage, text: String, pattern: String, color: NSColor) {
@@ -181,5 +226,414 @@ struct LaTeXTextEditor: NSViewRepresentable {
                 }
             }
         }
+
+    }
+}
+
+private struct ChangeHunk: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case modifiedOrAdded
+        case deleted
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let currentRange: NSRange
+    let replacementText: String
+    let lineRange: ClosedRange<Int>?
+    let anchorLocation: Int
+
+    static func compute(baselineText: String, currentText: String) -> [ChangeHunk] {
+        let oldLines = TrackedLine.make(from: baselineText)
+        let newLines = TrackedLine.make(from: currentText)
+        let oldTexts = oldLines.map(\.text)
+        let newTexts = newLines.map(\.text)
+        let segments = diffSegments(old: oldTexts, new: newTexts)
+        let oldNSString = baselineText as NSString
+        let newNSString = currentText as NSString
+
+        return segments.compactMap { segment in
+            let replacementText = oldLines.textSegment(in: segment.oldRange, from: oldNSString)
+            let currentRange = newLines.characterRange(in: segment.newRange, stringLength: newNSString.length)
+            let anchorLocation = newLines.anchorLocation(for: segment.newRange, stringLength: newNSString.length)
+
+            if replacementText.isEmpty && currentRange.length == 0 {
+                return nil
+            }
+
+            let kind: Kind = segment.newRange.isEmpty ? .deleted : .modifiedOrAdded
+            let lineRange: ClosedRange<Int>? = segment.newRange.isEmpty ? nil : (segment.newRange.lowerBound + 1)...segment.newRange.upperBound
+
+            return ChangeHunk(
+                kind: kind,
+                currentRange: currentRange,
+                replacementText: replacementText,
+                lineRange: lineRange,
+                anchorLocation: anchorLocation
+            )
+        }
+    }
+
+    private struct DiffSegment {
+        let oldRange: Range<Int>
+        let newRange: Range<Int>
+    }
+
+    private static func diffSegments(old: [String], new: [String]) -> [DiffSegment] {
+        let dp = lcsMatrix(old: old, new: new)
+        var segments: [DiffSegment] = []
+        var i = 0
+        var j = 0
+        var oldStart: Int?
+        var newStart: Int?
+
+        func flush(upToOld oldEnd: Int, newEnd: Int) {
+            guard let oldStart, let newStart else { return }
+            segments.append(DiffSegment(oldRange: oldStart..<oldEnd, newRange: newStart..<newEnd))
+            selfReset()
+        }
+
+        func selfReset() {
+            oldStart = nil
+            newStart = nil
+        }
+
+        while i < old.count || j < new.count {
+            if i < old.count, j < new.count, old[i] == new[j] {
+                flush(upToOld: i, newEnd: j)
+                i += 1
+                j += 1
+            } else if j < new.count, i < old.count {
+                if oldStart == nil {
+                    oldStart = i
+                    newStart = j
+                }
+                if dp[i][j + 1] >= dp[i + 1][j] {
+                    j += 1
+                } else {
+                    i += 1
+                }
+            } else if j < new.count {
+                if oldStart == nil {
+                    oldStart = i
+                    newStart = j
+                }
+                j += 1
+            } else if i < old.count {
+                if oldStart == nil {
+                    oldStart = i
+                    newStart = j
+                }
+                i += 1
+            }
+        }
+
+        flush(upToOld: i, newEnd: j)
+        return segments
+    }
+
+    private static func lcsMatrix(old: [String], new: [String]) -> [[Int]] {
+        let oldCount = old.count
+        let newCount = new.count
+        var dp = Array(repeating: Array(repeating: 0, count: newCount + 1), count: oldCount + 1)
+
+        guard oldCount > 0, newCount > 0 else { return dp }
+
+        for i in stride(from: oldCount - 1, through: 0, by: -1) {
+            for j in stride(from: newCount - 1, through: 0, by: -1) {
+                if old[i] == new[j] {
+                    dp[i][j] = dp[i + 1][j + 1] + 1
+                } else {
+                    dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
+                }
+            }
+        }
+
+        return dp
+    }
+}
+
+private struct TrackedLine: Equatable {
+    let text: String
+    let fullRange: NSRange
+
+    static func make(from text: String) -> [TrackedLine] {
+        let nsText = text as NSString
+        guard nsText.length > 0 else { return [] }
+
+        var lines: [TrackedLine] = []
+        var index = 0
+
+        while index < nsText.length {
+            var lineStart = 0
+            var lineEnd = 0
+            var contentsEnd = 0
+            nsText.getLineStart(&lineStart, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: index, length: 0))
+            let contentRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
+            let fullRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+            lines.append(TrackedLine(text: nsText.substring(with: contentRange), fullRange: fullRange))
+            index = lineEnd
+        }
+
+        return lines
+    }
+}
+
+private extension Array where Element == TrackedLine {
+    func characterRange(in range: Range<Int>, stringLength: Int) -> NSRange {
+        if range.isEmpty {
+            let location = anchorLocation(for: range, stringLength: stringLength)
+            return NSRange(location: location, length: 0)
+        }
+
+        let start = self[range.lowerBound].fullRange.location
+        let end = self[range.upperBound - 1].fullRange.location + self[range.upperBound - 1].fullRange.length
+        return NSRange(location: start, length: end - start)
+    }
+
+    func textSegment(in range: Range<Int>, from text: NSString) -> String {
+        guard !range.isEmpty else { return "" }
+        let segmentRange = characterRange(in: range, stringLength: text.length)
+        guard segmentRange.length > 0 else { return "" }
+        return text.substring(with: segmentRange)
+    }
+
+    func anchorLocation(for range: Range<Int>, stringLength: Int) -> Int {
+        guard !isEmpty else { return 0 }
+        if range.lowerBound < count {
+            return self[range.lowerBound].fullRange.location
+        }
+        return stringLength
+    }
+}
+
+@MainActor
+fileprivate final class ChangeTrackingTextView: NSTextView {
+    struct MarkerFrame {
+        let id: UUID
+        let rect: NSRect
+    }
+
+    weak var changeCoordinator: LaTeXTextEditor.Coordinator?
+    var gutterWidth: CGFloat = 10
+    var changeHunks: [ChangeHunk] = [] {
+        didSet { needsDisplay = true }
+    }
+
+    var gutterBackgroundColor = NSColor(calibratedWhite: 0.15, alpha: 1)
+    var lineNumberColor = NSColor.white.withAlphaComponent(0.25)
+    var markerColor = NSColor.systemPurple
+    var deletedMarkerColor = NSColor.systemRed
+    var dividerColor = NSColor.white.withAlphaComponent(0.08)
+    var changedLineHighlightColor = NSColor.systemPurple.withAlphaComponent(0.12)
+    var deletedLineHighlightColor = NSColor.systemRed.withAlphaComponent(0.08)
+
+    private var markerFrames: [MarkerFrame] = []
+    private var selectedMarkerID: UUID?
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        drawGutter(in: rect)
+        drawChangeHighlights(in: rect)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard point.x <= gutterWidth else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        guard let marker = markerFrames.first(where: { $0.rect.insetBy(dx: -3, dy: -2).contains(point) }) else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        selectedMarkerID = marker.id
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "Revert ce changement", action: #selector(revertSelectedMarker(_:)), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func revertSelectedMarker(_ sender: NSMenuItem) {
+        guard let selectedMarkerID else { return }
+        changeCoordinator?.revertChange(id: selectedMarkerID)
+    }
+
+    private func drawGutter(in dirtyRect: NSRect) {
+        let gutterRect = NSRect(x: dirtyRect.minX, y: dirtyRect.minY, width: min(gutterWidth, bounds.width), height: dirtyRect.height)
+        gutterBackgroundColor.setFill()
+        gutterRect.fill()
+
+        let dividerRect = NSRect(x: gutterWidth - 1, y: dirtyRect.minY, width: 1, height: dirtyRect.height)
+        dividerColor.setFill()
+        dividerRect.fill()
+
+        // Draw line numbers
+        drawLineNumbers(in: dirtyRect)
+
+        // Draw change markers
+        markerFrames = visibleMarkerFrames()
+        for marker in markerFrames {
+            let hunk = changeHunks.first(where: { $0.id == marker.id })
+            switch hunk?.kind {
+            case .deleted:
+                deletedMarkerColor.setFill()
+            default:
+                markerColor.setFill()
+            }
+
+            let barRect: NSRect
+            if marker.rect.height <= 4 {
+                barRect = NSRect(x: 2, y: marker.rect.minY, width: 3, height: 3)
+            } else {
+                barRect = NSRect(x: 2, y: marker.rect.minY + 2, width: 3, height: marker.rect.height - 4)
+            }
+
+            let path = NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5)
+            path.fill()
+        }
+    }
+
+    private func drawLineNumbers(in dirtyRect: NSRect) {
+        guard let layoutManager = layoutManager,
+              let textContainer = textContainer else { return }
+        let textOrigin = textContainerOrigin
+        let visible = visibleRect
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
+            .foregroundColor: lineNumberColor,
+        ]
+
+        // Number every visual line (wrapped line fragment), not just hard newlines
+        var lineNumber = 1
+        var glyphIndex = 0
+        let totalGlyphs = layoutManager.numberOfGlyphs
+
+        while glyphIndex < totalGlyphs {
+            var lineFragmentRange = NSRange()
+            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineFragmentRange, withoutAdditionalLayout: true)
+            let y = lineRect.minY + textOrigin.y
+
+            if y + lineRect.height >= visible.minY && y <= visible.maxY {
+                let label = "\(lineNumber)" as NSString
+                let labelSize = label.size(withAttributes: attrs)
+                let labelRect = NSRect(
+                    x: gutterWidth - labelSize.width - 6,
+                    y: y + (lineRect.height - labelSize.height) / 2,
+                    width: labelSize.width,
+                    height: labelSize.height
+                )
+                label.draw(in: labelRect, withAttributes: attrs)
+            }
+
+            glyphIndex = NSMaxRange(lineFragmentRange)
+            lineNumber += 1
+        }
+    }
+
+    private func drawChangeHighlights(in dirtyRect: NSRect) {
+        guard let layoutManager = layoutManager else { return }
+        let textOrigin = textContainerOrigin
+
+        for hunk in changeHunks {
+            guard let highlightRect = highlightRect(for: hunk, using: layoutManager, textOrigin: textOrigin) else { continue }
+            guard highlightRect.intersects(dirtyRect) else { continue }
+
+            switch hunk.kind {
+            case .deleted:
+                deletedLineHighlightColor.setFill()
+            case .modifiedOrAdded:
+                changedLineHighlightColor.setFill()
+            }
+
+            let fillRect = highlightRect.insetBy(dx: 6, dy: 2)
+            let fillPath = NSBezierPath(roundedRect: fillRect, xRadius: 5, yRadius: 5)
+            fillPath.fill()
+
+            let accentWidth: CGFloat = 2.5
+            switch hunk.kind {
+            case .deleted:
+                deletedMarkerColor.setFill()
+            case .modifiedOrAdded:
+                markerColor.setFill()
+            }
+            let accentRect = NSRect(x: fillRect.minX, y: fillRect.minY, width: accentWidth, height: fillRect.height)
+            NSBezierPath(roundedRect: accentRect, xRadius: 1.5, yRadius: 1.5).fill()
+        }
+    }
+
+    private func visibleMarkerFrames() -> [MarkerFrame] {
+        changeHunks.compactMap { hunk in
+            guard let rect = markerRect(for: hunk) else { return nil }
+            return MarkerFrame(id: hunk.id, rect: rect)
+        }
+    }
+
+    private func markerRect(for hunk: ChangeHunk) -> NSRect? {
+        guard let layoutManager = layoutManager else { return nil }
+        let textOrigin = textContainerOrigin
+        let textLength = (string as NSString).length
+
+        if hunk.currentRange.length > 0, textLength > 0 {
+            let safeLocation = min(hunk.currentRange.location, max(0, textLength - 1))
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: safeLocation)
+            // Only first visual line fragment — not the entire wrapped extent
+            let firstLineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            return NSRect(x: 0, y: firstLineRect.minY + textOrigin.y, width: gutterWidth, height: firstLineRect.height)
+        }
+
+        guard textLength > 0 else {
+            return NSRect(x: 0, y: textOrigin.y, width: gutterWidth, height: 3)
+        }
+
+        let clampedLocation = min(hunk.anchorLocation, textLength)
+        let yPosition: CGFloat
+
+        if clampedLocation >= textLength {
+            let lastGlyphIndex = max(0, layoutManager.numberOfGlyphs - 1)
+            let lastRect = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            yPosition = lastRect.maxY + textOrigin.y
+        } else {
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: clampedLocation)
+            let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            yPosition = lineRect.minY + textOrigin.y
+        }
+
+        return NSRect(x: 0, y: yPosition - 1, width: gutterWidth, height: 3)
+    }
+
+    private func highlightRect(for hunk: ChangeHunk, using layoutManager: NSLayoutManager, textOrigin: NSPoint) -> NSRect? {
+        let textLength = (string as NSString).length
+
+        if hunk.currentRange.length > 0, textLength > 0 {
+            let safeLocation = min(hunk.currentRange.location, max(0, textLength - 1))
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: safeLocation)
+            // Only first visual line — compact highlight
+            let firstLineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            let y = firstLineRect.minY + textOrigin.y
+            return NSRect(x: gutterWidth + 4, y: y, width: bounds.width - gutterWidth - 12, height: firstLineRect.height)
+        }
+
+        guard textLength > 0 else {
+            return NSRect(x: gutterWidth + 4, y: textOrigin.y, width: 18, height: 4)
+        }
+
+        let clampedLocation = min(hunk.anchorLocation, textLength)
+        let yPosition: CGFloat
+
+        if clampedLocation >= textLength {
+            let lastGlyphIndex = max(0, layoutManager.numberOfGlyphs - 1)
+            let lastRect = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            yPosition = lastRect.maxY + textOrigin.y
+        } else {
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: clampedLocation)
+            let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            yPosition = lineRect.minY + textOrigin.y
+        }
+
+        return NSRect(x: gutterWidth + 4, y: yPosition - 1, width: 18, height: 4)
     }
 }
