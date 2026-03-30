@@ -1,5 +1,5 @@
 import XCTest
-@testable import PaperPilot
+@testable import Canope
 
 final class ServiceParsingTests: XCTestCase {
     func testParseLatexErrorsCapturesErrorsAndWarnings() {

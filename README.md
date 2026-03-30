@@ -1,8 +1,8 @@
-# Canopée 🌳
+# Canope 🌳
 
 A native macOS scientific paper reader, annotator, LaTeX editor, and AI assistant — all in one app.
 
-*Papers come from trees — Canopée keeps them organized.*
+*Papers come from trees — Canope keeps them organized.*
 
 ![macOS](https://img.shields.io/badge/macOS-14%2B-blue) ![Swift](https://img.shields.io/badge/Swift-6-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -117,7 +117,7 @@ open Canope.xcodeproj
 ## Architecture
 
 ```
-PaperPilot/
+Canope/
 ├── CanopeApp.swift                  # App entry point, process cleanup
 ├── ContentView.swift                # Main window: tabs, split view, terminal
 ├── Models/
@@ -156,7 +156,7 @@ PaperPilot/
 
 ## Claude Code Integration
 
-Canopée writes context files that Claude Code reads automatically:
+Canope writes context files that Claude Code reads automatically:
 
 | File | Content | Updated when |
 |------|---------|-------------|
@@ -166,10 +166,10 @@ Canopée writes context files that Claude Code reads automatically:
 Add this to your `~/.claude/CLAUDE.md` for automatic integration:
 
 ```markdown
-## Canopée
+## Canope
 - `/tmp/canope_paper.txt` — currently open paper (read when user asks about "the paper")
 - `/tmp/canope_selection.txt` — selected text (read when user asks about "the selection")
-- Do NOT use pdf-selection skill (reads from Skim, not Canopée)
+- Do NOT use pdf-selection skill (reads from Skim, not Canope)
 ```
 
 ## License

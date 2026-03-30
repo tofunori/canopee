@@ -1,6 +1,6 @@
-name: Canopée
+name: Canope
 options:
-  bundleIdPrefix: com.canopee
+  bundleIdPrefix: com.canope
   deploymentTarget:
     macOS: "14.0"
   groupSortPosition: top
@@ -11,44 +11,45 @@ packages:
     from: "1.2.0"
 
 targets:
-  PaperPilot:
+  Canope:
     type: application
     platform: macOS
-    sources: [PaperPilot]
+    sources: [Canope]
     dependencies:
       - package: SwiftTerm
     scheme:
       testTargets:
-        - PaperPilotTests
+        - CanopeTests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.canopee.app
-        PRODUCT_NAME: Canopée
-        PRODUCT_MODULE_NAME: PaperPilot
+        PRODUCT_BUNDLE_IDENTIFIER: com.canope.app
+        PRODUCT_NAME: Canope
+        PRODUCT_MODULE_NAME: Canope
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: 1
         SWIFT_VERSION: "6.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.productivity"
-        INFOPLIST_KEY_CFBundleDisplayName: Canopée
+        INFOPLIST_KEY_CFBundleDisplayName: Canope
+        INFOPLIST_KEY_ApplePressAndHoldEnabled: NO
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CODE_SIGN_ENTITLEMENTS: PaperPilot/Resources/PaperPilot.entitlements
+        CODE_SIGN_ENTITLEMENTS: Canope/Resources/Canope.entitlements
 
-  PaperPilotTests:
+  CanopeTests:
     type: bundle.unit-test
     platform: macOS
-    sources: [PaperPilotTests]
+    sources: [CanopeTests]
     dependencies:
-      - target: PaperPilot
+      - target: Canope
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.canopee.app.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.canope.app.tests
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "6.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Canopée.app/Contents/MacOS/Canopée"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Canope.app/Contents/MacOS/Canope"
         BUNDLE_LOADER: "$(TEST_HOST)"

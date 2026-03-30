@@ -62,11 +62,7 @@ struct AnnotationSidebarView: View {
                                     Menu("Couleur") {
                                         ForEach(AnnotationColor.all, id: \.name) { item in
                                             Button(item.name) {
-                                                if annotation.type == "Highlight" {
-                                                    annotation.color = item.color.withAlphaComponent(0.4)
-                                                } else {
-                                                    annotation.color = item.color
-                                                }
+                                                annotation.color = AnnotationColor.annotationColor(item.color, for: annotation.type)
                                             }
                                         }
                                     }
@@ -149,6 +145,7 @@ struct AnnotationRowView: View {
     }
 
     private var annotationTypeName: String {
+        if annotation.isCanopeHighlightBlock { return "Surligné" }
         switch annotation.type {
         case "Highlight": return "Surligné"
         case "Underline": return "Souligné"
@@ -164,6 +161,7 @@ struct AnnotationRowView: View {
     }
 
     private var iconForType: String {
+        if annotation.isCanopeHighlightBlock { return "highlighter" }
         switch annotation.type {
         case "Highlight": return "highlighter"
         case "Underline": return "underline"

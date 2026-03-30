@@ -4,9 +4,16 @@ import PDFKit
 struct PDFFileManager {
     static var storageDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("PaperPilot/PDFs", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        let legacyDir = appSupport.appendingPathComponent("PaperPilot/PDFs", isDirectory: true)
+        let canopeDir = appSupport.appendingPathComponent("Canope/PDFs", isDirectory: true)
+        let fileManager = FileManager.default
+
+        if fileManager.fileExists(atPath: legacyDir.path) {
+            return legacyDir
+        }
+
+        try? fileManager.createDirectory(at: canopeDir, withIntermediateDirectories: true)
+        return canopeDir
     }
 
     /// Import a PDF and extract metadata locally (no network, instant).

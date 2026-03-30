@@ -48,7 +48,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle("Canopée")
+        .navigationTitle("Canope")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: {

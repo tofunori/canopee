@@ -3,6 +3,31 @@ import AppKit
 
 struct AnnotationService {
 
+    private static func quadPoints(for rects: [CGRect]) -> [NSValue] {
+        rects.flatMap { rect in
+            [
+                NSValue(point: NSPoint(x: rect.minX, y: rect.maxY)),
+                NSValue(point: NSPoint(x: rect.maxX, y: rect.maxY)),
+                NSValue(point: NSPoint(x: rect.minX, y: rect.minY)),
+                NSValue(point: NSPoint(x: rect.maxX, y: rect.minY)),
+            ]
+        }
+    }
+
+    private static func makeMarkupAnnotation(
+        type: PDFAnnotationSubtype,
+        bounds: CGRect,
+        segmentRects: [CGRect],
+        color: NSColor,
+        contents: String?
+    ) -> PDFAnnotation {
+        let annotation = PDFAnnotation(bounds: bounds, forType: type, withProperties: nil)
+        annotation.setValue(quadPoints(for: segmentRects), forAnnotationKey: .quadPoints)
+        annotation.color = AnnotationColor.annotationColor(color, for: type)
+        annotation.contents = contents
+        return annotation
+    }
+
     // MARK: - Text Markup Annotations (Highlight, Underline, Strikethrough)
 
     /// Create a single text markup annotation from the current selection.
@@ -24,8 +49,8 @@ struct AnnotationService {
         }
 
         for (page, lines) in pageLines {
-            var allQuadPoints: [NSValue] = []
             var unionBounds: CGRect = .null
+            var highlightSegmentRects: [CGRect] = []
 
             for line in lines {
                 let rawBounds = line.bounds(for: page)
@@ -33,31 +58,43 @@ struct AnnotationService {
                 let inset = rawBounds.height * 0.12
                 let bounds = rawBounds.insetBy(dx: 0, dy: inset)
                 unionBounds = unionBounds.union(bounds)
-                allQuadPoints.append(contentsOf: [
-                    NSValue(point: NSPoint(x: bounds.minX, y: bounds.maxY)),
-                    NSValue(point: NSPoint(x: bounds.maxX, y: bounds.maxY)),
-                    NSValue(point: NSPoint(x: bounds.minX, y: bounds.minY)),
-                    NSValue(point: NSPoint(x: bounds.maxX, y: bounds.minY)),
-                ])
+                highlightSegmentRects.append(bounds)
             }
 
             guard !unionBounds.isNull else { continue }
 
-            let annotation = PDFAnnotation(bounds: unionBounds, forType: type, withProperties: nil)
-            annotation.setValue(allQuadPoints, forAnnotationKey: .quadPoints)
-            annotation.contents = selection.string
-
-            switch type {
-            case .highlight:
-                annotation.color = color.withAlphaComponent(0.4)
-            default:
-                annotation.color = color
-            }
+            let annotation = makeMarkupAnnotation(
+                type: type,
+                bounds: unionBounds,
+                segmentRects: highlightSegmentRects,
+                color: color,
+                contents: selection.string
+            )
 
             page.addAnnotation(annotation)
             created.append((page: page, annotation: annotation))
         }
         return created
+    }
+
+    static func normalizeCustomHighlightAnnotations(in document: PDFDocument) {
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+            let annotations = page.annotations
+            for annotation in annotations {
+                guard let customHighlight = HighlightMarkupAnnotation.rehydrated(from: annotation) else { continue }
+                let migratedHighlight = makeMarkupAnnotation(
+                    type: .highlight,
+                    bounds: customHighlight.bounds,
+                    segmentRects: customHighlight.segmentRects,
+                    color: customHighlight.color,
+                    contents: customHighlight.contents
+                )
+                migratedHighlight.modificationDate = customHighlight.modificationDate
+                page.removeAnnotation(annotation)
+                page.addAnnotation(migratedHighlight)
+            }
+        }
     }
 
     // MARK: - Text Note Annotation
@@ -94,7 +131,7 @@ struct AnnotationService {
         annotation.contents = text
         annotation.font = NSFont.systemFont(ofSize: fontSize)
         annotation.fontColor = .black
-        annotation.color = color.withAlphaComponent(0.15)
+        annotation.color = AnnotationColor.annotationColor(color, for: "FreeText")
 
         let border = PDFBorder()
         border.lineWidth = 1
@@ -122,7 +159,12 @@ struct AnnotationService {
         border.lineWidth = lineWidth
         annotation.border = border
 
-        annotation.add(path)
+        // Ink paths are stored in annotation-local coordinates, not page coordinates.
+        let normalizedPath = (path.copy() as? NSBezierPath) ?? NSBezierPath()
+        let transform = AffineTransform(translationByX: -bounds.origin.x, byY: -bounds.origin.y)
+        normalizedPath.transform(using: transform)
+
+        annotation.add(normalizedPath)
         page.addAnnotation(annotation)
         return annotation
     }

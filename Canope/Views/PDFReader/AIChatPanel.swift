@@ -22,7 +22,6 @@ struct TerminalTab: Identifiable {
 
 struct TerminalPanel: View {
     let document: PDFDocument?
-    let selectedText: String
     let isVisible: Bool
     @State private var tabs: [TerminalTab] = [TerminalTab()]
     @State private var selectedTabID: UUID? = nil
@@ -62,16 +61,6 @@ struct TerminalPanel: View {
                 }
                 .buttonStyle(.plain)
                 .help("Nouveau terminal")
-
-                // Split horizontal
-                Button(action: { isSplit.toggle() }) {
-                    Image(systemName: isSplit ? "rectangle.split.1x2.fill" : "rectangle.split.1x2")
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
-                        .foregroundStyle(isSplit ? .green : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Split horizontal")
 
                 // Theme picker
                 Menu {
@@ -118,27 +107,6 @@ struct TerminalPanel: View {
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
 
             Divider()
-
-            // Selection preview
-            if !selectedText.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "text.quote")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                    Text(selectedText)
-                        .font(.caption2)
-                        .lineLimit(2)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("synced")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.blue.opacity(0.05))
-                Divider()
-            }
 
             // Terminal views with optional split
             VSplitView {
@@ -190,6 +158,7 @@ struct TerminalPanel: View {
         .frame(minWidth: 200, maxWidth: .infinity)
         .onAppear {
             selectedTabID = tabs.first?.id
+            isSplit = false
         }
         .onChange(of: isVisible) {
             guard isVisible else { return }

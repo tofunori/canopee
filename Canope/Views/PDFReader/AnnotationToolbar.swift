@@ -19,7 +19,7 @@ struct AnnotationToolbar: View {
     @State private var showColorPicker = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             // Tool buttons
             ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
                 toolButton(tool)
@@ -49,16 +49,15 @@ struct AnnotationToolbar: View {
             }
 
             // Custom color picker button
-            Button(action: {
-                editingSlotIndex = nil
-                showColorPicker = true
-            }) {
-                Image(systemName: "plus.circle")
-                    .frame(width: 20, height: 20)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Couleur personnalisée")
+            ToolbarIconButton(
+                systemName: "plus.circle",
+                helpText: "Couleur personnalisée",
+                action: {
+                    editingSlotIndex = nil
+                    customColor = Color(nsColor: currentColor)
+                    showColorPicker = true
+                }
+            )
 
             Divider()
                 .frame(height: 20)
@@ -66,12 +65,12 @@ struct AnnotationToolbar: View {
 
             // Selection-dependent actions
             if selectedAnnotation != nil {
-                Button(action: onDeleteSelected) {
-                    Image(systemName: "trash")
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.plain)
-                .help("Supprimer l'annotation (⌫)")
+                ToolbarIconButton(
+                    systemName: "trash",
+                    foregroundStyle: .red,
+                    helpText: "Supprimer l'annotation (⌫)",
+                    action: onDeleteSelected
+                )
 
                 Text("Sélectionné")
                     .font(.caption)
@@ -81,11 +80,11 @@ struct AnnotationToolbar: View {
             Spacer()
 
             // Delete all
-            Button(action: { showDeleteAllConfirm = true }) {
-                Image(systemName: "trash.slash")
-            }
-            .buttonStyle(.plain)
-            .help("Effacer toutes les annotations")
+            ToolbarIconButton(
+                systemName: "trash.slash",
+                helpText: "Effacer toutes les annotations",
+                action: { showDeleteAllConfirm = true }
+            )
             .confirmationDialog(
                 "Effacer toutes les annotations?",
                 isPresented: $showDeleteAllConfirm,
@@ -96,10 +95,11 @@ struct AnnotationToolbar: View {
             }
 
             // Save button
-            Button(action: onSave) {
-                Image(systemName: "square.and.arrow.down")
-            }
-            .help("Enregistrer (⌘S)")
+            ToolbarIconButton(
+                systemName: "square.and.arrow.down",
+                helpText: "Enregistrer (⌘S)",
+                action: onSave
+            )
             .keyboardShortcut("s", modifiers: .command)
 
             Divider()
@@ -107,20 +107,22 @@ struct AnnotationToolbar: View {
                 .padding(.horizontal, 2)
 
             // Terminal toggle
-            Button(action: { showTerminal.toggle() }) {
-                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
-                    .foregroundStyle(showTerminal ? .green : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Terminal")
+            ToolbarIconButton(
+                systemName: showTerminal ? "terminal.fill" : "terminal",
+                isSelected: showTerminal,
+                foregroundStyle: showTerminal ? .green : .secondary,
+                helpText: "Terminal",
+                action: { showTerminal.toggle() }
+            )
 
             // Annotations sidebar toggle
-            Button(action: { showAnnotations.toggle() }) {
-                Image(systemName: "sidebar.right")
-                    .symbolVariant(showAnnotations ? .none : .slash)
-            }
-            .buttonStyle(.plain)
-            .help("Annotations")
+            ToolbarIconButton(
+                systemName: "sidebar.right",
+                symbolVariant: showAnnotations ? .none : .slash,
+                isSelected: showAnnotations,
+                helpText: "Annotations",
+                action: { showAnnotations.toggle() }
+            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -130,7 +132,7 @@ struct AnnotationToolbar: View {
                 selectedColor: $customColor,
                 slotIndex: editingSlotIndex,
                 onApply: { color in
-                    let nsColor = NSColor(color)
+                    let nsColor = AnnotationColor.normalized(NSColor(color))
                     currentColor = nsColor
 
                     // If editing a slot, save it as a favorite
@@ -155,23 +157,22 @@ struct AnnotationToolbar: View {
 
     @ViewBuilder
     private func toolButton(_ tool: AnnotationTool) -> some View {
-        Button(action: { currentTool = tool }) {
-            Image(systemName: tool.icon)
-                .frame(width: 28, height: 28)
-        }
-        .buttonStyle(.plain)
-        .background(currentTool == tool ? Color.accentColor.opacity(0.2) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .help(tool.displayName)
+        ToolbarIconButton(
+            systemName: tool.icon,
+            isSelected: currentTool == tool,
+            helpText: tool.displayName,
+            action: { currentTool = tool }
+        )
     }
 
     /// Compare two NSColors (approximate, ignoring tiny floating point diffs)
     private func colorsMatch(_ a: NSColor, _ b: NSColor) -> Bool {
-        guard let ac = a.usingColorSpace(.deviceRGB),
-              let bc = b.usingColorSpace(.deviceRGB) else { return false }
+        let ac = AnnotationColor.normalized(a)
+        let bc = AnnotationColor.normalized(b)
         return abs(ac.redComponent - bc.redComponent) < 0.01
             && abs(ac.greenComponent - bc.greenComponent) < 0.01
             && abs(ac.blueComponent - bc.blueComponent) < 0.01
+            && abs(ac.alphaComponent - bc.alphaComponent) < 0.01
     }
 }
 
@@ -182,25 +183,83 @@ struct ColorSlotButton: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onCustomize: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: onSelect) {
             Circle()
                 .fill(Color(nsColor: color))
-                .frame(width: 16, height: 16)
+                .frame(width: 18, height: 18)
                 .overlay {
                     if isSelected {
                         Circle()
                             .strokeBorder(.primary, lineWidth: 2)
                     }
                 }
+                .frame(width: 30, height: 30)
+                .background(backgroundFill)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
         .contextMenu {
             Button("Changer cette couleur…") {
                 onCustomize()
             }
         }
+    }
+
+    private var backgroundFill: Color {
+        if isSelected {
+            return Color.primary.opacity(0.14)
+        }
+        if isHovered {
+            return Color.primary.opacity(0.08)
+        }
+        return .clear
+    }
+}
+
+// MARK: - Toolbar Icon Button
+
+struct ToolbarIconButton: View {
+    let systemName: String
+    var symbolVariant: SymbolVariants = .none
+    var isSelected = false
+    var foregroundStyle: Color = .primary
+    let helpText: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .symbolVariant(symbolVariant)
+                .imageScale(.medium)
+                .frame(width: 34, height: 34)
+                .background(backgroundFill)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(foregroundStyle)
+        .help(helpText)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+
+    private var backgroundFill: Color {
+        if isSelected {
+            return Color.accentColor.opacity(0.2)
+        }
+        if isHovered {
+            return Color.primary.opacity(0.08)
+        }
+        return .clear
     }
 }
 
@@ -217,9 +276,15 @@ struct ColorPickerPopover: View {
             Text(slotIndex != nil ? "Changer la couleur du slot \(slotIndex! + 1)" : "Couleur personnalisée")
                 .font(.headline)
 
-            ColorPicker("Couleur", selection: $selectedColor, supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 200)
+            Circle()
+                .fill(selectedColor)
+                .frame(width: 42, height: 42)
+                .overlay {
+                    Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+                }
+
+            ColorPicker("Couleur", selection: $selectedColor, supportsOpacity: true)
+                .frame(width: 220)
 
             // Quick presets
             HStack(spacing: 8) {

@@ -9,9 +9,12 @@ enum ResizeHandle {
 
 class SelectionOverlayView: NSView {
     var selectionRects: [NSRect] = []
-    var selectionColor: NSColor = AnnotationColor.loadFavorites().first?.withAlphaComponent(0.4) ?? NSColor.yellow.withAlphaComponent(0.4)
+    var selectionColor: NSColor = AnnotationColor.previewColor(AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow, for: .highlight)
+    var selectionTool: AnnotationTool = .highlight
     var annotationBorderRect: NSRect? = nil
     let handleSize: CGFloat = 7
+
+    override var isOpaque: Bool { false }
 
     // Resize drag state
     private var activeHandle: ResizeHandle?
@@ -28,9 +31,35 @@ class SelectionOverlayView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.current?.cgContext.clear(dirtyRect)
+
         if !selectionRects.isEmpty {
-            selectionColor.setFill()
-            for rect in selectionRects { rect.fill() }
+            switch selectionTool {
+            case .underline:
+                selectionColor.setStroke()
+                for rect in selectionRects {
+                    let path = NSBezierPath()
+                    let y = rect.minY + max(1.0, rect.height * 0.12)
+                    path.move(to: NSPoint(x: rect.minX, y: y))
+                    path.line(to: NSPoint(x: rect.maxX, y: y))
+                    path.lineWidth = max(1.5, rect.height * 0.08)
+                    path.lineCapStyle = .round
+                    path.stroke()
+                }
+            case .strikethrough:
+                selectionColor.setStroke()
+                for rect in selectionRects {
+                    let path = NSBezierPath()
+                    path.move(to: NSPoint(x: rect.minX, y: rect.midY))
+                    path.line(to: NSPoint(x: rect.maxX, y: rect.midY))
+                    path.lineWidth = max(1.5, rect.height * 0.08)
+                    path.lineCapStyle = .round
+                    path.stroke()
+                }
+            default:
+                selectionColor.setFill()
+                for rect in selectionRects { rect.fill() }
+            }
         }
         if let rect = annotationBorderRect {
             NSColor.black.setStroke()
@@ -135,9 +164,10 @@ class SelectionOverlayView: NSView {
         onResizeComplete?(newRect)
     }
 
-    func updateSelection(rects: [NSRect], color: NSColor) {
+    func updateSelection(rects: [NSRect], color: NSColor, tool: AnnotationTool) {
         selectionRects = rects
         selectionColor = color
+        selectionTool = tool
         needsDisplay = true
     }
 
@@ -300,6 +330,68 @@ class CursorTrackingView: NSView {
     }
 }
 
+final class InteractivePDFView: PDFView {
+    var onPreMouseDown: ((NSEvent, NSPoint, InteractivePDFView) -> Bool)?
+    var onPostMouseUp: ((NSPoint) -> Void)?
+    var selectionPreviewTool: AnnotationTool = .pointer
+    var selectionPreviewColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
+
+    private func preferredSelectionColor() -> NSColor? {
+        switch selectionPreviewTool {
+        case .highlight:
+            return AnnotationColor.annotationColor(selectionPreviewColor, for: .highlight)
+        case .underline, .strikethrough:
+            return .clear
+        default:
+            return nil
+        }
+    }
+
+    private func prepareSelectionAppearance(_ selection: PDFSelection?) {
+        selection?.color = preferredSelectionColor()
+    }
+
+    func refreshCurrentSelectionAppearance() {
+        currentSelection?.color = preferredSelectionColor()
+    }
+
+    override var currentSelection: PDFSelection? {
+        get { super.currentSelection }
+        set {
+            prepareSelectionAppearance(newValue)
+            super.currentSelection = newValue
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        if onPreMouseDown?(event, location, self) == true {
+            return
+        }
+        super.mouseDown(with: event)
+        refreshCurrentSelectionAppearance()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        super.mouseDragged(with: event)
+        refreshCurrentSelectionAppearance()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        refreshCurrentSelectionAppearance()
+
+        guard event.type == .leftMouseUp, event.clickCount == 1 else { return }
+        onPostMouseUp?(convert(event.locationInWindow, from: nil))
+    }
+
+    override func setCurrentSelection(_ selection: PDFSelection?, animate: Bool) {
+        prepareSelectionAppearance(selection)
+        super.setCurrentSelection(selection, animate: animate)
+        refreshCurrentSelectionAppearance()
+    }
+}
+
 // MARK: - NSViewRepresentable
 
 struct PDFKitView: NSViewRepresentable {
@@ -308,18 +400,28 @@ struct PDFKitView: NSViewRepresentable {
     @Binding var currentColor: NSColor
     @Binding var selectedAnnotation: PDFAnnotation?
     @Binding var selectedText: String
+    let restoredPageIndex: Int?
     let onDocumentChanged: @MainActor () -> Void
+    let onCurrentPageChanged: @MainActor (Int) -> Void
+    let onMarkupAppearanceNeedsRefresh: @MainActor () -> Void
+    @Binding var clearSelectionAction: (() -> Void)?
     @Binding var undoAction: (() -> Void)?
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
 
-        let pdfView = PDFView()
+        let pdfView = InteractivePDFView()
         pdfView.document = document
+        pdfView.selectionPreviewTool = currentTool
+        pdfView.selectionPreviewColor = currentColor
         pdfView.displayMode = .singlePageContinuous
         pdfView.autoScales = true
         pdfView.backgroundColor = .controlBackgroundColor
         pdfView.translatesAutoresizingMaskIntoConstraints = false
+        if let restoredPageIndex,
+           let restoredPage = document.page(at: restoredPageIndex) {
+            pdfView.go(to: restoredPage)
+        }
 
         let overlay = SelectionOverlayView()
         overlay.translatesAutoresizingMaskIntoConstraints = false
@@ -351,6 +453,12 @@ struct PDFKitView: NSViewRepresentable {
         context.coordinator.pdfView = pdfView
         context.coordinator.overlay = overlay
         context.coordinator.cursorView = cursorView
+        pdfView.onPreMouseDown = { [weak coordinator = context.coordinator] event, location, pdfView in
+            coordinator?.handlePreMouseDown(event: event, at: location, in: pdfView) ?? false
+        }
+        pdfView.onPostMouseUp = { [weak coordinator = context.coordinator] location in
+            coordinator?.handlePostMouseUp(at: location)
+        }
         context.coordinator.installMouseUpMonitor()
         context.coordinator.updateCursor(for: currentTool)
         context.coordinator.setupDrawingCallbacks()
@@ -360,6 +468,9 @@ struct PDFKitView: NSViewRepresentable {
         DispatchQueue.main.async {
             self.undoAction = { [weak coordinator = context.coordinator] in
                 coordinator?.undo()
+            }
+            self.clearSelectionAction = { [weak coordinator = context.coordinator] in
+                coordinator?.clearCurrentTextSelection()
             }
         }
 
@@ -377,18 +488,16 @@ struct PDFKitView: NSViewRepresentable {
         )
         NotificationCenter.default.addObserver(
             context.coordinator,
+            selector: #selector(Coordinator.handlePageChanged(_:)),
+            name: .PDFViewPageChanged,
+            object: pdfView
+        )
+        NotificationCenter.default.addObserver(
+            context.coordinator,
             selector: #selector(Coordinator.handleViewChanged(_:)),
             name: NSView.boundsDidChangeNotification,
             object: pdfView.documentView
         )
-
-        let clickGesture = NSClickGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleClick(_:))
-        )
-        clickGesture.numberOfClicksRequired = 1
-        clickGesture.delegate = context.coordinator
-        pdfView.addGestureRecognizer(clickGesture)
 
         // Double-click to edit FreeText annotations
         let doubleClickGesture = NSClickGestureRecognizer(
@@ -413,8 +522,16 @@ struct PDFKitView: NSViewRepresentable {
         context.coordinator.currentColor = currentColor
 
         if let pdfView = context.coordinator.pdfView, pdfView.document !== document {
+            let viewState = context.coordinator.captureViewState()
+            context.coordinator.clearTransientInteractionState()
+            pdfView.document = nil
             pdfView.document = document
+            pdfView.layoutDocumentView()
+            context.coordinator.restoreViewState(viewState)
         }
+
+        context.coordinator.pdfView?.selectionPreviewTool = currentTool
+        context.coordinator.pdfView?.selectionPreviewColor = currentColor
 
         context.coordinator.updateCursor(for: currentTool)
         context.coordinator.updateAnnotationBorder()
@@ -433,14 +550,23 @@ struct PDFKitView: NSViewRepresentable {
 
     @MainActor
     class Coordinator: NSObject, NSGestureRecognizerDelegate, NSTextViewDelegate {
+        private static let selectionFileQueue = DispatchQueue(label: "canope.selection-file", qos: .utility)
+
+        struct ViewState {
+            let pageIndex: Int
+            let pagePoint: NSPoint
+            let scaleFactor: CGFloat
+        }
+
         let parent: PDFKitView
-        weak var pdfView: PDFView?
+        weak var pdfView: InteractivePDFView?
         weak var overlay: SelectionOverlayView?
         weak var cursorView: CursorTrackingView?
         var currentTool: AnnotationTool = .pointer
         var currentColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
         private var hasActiveSelection = false
         private var isDragging = false
+        private var isApplyingTextMarkup = false
         private var mouseUpMonitor: Any?
 
         // Undo support
@@ -457,7 +583,41 @@ struct PDFKitView: NSViewRepresentable {
 
         // MARK: - Cursor
 
+        func captureViewState() -> ViewState? {
+            guard let pdfView = pdfView,
+                  let document = pdfView.document,
+                  let page = pdfView.currentPage else { return nil }
+
+            let pageIndex = document.index(for: page)
+            let scaleFactor = pdfView.scaleFactor
+
+            guard let documentView = pdfView.documentView else {
+                return ViewState(pageIndex: pageIndex, pagePoint: .zero, scaleFactor: scaleFactor)
+            }
+
+            let visibleRect = documentView.visibleRect
+            let centerInDocumentView = NSPoint(x: visibleRect.midX, y: visibleRect.midY)
+            let centerInPDFView = pdfView.convert(centerInDocumentView, from: documentView)
+            let pagePoint = pdfView.convert(centerInPDFView, to: page)
+
+            return ViewState(pageIndex: pageIndex, pagePoint: pagePoint, scaleFactor: scaleFactor)
+        }
+
+        func restoreViewState(_ state: ViewState?) {
+            guard let state,
+                  let pdfView = pdfView,
+                  let document = pdfView.document,
+                  let page = document.page(at: state.pageIndex) else { return }
+
+            pdfView.go(to: PDFDestination(page: page, at: state.pagePoint))
+            pdfView.scaleFactor = state.scaleFactor
+            pdfView.layoutDocumentView()
+            pdfView.go(to: PDFDestination(page: page, at: state.pagePoint))
+        }
+
         func updateCursor(for tool: AnnotationTool) {
+            pdfView?.selectionPreviewTool = tool
+            pdfView?.selectionPreviewColor = currentColor
             let cursor: NSCursor
             switch tool {
             case .highlight, .underline, .strikethrough:
@@ -472,6 +632,8 @@ struct PDFKitView: NSViewRepresentable {
             cursorView?.interactiveMode = tool.needsDragInteraction
             cursorView?.currentTool = tool
             cursor.set()
+            updateSelectionDismissInterception()
+            refreshSelectionAppearance()
         }
 
         // MARK: - Undo
@@ -548,12 +710,14 @@ struct PDFKitView: NSViewRepresentable {
                 annotation.contents = ""
                 annotation.font = NSFont.systemFont(ofSize: 12)
                 annotation.fontColor = .black
-                annotation.color = currentColor.withAlphaComponent(0.15)
+                annotation.color = AnnotationColor.annotationColor(currentColor, for: "FreeText")
                 let border = PDFBorder()
                 border.lineWidth = 1.5
                 annotation.border = border
                 page.addAnnotation(annotation)
                 recordForUndo(page: page, annotation: annotation)
+                parent.selectedAnnotation = annotation
+                updateAnnotationBorder()
                 parent.onDocumentChanged()
                 beginEditingTextBox(annotation, on: page)
 
@@ -563,6 +727,7 @@ struct PDFKitView: NSViewRepresentable {
                     color: currentColor, lineWidth: 2
                 )
                 recordForUndo(page: page, annotation: annotation)
+                finishCreatingDrawableAnnotation(annotation)
                 parent.onDocumentChanged()
 
             case .oval:
@@ -571,6 +736,7 @@ struct PDFKitView: NSViewRepresentable {
                     color: currentColor, lineWidth: 2
                 )
                 recordForUndo(page: page, annotation: annotation)
+                finishCreatingDrawableAnnotation(annotation)
                 parent.onDocumentChanged()
 
             case .arrow:
@@ -581,6 +747,7 @@ struct PDFKitView: NSViewRepresentable {
                     color: currentColor, lineWidth: 2
                 )
                 recordForUndo(page: page, annotation: annotation)
+                finishCreatingDrawableAnnotation(annotation)
                 parent.onDocumentChanged()
 
             default:
@@ -616,7 +783,17 @@ struct PDFKitView: NSViewRepresentable {
                 color: currentColor, lineWidth: 2
             )
             recordForUndo(page: page, annotation: annotation)
+            parent.selectedAnnotation = annotation
+            updateAnnotationBorder()
             parent.onDocumentChanged()
+        }
+
+        private func finishCreatingDrawableAnnotation(_ annotation: PDFAnnotation) {
+            parent.selectedAnnotation = annotation
+            updateAnnotationBorder()
+            parent.currentTool = .pointer
+            currentTool = .pointer
+            updateCursor(for: .pointer)
         }
 
         /// Start inline editing of a FreeText annotation using NSTextView
@@ -719,12 +896,21 @@ struct PDFKitView: NSViewRepresentable {
         private func handleMouseUp() {
             guard isDragging else { return }
             isDragging = false
-            overlay?.clearSelection()
 
             guard [.highlight, .underline, .strikethrough].contains(currentTool),
-                  hasActiveSelection else { return }
+                  let pdfView = pdfView,
+                  let liveSelection = pdfView.currentSelection,
+                  let selection = liveSelection.copy() as? PDFSelection,
+                  hasActiveSelection else {
+                overlay?.clearSelection()
+                return
+            }
 
-            applyTextMarkup()
+            isApplyingTextMarkup = true
+
+            DispatchQueue.main.async { [weak self] in
+                self?.applyTextMarkup(using: selection)
+            }
         }
 
         // MARK: - Annotation Selection Border
@@ -746,13 +932,20 @@ struct PDFKitView: NSViewRepresentable {
             updateAnnotationBorder()
         }
 
+        @objc func handlePageChanged(_ notification: Notification) {
+            guard let pdfView = pdfView,
+                  let document = pdfView.document,
+                  let page = pdfView.currentPage else { return }
+            parent.onCurrentPageChanged(document.index(for: page))
+        }
+
         // MARK: - Selection Overlay
 
         private func updateSelectionOverlay() {
             guard let pdfView = pdfView,
                   let overlay = overlay,
                   let selection = pdfView.currentSelection,
-                  [.highlight, .underline, .strikethrough].contains(currentTool) else {
+                  [.underline, .strikethrough].contains(currentTool) else {
                 overlay?.clearSelection()
                 return
             }
@@ -766,10 +959,144 @@ struct PDFKitView: NSViewRepresentable {
                 let overlayRect = overlay.convert(viewRect, from: pdfView)
                 viewRects.append(overlayRect)
             }
-            let color: NSColor = currentTool == .highlight
-                ? currentColor.withAlphaComponent(0.4)
-                : currentColor.withAlphaComponent(0.6)
-            overlay.updateSelection(rects: viewRects, color: color)
+            overlay.updateSelection(
+                rects: viewRects,
+                color: AnnotationColor.previewColor(currentColor, for: currentTool),
+                tool: currentTool
+            )
+        }
+
+        private func refreshSelectionAppearance() {
+            guard let pdfView = pdfView else { return }
+
+            guard pdfView.currentSelection != nil else {
+                overlay?.clearSelection()
+                return
+            }
+
+            switch currentTool {
+            case .highlight:
+                pdfView.refreshCurrentSelectionAppearance()
+                overlay?.clearSelection()
+            case .underline, .strikethrough:
+                pdfView.refreshCurrentSelectionAppearance()
+                updateSelectionOverlay()
+            default:
+                pdfView.refreshCurrentSelectionAppearance()
+                overlay?.clearSelection()
+            }
+
+            pdfView.documentView?.needsDisplay = true
+            pdfView.needsDisplay = true
+        }
+
+        private func writeSelectionSnapshot(_ text: String) {
+            Self.selectionFileQueue.async {
+                try? text.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
+            }
+        }
+
+        private func clearNativePDFSelection() {
+            guard let pdfView = pdfView else { return }
+
+            if let selection = pdfView.currentSelection?.copy() as? PDFSelection {
+                // Make the native PDFKit highlight disappear before the selection
+                // object is fully cleared; this avoids the last visible lag frame.
+                selection.color = .clear
+                pdfView.setCurrentSelection(selection, animate: false)
+                pdfView.documentView?.displayIfNeeded()
+                pdfView.displayIfNeeded()
+            }
+
+            pdfView.clearSelection()
+            pdfView.setCurrentSelection(nil, animate: false)
+            pdfView.documentView?.needsDisplay = true
+            pdfView.needsDisplay = true
+        }
+
+        private func clearTextSelectionState() {
+            hasActiveSelection = false
+            isDragging = false
+            overlay?.clearSelection()
+            parent.selectedText = ""
+            writeSelectionSnapshot("(no text currently selected)")
+
+            clearNativePDFSelection()
+            updateSelectionDismissInterception()
+        }
+
+        func clearTransientInteractionState() {
+            clearTextSelectionState()
+            dismissTextBoxEditing()
+            parent.selectedAnnotation = nil
+            overlay?.clear()
+        }
+
+        func clearCurrentTextSelection() {
+            clearTextSelectionState()
+        }
+
+        private func updateSelectionDismissInterception() {
+            // Keep API surface stable for callers; selection dismissal is now handled
+            // by clearing native PDFView selection on mouseDown, following Skim's pattern.
+        }
+
+        func handlePreMouseDown(event: NSEvent, at locationInView: NSPoint, in pdfView: InteractivePDFView) -> Bool {
+            guard currentTool == .pointer else { return false }
+
+            pdfView.window?.makeFirstResponder(pdfView)
+
+            guard hasActiveSelection || pdfView.currentSelection != nil else { return false }
+
+            let area = pdfView.areaOfInterest(for: locationInView)
+            let clickedText = area.contains(.textArea)
+            let clickedAnnotation = area.contains(.annotationArea) || annotationAtPoint(locationInView) != nil
+
+            if clickedText {
+                return false
+            }
+
+            clearTextSelectionState()
+
+            if clickedAnnotation, let annotation = annotationAtPoint(locationInView) {
+                parent.selectedAnnotation = annotation
+                updateAnnotationBorder()
+            } else {
+                parent.selectedAnnotation = nil
+                updateAnnotationBorder()
+            }
+
+            return true
+        }
+
+        func handlePostMouseUp(at locationInView: NSPoint) {
+            guard let pdfView = pdfView else { return }
+
+            if currentTool == .note {
+                guard let page = pdfView.page(for: locationInView, nearest: true) else { return }
+                let pagePoint = pdfView.convert(locationInView, to: page)
+                let annotation = AnnotationService.createNoteAnnotation(
+                    at: pagePoint, on: page, text: "", color: currentColor
+                )
+                recordForUndo(page: page, annotation: annotation)
+                parent.selectedAnnotation = annotation
+                parent.onDocumentChanged()
+                return
+            }
+
+            guard currentTool == .pointer else { return }
+
+            if let annotation = annotationAtPoint(locationInView) {
+                clearTextSelectionState()
+                parent.selectedAnnotation = annotation
+                updateAnnotationBorder()
+                return
+            }
+
+            guard hasActiveSelection || pdfView.currentSelection != nil || parent.selectedAnnotation != nil else { return }
+            clearTextSelectionState()
+            parent.selectedAnnotation = nil
+            updateAnnotationBorder()
         }
 
         // MARK: - Hit Testing
@@ -788,6 +1115,10 @@ struct PDFKitView: NSViewRepresentable {
         // MARK: - Text Selection
 
         @objc func handleSelectionChanged(_ notification: Notification) {
+            if isApplyingTextMarkup {
+                return
+            }
+
             guard let pdfView = pdfView,
                   let selection = pdfView.currentSelection,
                   let text = selection.string,
@@ -795,8 +1126,9 @@ struct PDFKitView: NSViewRepresentable {
                 hasActiveSelection = false
                 parent.selectedText = ""
                 // Clear selection file
-                try? "(no text currently selected)".write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
-                if isDragging { overlay?.clearSelection() }
+                writeSelectionSnapshot("(no text currently selected)")
+                overlay?.clearSelection()
+                updateSelectionDismissInterception()
                 return
             }
             hasActiveSelection = true
@@ -804,21 +1136,25 @@ struct PDFKitView: NSViewRepresentable {
             parent.selectedText = text
             // Write selection to temp file so Claude Code can read it
             let content = "[Source: PDF reader]\n\(text)"
-            try? content.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
-            updateSelectionOverlay()
+            writeSelectionSnapshot(content)
+            refreshSelectionAppearance()
+            updateSelectionDismissInterception()
         }
 
-        func applyTextMarkup() {
-            guard let pdfView = pdfView,
-                  let selection = pdfView.currentSelection,
-                  hasActiveSelection else { return }
-
+        func applyTextMarkup(using selection: PDFSelection) {
             let annotationType: PDFAnnotationSubtype
             switch currentTool {
             case .highlight: annotationType = .highlight
             case .underline: annotationType = .underline
             case .strikethrough: annotationType = .strikeOut
-            default: return
+            default:
+                isApplyingTextMarkup = false
+                return
+            }
+
+            guard let pdfView = pdfView else {
+                isApplyingTextMarkup = false
+                return
             }
 
             let annotations = AnnotationService.createMarkupAnnotation(
@@ -833,40 +1169,18 @@ struct PDFKitView: NSViewRepresentable {
                 recordForUndo(page: page, annotation: annotation)
             }
 
-            pdfView.clearSelection()
-            hasActiveSelection = false
-            parent.onDocumentChanged()
-        }
+            pdfView.documentView?.needsDisplay = true
+            pdfView.needsDisplay = true
+            pdfView.documentView?.displayIfNeeded()
+            pdfView.displayIfNeeded()
 
-        // MARK: - Click Handling
-
-        @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
-            guard let pdfView = pdfView else { return }
-            let locationInView = gesture.location(in: pdfView)
-
-            if currentTool == .pointer {
-                if let annotation = annotationAtPoint(locationInView) {
-                    parent.selectedAnnotation = annotation
-                } else {
-                    parent.selectedAnnotation = nil
-                }
-                updateAnnotationBorder()
-                return
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.clearTextSelectionState()
+                self.isApplyingTextMarkup = false
+                pdfView.setNeedsDisplay(pdfView.bounds)
+                self.parent.onDocumentChanged()
             }
-
-            if currentTool == .note {
-                guard let page = pdfView.page(for: locationInView, nearest: true) else { return }
-                let pagePoint = pdfView.convert(locationInView, to: page)
-                let annotation = AnnotationService.createNoteAnnotation(
-                    at: pagePoint, on: page, text: "", color: currentColor
-                )
-                recordForUndo(page: page, annotation: annotation)
-                parent.selectedAnnotation = annotation
-                parent.onDocumentChanged()
-                return
-            }
-
-            // textBox is handled by drag monitors, not click
         }
 
         // MARK: - Double Click (edit FreeText)
@@ -983,7 +1297,7 @@ struct PDFKitView: NSViewRepresentable {
         @objc func changeAnnotationColor(_ sender: NSMenuItem) {
             guard let color = sender.representedObject as? NSColor,
                   let annotation = parent.selectedAnnotation else { return }
-            annotation.color = annotation.type == "Highlight" ? color.withAlphaComponent(0.4) : color
+            annotation.color = AnnotationColor.annotationColor(color, for: annotation.type ?? "")
             pdfView?.setNeedsDisplay(annotation.bounds)
             parent.onDocumentChanged()
         }

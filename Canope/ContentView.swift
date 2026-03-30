@@ -23,7 +23,6 @@ struct MainWindow: View {
     @State private var paperToOpen: UUID? = nil
     @State private var splitPaperID: UUID? = nil
     @State private var showTerminal = false
-    @State private var selectedText = ""
     @State private var isOpeningTeX = false
 
     private var openPaperIDs: [UUID] {
@@ -137,12 +136,12 @@ struct MainWindow: View {
                                    isActive {
                                     if let splitPaper = allPapers.first(where: { $0.id == splitID }) {
                                         HSplitView {
-                                            PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal, selectedText: $selectedText)
-                                            PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal, selectedText: $selectedText)
+                                            PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
+                                            PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
                                         }
                                     }
                                 } else {
-                                    PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal, selectedText: $selectedText)
+                                    PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal)
                                 }
                             }
                             .opacity(selectedTab == .paper(paperId) ? 1 : 0)
@@ -172,7 +171,6 @@ struct MainWindow: View {
                 // Shared terminal — always mounted, hidden when not needed
                 TerminalPanel(
                     document: nil,
-                    selectedText: selectedText,
                     isVisible: showTerminal && selectedTab != .library
                 )
                     .frame(

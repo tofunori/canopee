@@ -7,9 +7,9 @@ struct PDFReaderView: View {
     var isSplitMode: Bool = false
     var isActive: Bool = true
     @Binding var showTerminal: Bool
-    @Binding var selectedText: String
     @Environment(\.modelContext) private var modelContext
     @State private var document: PDFDocument?
+    @State private var selectedText = ""
     @State private var currentTool: AnnotationTool = .pointer
     @State private var currentColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
     @State private var showAnnotationSidebar = false
@@ -19,7 +19,12 @@ struct PDFReaderView: View {
     @State private var isEditingNote = false
     @State private var editingNoteText = ""
     @State private var undoAction: (() -> Void)?
+    @State private var clearSelectionAction: (() -> Void)?
     @State private var contextWriteID = UUID()
+    @State private var pdfViewRefreshToken = UUID()
+    @State private var lastKnownPageIndex = 0
+    @State private var requestedRestorePageIndex: Int?
+    @State private var pendingSaveWorkItem: DispatchWorkItem?
 
     private var paper: Paper? {
         try? modelContext.fetch(
@@ -52,13 +57,24 @@ struct PDFReaderView: View {
                         currentColor: $currentColor,
                         selectedAnnotation: $selectedAnnotation,
                         selectedText: $selectedText,
+                        restoredPageIndex: requestedRestorePageIndex,
                         onDocumentChanged: {
                             hasUnsavedChanges = true
                             annotationRefreshToken = UUID()
-                            savePDF()
+                            scheduleAutoSave()
                         },
+                        onCurrentPageChanged: { pageIndex in
+                            lastKnownPageIndex = pageIndex
+                        },
+                        onMarkupAppearanceNeedsRefresh: {
+                            DispatchQueue.main.async {
+                                reloadDocumentFromDisk()
+                            }
+                        },
+                        clearSelectionAction: $clearSelectionAction,
                         undoAction: $undoAction
                     )
+                    .id(pdfViewRefreshToken)
                     .onKeyPress(phases: .down) { press in
                         handleKeyPress(press)
                     }
@@ -134,7 +150,13 @@ struct PDFReaderView: View {
         }
         // Escape → pointer
         if press.key == .escape {
-            currentTool = .pointer
+            if !selectedText.isEmpty {
+                clearSelectedText()
+            } else if selectedAnnotation != nil {
+                selectedAnnotation = nil
+            } else {
+                currentTool = .pointer
+            }
             return .handled
         }
         // 1-8 → tool selection
@@ -150,7 +172,12 @@ struct PDFReaderView: View {
 
     private func loadDocument() {
         guard let paper else { return }
-        document = PDFDocument(url: paper.fileURL)
+        if let loadedDocument = PDFDocument(url: paper.fileURL) {
+            AnnotationService.normalizeCustomHighlightAnnotations(in: loadedDocument)
+            document = loadedDocument
+        } else {
+            document = nil
+        }
         selectedAnnotation = nil
         if !paper.isRead { paper.isRead = true }
 
@@ -203,6 +230,8 @@ struct PDFReaderView: View {
     }
 
     private func savePDF() {
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = nil
         guard let document, let paper else { return }
         if AnnotationService.save(document: document, to: paper.fileURL) {
             hasUnsavedChanges = false
@@ -210,8 +239,46 @@ struct PDFReaderView: View {
         }
     }
 
+    private func scheduleAutoSave(delay: TimeInterval = 0.25) {
+        pendingSaveWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem {
+            savePDF()
+        }
+
+        pendingSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func reloadDocumentFromDisk() {
+        guard let paper else { return }
+        selectedAnnotation = nil
+        requestedRestorePageIndex = lastKnownPageIndex
+        guard let data = try? Data(contentsOf: paper.fileURL),
+              let refreshedDocument = PDFDocument(data: data) else {
+            if let loadedDocument = PDFDocument(url: paper.fileURL) {
+                AnnotationService.normalizeCustomHighlightAnnotations(in: loadedDocument)
+                document = loadedDocument
+            } else {
+                document = nil
+            }
+            annotationRefreshToken = UUID()
+            pdfViewRefreshToken = UUID()
+            return
+        }
+        AnnotationService.normalizeCustomHighlightAnnotations(in: refreshedDocument)
+        document = refreshedDocument
+        annotationRefreshToken = UUID()
+        pdfViewRefreshToken = UUID()
+    }
+
     private func autoSave() {
         if hasUnsavedChanges { savePDF() }
+    }
+
+    private func clearSelectedText() {
+        clearSelectionAction?()
+        selectedText = ""
     }
 
     private func deleteSelectedAnnotation() {
@@ -242,7 +309,7 @@ struct PDFReaderView: View {
 
     private func changeSelectedAnnotationColor(_ color: NSColor) {
         guard let annotation = selectedAnnotation else { return }
-        annotation.color = annotation.type == "Highlight" ? color.withAlphaComponent(0.4) : color
+        annotation.color = AnnotationColor.annotationColor(color, for: annotation.type ?? "")
         hasUnsavedChanges = true
         annotationRefreshToken = UUID()
     }

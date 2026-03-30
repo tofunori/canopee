@@ -6,7 +6,7 @@ struct CanopeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup("Canopée") {
+        WindowGroup("Canope") {
             MainWindow()
         }
         .modelContainer(for: [Paper.self, PaperCollection.self])
@@ -15,6 +15,12 @@ struct CanopeApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Prefer classic key repeat over the macOS accent popup inside the app,
+        // which makes terminal input behave like a real terminal.
+        UserDefaults.standard.register(defaults: ["ApplePressAndHoldEnabled": false])
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Only terminate children launched by the app itself.
         ChildProcessRegistry.shared.terminateAllTrackedChildren()
