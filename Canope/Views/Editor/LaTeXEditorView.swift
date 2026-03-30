@@ -288,6 +288,14 @@ struct LaTeXEditorView: View {
                     .fontWeight(.semibold)
                 Spacer()
                 if !sidebarAnnotations.isEmpty {
+                    Button("Tout envoyer") {
+                        sendAllAnnotationsToClaude()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                if !sidebarAnnotations.isEmpty {
                     Text("\(sidebarAnnotations.count)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -830,8 +838,20 @@ struct LaTeXEditorView: View {
 
     private func sendAnnotationToClaude(_ resolved: ResolvedLaTeXAnnotation) {
         let prompt = annotationPrompt(for: resolved)
+        sendPromptToClaudeTerminal(prompt, selectionContent: resolved.annotation.selectedText)
+    }
+
+    private func sendAllAnnotationsToClaude() {
+        let prompt = batchAnnotationPrompt(for: sidebarAnnotations)
+        let selectionContent = sidebarAnnotations
+            .map(\.annotation.selectedText)
+            .joined(separator: "\n\n---\n\n")
+        sendPromptToClaudeTerminal(prompt, selectionContent: selectionContent)
+    }
+
+    private func sendPromptToClaudeTerminal(_ prompt: String, selectionContent: String) {
         CanopeContextFiles.writeAnnotationPrompt(prompt)
-        CanopeContextFiles.writeSelection(resolved.annotation.selectedText)
+        CanopeContextFiles.writeSelection(selectionContent)
         showTerminal = true
 
         let userInfo = ["prompt": prompt]
@@ -857,6 +877,37 @@ struct LaTeXEditorView: View {
         </canope_annotation>
 
         Aide-moi avec cette annotation LaTeX. Réponds d’abord sur ce passage précis en tenant compte de la note.
+        """
+    }
+
+    private func batchAnnotationPrompt(for annotations: [ResolvedLaTeXAnnotation]) -> String {
+        let blocks = annotations.enumerated().map { index, resolved in
+            let annotation = resolved.annotation
+            let status = resolved.isDetached ? "detached" : "anchored"
+
+            return """
+            <annotation index="\(index + 1)">
+            status: \(status)
+
+            selected_text:
+            \(annotation.selectedText)
+
+            note:
+            \(annotation.note)
+            </annotation>
+            """
+        }
+        .joined(separator: "\n\n")
+
+        return """
+        <canope_annotation_batch>
+        file: \(fileURL.path)
+        count: \(annotations.count)
+
+        \(blocks)
+        </canope_annotation_batch>
+
+        Aide-moi avec ce lot d’annotations LaTeX. Traite-les une par une, puis propose au besoin une synthèse courte des problèmes principaux du texte.
         """
     }
 
