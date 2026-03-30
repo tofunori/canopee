@@ -11,6 +11,12 @@ struct LaTeXEditorView: View {
     private struct PendingAnnotation: Identifiable {
         let id = UUID()
         var draft: LaTeXAnnotationDraft
+        var existingAnnotationID: UUID?
+    }
+
+    private enum SidebarSection {
+        case files
+        case annotations
     }
 
     let fileURL: URL
@@ -26,7 +32,8 @@ struct LaTeXEditorView: View {
     @State private var errors: [CompilationError] = []
     @State private var compileOutput: String = ""
     @State private var isCompiling = false
-    @State private var showFileBrowser = true
+    @State private var showSidebar = true
+    @State private var selectedSidebarSection: SidebarSection = .files
     @State private var showPDFPreview = false
     @State private var showErrors = false
     @State private var splitLayout: SplitLayout = .editorOnly
@@ -115,6 +122,21 @@ struct LaTeXEditorView: View {
         }
     }
 
+    private var sidebarAnnotations: [ResolvedLaTeXAnnotation] {
+        resolvedLaTeXAnnotations.sorted { lhs, rhs in
+            switch (lhs.resolvedRange, rhs.resolvedRange) {
+            case let (left?, right?):
+                return left.location < right.location
+            case (.some, nil):
+                return true
+            case (nil, .some):
+                return false
+            case (nil, nil):
+                return lhs.annotation.createdAt < rhs.annotation.createdAt
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Toolbar
@@ -124,24 +146,7 @@ struct LaTeXEditorView: View {
             // Main content: file browser | (editor / pdf split)
             HSplitView {
                 // File browser (left, resizable)
-                FileBrowserView(rootURL: projectRoot) { url in
-                    let ext = url.pathExtension.lowercased()
-                    if ext == "pdf" {
-                        onOpenPDF?(url)
-                    } else if ext == "md" || ext == "tex" || ext == "bib" || ext == "txt" {
-                        onOpenInNewTab?(url)
-                    } else {
-                        openFile(url)
-                    }
-                }
-                .frame(
-                    minWidth: showFileBrowser ? 140 : 0,
-                    idealWidth: showFileBrowser ? 190 : 0,
-                    maxWidth: showFileBrowser ? 280 : 0
-                )
-                .opacity(showFileBrowser ? 1 : 0)
-                .allowsHitTesting(showFileBrowser)
-                .clipped()
+                sidebarPane
 
                 // Right side: file tabs + editor + PDF
                 VStack(spacing: 0) {
@@ -170,6 +175,7 @@ struct LaTeXEditorView: View {
         }
         .sheet(item: $pendingAnnotation) { pending in
             LaTeXAnnotationNoteSheet(
+                title: pending.existingAnnotationID == nil ? "Nouvelle annotation" : "Modifier l’annotation",
                 selectedText: pending.draft.selectedText,
                 initialNote: pending.draft.note,
                 onCancel: {
@@ -222,6 +228,108 @@ struct LaTeXEditorView: View {
 
     // MARK: - Panes
 
+    private var sidebarPane: some View {
+        HStack(spacing: 0) {
+            sidebarActivityBar
+            Divider()
+            Group {
+                switch selectedSidebarSection {
+                case .files:
+                    fileBrowserSidebar
+                case .annotations:
+                    annotationSidebar
+                }
+            }
+            .frame(
+                minWidth: showSidebar ? 160 : 0,
+                idealWidth: showSidebar ? 220 : 0,
+                maxWidth: showSidebar ? 320 : 0
+            )
+            .opacity(showSidebar ? 1 : 0)
+            .allowsHitTesting(showSidebar)
+            .clipped()
+        }
+        .frame(
+            minWidth: 44,
+            idealWidth: showSidebar ? 264 : 44,
+            maxWidth: showSidebar ? 364 : 44
+        )
+    }
+
+    private var sidebarActivityBar: some View {
+        VStack(spacing: 8) {
+            sidebarButton(for: .files, systemImage: "folder")
+            sidebarButton(for: .annotations, systemImage: "note.text")
+            Spacer()
+        }
+        .padding(.top, 10)
+        .frame(width: 44)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+    }
+
+    private var fileBrowserSidebar: some View {
+        FileBrowserView(rootURL: projectRoot) { url in
+            let ext = url.pathExtension.lowercased()
+            if ext == "pdf" {
+                onOpenPDF?(url)
+            } else if ext == "md" || ext == "tex" || ext == "bib" || ext == "txt" {
+                onOpenInNewTab?(url)
+            } else {
+                openFile(url)
+            }
+        }
+    }
+
+    private var annotationSidebar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Label("Annotations", systemImage: "note.text")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Spacer()
+                if !sidebarAnnotations.isEmpty {
+                    Text("\(sidebarAnnotations.count)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            Divider()
+
+            if sidebarAnnotations.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "highlighter")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.secondary)
+                    Text("Aucune annotation")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Sélectionne un passage puis clique sur le surligneur dans la barre du haut.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(16)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(sidebarAnnotations, id: \.annotation.id) { resolved in
+                            annotationRow(resolved)
+                        }
+                    }
+                    .padding(10)
+                }
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
     private var editorPane: some View {
         VStack(spacing: 0) {
             LaTeXTextEditor(
@@ -232,6 +340,8 @@ struct LaTeXEditorView: View {
                 baselineText: savedText,
                 resolvedAnnotations: resolvedLaTeXAnnotations,
                 onSelectionChange: { selectedEditorRange = $0 },
+                onAnnotationActivate: beginEditingAnnotation,
+                onCreateAnnotationFromSelection: beginAnnotationFromSelection,
                 onTextChange: reconcileAnnotations
             )
             if showErrors {
@@ -421,14 +531,14 @@ struct LaTeXEditorView: View {
             // Left group: file browser + LaTeX actions
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.15)) {
-                    showFileBrowser.toggle()
+                    showSidebar.toggle()
                 }
             }) {
                 Image(systemName: "sidebar.left")
-                    .symbolVariant(showFileBrowser ? .none : .slash)
+                    .symbolVariant(showSidebar ? .none : .slash)
             }
             .buttonStyle(.plain)
-            .help("Fichiers")
+            .help("Afficher la barre latérale")
 
             Divider().frame(height: 16)
 
@@ -690,17 +800,130 @@ struct LaTeXEditorView: View {
             return
         }
 
-        pendingAnnotation = PendingAnnotation(draft: draft)
+        if !showSidebar {
+            showSidebar = true
+        }
+        selectedSidebarSection = .annotations
+        pendingAnnotation = PendingAnnotation(draft: draft, existingAnnotationID: nil)
     }
 
     private func savePendingAnnotation(note: String) {
         guard var draft = pendingAnnotation?.draft else { return }
         draft.note = note
 
-        latexAnnotations.append(LaTeXAnnotationStore.createAnnotation(from: draft))
+        if let existingAnnotationID = pendingAnnotation?.existingAnnotationID,
+           let index = latexAnnotations.firstIndex(where: { $0.id == existingAnnotationID }) {
+            latexAnnotations[index] = LaTeXAnnotationStore.update(latexAnnotations[index], note: note, in: text)
+        } else {
+            latexAnnotations.append(LaTeXAnnotationStore.createAnnotation(from: draft))
+        }
         persistAnnotations()
         reconcileAnnotations()
         pendingAnnotation = nil
+    }
+
+    private func deleteAnnotation(_ annotationID: UUID) {
+        latexAnnotations.removeAll { $0.id == annotationID }
+        persistAnnotations()
+        reconcileAnnotations()
+    }
+
+    private func beginEditingAnnotation(_ annotationID: UUID) {
+        guard let resolved = resolvedLaTeXAnnotations.first(where: { $0.annotation.id == annotationID }) else {
+            return
+        }
+
+        if let range = resolved.resolvedRange,
+           let draft = LaTeXAnnotationStore.makeDraft(from: range, in: text, note: resolved.annotation.note) {
+            pendingAnnotation = PendingAnnotation(draft: draft, existingAnnotationID: annotationID)
+            return
+        }
+
+        pendingAnnotation = PendingAnnotation(
+            draft: LaTeXAnnotationDraft(
+                selectedText: resolved.annotation.selectedText,
+                note: resolved.annotation.note,
+                utf16Range: resolved.annotation.utf16Range,
+                prefixContext: resolved.annotation.prefixContext,
+                suffixContext: resolved.annotation.suffixContext
+            ),
+            existingAnnotationID: annotationID
+        )
+    }
+
+    @ViewBuilder
+    private func sidebarButton(for section: SidebarSection, systemImage: String) -> some View {
+        let isActive = showSidebar && selectedSidebarSection == section
+
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                if isActive {
+                    showSidebar = false
+                } else {
+                    selectedSidebarSection = section
+                    showSidebar = true
+                }
+            }
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 30, height: 30)
+                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                .background(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .help(section == .files ? "Fichiers" : "Annotations")
+    }
+
+    private func annotationRow(_ resolved: ResolvedLaTeXAnnotation) -> some View {
+        let annotation = resolved.annotation
+
+        return HStack(alignment: .top, spacing: 8) {
+            Button {
+                beginEditingAnnotation(annotation.id)
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(resolved.isDetached ? Color.orange : Color.yellow)
+                            .frame(width: 7, height: 7)
+                        Text(resolved.isDetached ? "À recoller" : "Ancrée")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+
+                    Text(annotation.selectedText.replacingOccurrences(of: "\n", with: " "))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(3)
+
+                    if !annotation.note.isEmpty {
+                        Text(annotation.note)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(3)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                deleteAnnotation(annotation.id)
+            } label: {
+                Image(systemName: "trash")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Supprimer l’annotation")
+        }
     }
 
     private func loadExistingPDF() {
@@ -940,6 +1163,7 @@ struct PDFPreviewView: NSViewRepresentable {
 }
 
 private struct LaTeXAnnotationNoteSheet: View {
+    let title: String
     let selectedText: String
     let initialNote: String
     let onCancel: () -> Void
@@ -948,11 +1172,13 @@ private struct LaTeXAnnotationNoteSheet: View {
     @State private var note: String
 
     init(
+        title: String,
         selectedText: String,
         initialNote: String,
         onCancel: @escaping () -> Void,
         onSave: @escaping (String) -> Void
     ) {
+        self.title = title
         self.selectedText = selectedText
         self.initialNote = initialNote
         self.onCancel = onCancel
@@ -966,7 +1192,7 @@ private struct LaTeXAnnotationNoteSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Nouvelle annotation")
+            Text(title)
                 .font(.headline)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -1001,7 +1227,7 @@ private struct LaTeXAnnotationNoteSheet: View {
             HStack {
                 Button("Annuler", action: onCancel)
                 Spacer()
-                Button("Ajouter") {
+                Button(initialNote.isEmpty ? "Ajouter" : "Enregistrer") {
                     onSave(trimmedNote)
                 }
                 .keyboardShortcut(.defaultAction)

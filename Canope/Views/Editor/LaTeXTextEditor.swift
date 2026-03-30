@@ -9,6 +9,8 @@ struct LaTeXTextEditor: NSViewRepresentable {
     let baselineText: String
     var resolvedAnnotations: [ResolvedLaTeXAnnotation] = []
     let onSelectionChange: (NSRange?) -> Void
+    let onAnnotationActivate: (UUID) -> Void
+    let onCreateAnnotationFromSelection: () -> Void
     let onTextChange: () -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -243,6 +245,42 @@ struct LaTeXTextEditor: NSViewRepresentable {
             } else {
                 parent.onSelectionChange(nil)
             }
+        }
+
+        @MainActor
+        func activateAnnotation(at point: NSPoint) {
+            guard let textView else { return }
+
+            let charIndex = textView.characterIndexForInsertion(at: point)
+            let candidateIndexes = [charIndex, max(0, charIndex - 1)]
+
+            guard let annotationID = resolvedAnnotations.first(where: { resolved in
+                guard let range = resolved.resolvedRange, !resolved.isDetached else { return false }
+                return candidateIndexes.contains { index in
+                    index >= range.location && index < NSMaxRange(range)
+                }
+            })?.annotation.id else {
+                return
+            }
+
+            parent.onAnnotationActivate(annotationID)
+        }
+
+        @MainActor
+        func canCreateAnnotationFromCurrentSelection() -> Bool {
+            guard let textView else { return false }
+            let range = textView.selectedRange()
+            guard range.location != NSNotFound, range.length > 0 else { return false }
+
+            return !resolvedAnnotations.contains { resolved in
+                resolved.resolvedRange == range
+            }
+        }
+
+        @MainActor
+        func createAnnotationFromCurrentSelection() {
+            guard canCreateAnnotationFromCurrentSelection() else { return }
+            parent.onCreateAnnotationFromSelection()
         }
 
         @MainActor
@@ -659,9 +697,53 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
+    override func mouseUp(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        super.mouseUp(with: event)
+
+        guard event.clickCount == 1,
+              !event.modifierFlags.contains(.command),
+              point.x > gutterWidth,
+              selectedRange().length == 0 else {
+            return
+        }
+
+        changeCoordinator?.activateAnnotation(at: point)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        let selectionRange = selectedRange()
+        guard selectionRange.location != NSNotFound, selectionRange.length > 0 else {
+            return menu
+        }
+
+        if menu.items.contains(where: { $0.action == #selector(createAnnotationFromSelection(_:)) }) {
+            return menu
+        }
+
+        if !menu.items.isEmpty {
+            menu.addItem(.separator())
+        }
+
+        let item = NSMenuItem(
+            title: "Ajouter une annotation...",
+            action: #selector(createAnnotationFromSelection(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.isEnabled = changeCoordinator?.canCreateAnnotationFromCurrentSelection() ?? false
+        menu.addItem(item)
+        return menu
+    }
+
     @objc private func revertSelectedMarker(_ sender: NSMenuItem) {
         guard let selectedMarkerID else { return }
         changeCoordinator?.revertChange(id: selectedMarkerID)
+    }
+
+    @objc private func createAnnotationFromSelection(_ sender: NSMenuItem) {
+        changeCoordinator?.createAnnotationFromCurrentSelection()
     }
 
     private func drawGutter(in dirtyRect: NSRect) {
