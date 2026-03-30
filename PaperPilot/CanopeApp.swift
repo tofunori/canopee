@@ -16,10 +16,8 @@ struct CanopeApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
-        // Kill all child processes (terminal shells, claude, etc.)
-        // SIGTERM gives them a chance to clean up
-        let pgid = getpgrp()
-        kill(-pgid, SIGTERM)
+        // Only terminate children launched by the app itself.
+        ChildProcessRegistry.shared.terminateAllTrackedChildren()
 
         // Clean up temp files
         try? FileManager.default.removeItem(atPath: "/tmp/canope_selection.txt")

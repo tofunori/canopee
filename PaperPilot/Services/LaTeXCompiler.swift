@@ -28,15 +28,17 @@ struct LaTeXCompiler {
     }
 
     private static func runLatexmk(file: URL) -> CompilationResult {
-        let process = Process()
         // Try latexmk first, fall back to pdflatex
-        let latexmkPath = findExecutable("latexmk")
+        let latexmkPath = ExecutableLocator.find("latexmk")
+        let arguments: [String]
+        let executablePath: String
+
         if let latexmk = latexmkPath {
-            process.executableURL = URL(fileURLWithPath: latexmk)
-            process.arguments = ["-pdf", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", file.lastPathComponent]
-        } else if let pdflatex = findExecutable("pdflatex") {
-            process.executableURL = URL(fileURLWithPath: pdflatex)
-            process.arguments = ["-synctex=1", "-interaction=nonstopmode", "-halt-on-error", file.lastPathComponent]
+            executablePath = latexmk
+            arguments = ["-pdf", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", file.lastPathComponent]
+        } else if let pdflatex = ExecutableLocator.find("pdflatex") {
+            executablePath = pdflatex
+            arguments = ["-synctex=1", "-interaction=nonstopmode", "-halt-on-error", file.lastPathComponent]
         } else {
             return CompilationResult(
                 success: false,
@@ -46,24 +48,21 @@ struct LaTeXCompiler {
             )
         }
 
-        process.currentDirectoryURL = file.deletingLastPathComponent()
-        process.environment = ProcessInfo.processInfo.environment
-
         // Add common LaTeX paths
-        var env = process.environment ?? [:]
+        var env = ProcessInfo.processInfo.environment
         let texPaths = ["/Library/TeX/texbin", "/usr/local/texlive/2024/bin/universal-darwin", "/usr/local/texlive/2025/bin/universal-darwin", "/opt/homebrew/bin"]
         let currentPath = env["PATH"] ?? ""
         env["PATH"] = texPaths.joined(separator: ":") + ":" + currentPath
-        process.environment = env
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
+        let execution: ProcessExecutionResult
         do {
-            try process.run()
-            process.waitUntilExit()
+            execution = try ProcessRunner.run(
+                executable: executablePath,
+                args: arguments,
+                environment: env,
+                currentDirectory: file.deletingLastPathComponent(),
+                timeout: 180
+            )
         } catch {
             return CompilationResult(
                 success: false,
@@ -73,15 +72,22 @@ struct LaTeXCompiler {
             )
         }
 
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let log = String(data: outputData, encoding: .utf8) ?? ""
+        let log = execution.combinedOutput
+        let timedOutErrors = execution.timedOut ? [
+            CompilationError(
+                line: 0,
+                message: "La compilation a dépassé le délai permis.",
+                file: file.lastPathComponent,
+                isWarning: false
+            )
+        ] : []
 
         let pdfName = file.deletingPathExtension().appendingPathExtension("pdf")
         let pdfExists = FileManager.default.fileExists(atPath: pdfName.path)
-        let errors = parseErrors(log: log, fileName: file.lastPathComponent)
+        let errors = timedOutErrors + parseErrors(log: log, fileName: file.lastPathComponent)
 
         return CompilationResult(
-            success: process.terminationStatus == 0 && pdfExists,
+            success: execution.exitCode == 0 && pdfExists && !execution.timedOut,
             pdfURL: pdfExists ? pdfName : nil,
             errors: errors,
             log: log
@@ -89,7 +95,7 @@ struct LaTeXCompiler {
     }
 
     /// Parse LaTeX log for errors and warnings.
-    private static func parseErrors(log: String, fileName: String) -> [CompilationError] {
+    static func parseErrors(log: String, fileName: String) -> [CompilationError] {
         var errors: [CompilationError] = []
         let lines = log.components(separatedBy: .newlines)
 
@@ -117,36 +123,5 @@ struct LaTeXCompiler {
         }
 
         return errors
-    }
-
-    /// Find an executable in common paths.
-    private static func findExecutable(_ name: String) -> String? {
-        let paths = [
-            "/Library/TeX/texbin/\(name)",
-            "/usr/local/texlive/2024/bin/universal-darwin/\(name)",
-            "/usr/local/texlive/2025/bin/universal-darwin/\(name)",
-            "/opt/homebrew/bin/\(name)",
-            "/usr/local/bin/\(name)",
-            "/usr/bin/\(name)",
-        ]
-        for path in paths {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                return path
-            }
-        }
-        // Try which
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = [name]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let result = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let result, !result.isEmpty, FileManager.default.isExecutableFile(atPath: result) {
-            return result
-        }
-        return nil
     }
 }

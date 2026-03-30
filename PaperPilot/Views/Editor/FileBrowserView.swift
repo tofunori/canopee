@@ -42,6 +42,7 @@ struct FileBrowserView: View {
     @State private var currentDir: URL
     @State private var items: [FileItem] = []
     @State private var expandedDirs: Set<URL> = []
+    @State private var childDirectoryCache: [URL: [FileItem]] = [:]
     @State private var selectedIndex: Int = 0
     @FocusState private var isFocused: Bool
 
@@ -59,7 +60,9 @@ struct FileBrowserView: View {
         func flatten(_ items: [FileItem]) {
             for item in items {
                 result.append(item)
-                if item.isDirectory && expandedDirs.contains(item.url), let children = item.children {
+                if item.isDirectory,
+                   expandedDirs.contains(item.url),
+                   let children = childItems(for: item.url) {
                     flatten(children)
                 }
             }
@@ -187,7 +190,10 @@ struct FileBrowserView: View {
                 if item.isDirectory {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         if isExpanded { expandedDirs.remove(item.url) }
-                        else { expandedDirs.insert(item.url) }
+                        else {
+                            loadChildrenIfNeeded(for: item.url)
+                            expandedDirs.insert(item.url)
+                        }
                     }
                 }
             }
@@ -219,7 +225,7 @@ struct FileBrowserView: View {
         }
         .buttonStyle(.plain)
 
-        if item.isDirectory && isExpanded, let children = item.children {
+        if item.isDirectory && isExpanded, let children = childItems(for: item.url) {
             ForEach(children) { child in
                 AnyView(renderItem(child, depth: depth + 1, index: flatIndex(for: child)))
             }
@@ -235,6 +241,7 @@ struct FileBrowserView: View {
     private func goUp() {
         let parent = currentDir.deletingLastPathComponent()
         expandedDirs.removeAll()
+        childDirectoryCache.removeAll()
         currentDir = parent
     }
 
@@ -275,6 +282,7 @@ struct FileBrowserView: View {
             let item = visible[selectedIndex]
             if item.isDirectory {
                 if !expandedDirs.contains(item.url) {
+                    loadChildrenIfNeeded(for: item.url)
                     expandedDirs.insert(item.url)
                 } else {
                     // Already expanded, move into first child
@@ -302,12 +310,23 @@ struct FileBrowserView: View {
     }
 
     private func refresh() {
+        childDirectoryCache.removeAll()
         items = scanDirectory(currentDir)
+    }
+
+    private func childItems(for directory: URL) -> [FileItem]? {
+        childDirectoryCache[directory]
+    }
+
+    private func loadChildrenIfNeeded(for directory: URL) {
+        guard childDirectoryCache[directory] == nil else { return }
+        childDirectoryCache[directory] = scanDirectory(directory)
     }
 
     private func scanDirectory(_ url: URL) -> [FileItem] {
         guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: url, includingPropertiesForKeys: [.isDirectoryKey],
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
@@ -315,7 +334,10 @@ struct FileBrowserView: View {
 
         return contents
             .filter { url in
-                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                let isDir = values?.isDirectory ?? false
+                let isSymbolicLink = values?.isSymbolicLink ?? false
+                if isSymbolicLink { return false }
                 return isDir || validExtensions.contains(url.pathExtension.lowercased())
             }
             .sorted { a, b in
@@ -330,7 +352,7 @@ struct FileBrowserView: View {
                     url: url,
                     name: url.lastPathComponent,
                     isDirectory: isDir,
-                    children: isDir ? scanDirectory(url) : nil
+                    children: nil
                 )
             }
     }

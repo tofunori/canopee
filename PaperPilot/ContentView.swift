@@ -152,7 +152,7 @@ struct MainWindow: View {
 
                     // Editor tabs
                     ForEach(openEditorPaths, id: \.self) { path in
-                        LaTeXEditorView(fileURL: URL(fileURLWithPath: path), showTerminal: $showTerminal, onOpenPDF: { url in
+                        LaTeXEditorView(fileURL: URL(fileURLWithPath: path), isActive: selectedTab == .editor(path), showTerminal: $showTerminal, onOpenPDF: { url in
                             openPDFFile(url)
                         }, onOpenInNewTab: { url in
                             openTeXFile(url)

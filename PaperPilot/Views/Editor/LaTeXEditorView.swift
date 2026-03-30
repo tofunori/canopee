@@ -8,6 +8,7 @@ extension Notification.Name {
 
 struct LaTeXEditorView: View {
     let fileURL: URL
+    var isActive: Bool = true
     @Binding var showTerminal: Bool
     var onOpenPDF: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
@@ -133,10 +134,20 @@ struct LaTeXEditorView: View {
         .onAppear {
             loadFile()
             loadExistingPDF()
-            startFileWatcher()
+            if isActive {
+                startFileWatcher()
+            }
         }
         .onDisappear {
             stopFileWatcher()
+        }
+        .onChange(of: isActive) {
+            if isActive {
+                loadFile()
+                startFileWatcher()
+            } else {
+                stopFileWatcher()
+            }
         }
     }
 
@@ -485,13 +496,17 @@ struct LaTeXEditorView: View {
     @State private var pollTimer: Timer?
 
     private func startFileWatcher() {
+        guard pollTimer == nil else { return }
         lastModified = modificationDate()
-        // Poll every 1 second — more reliable than DispatchSource for atomic writes
+        let watchedURL = fileURL
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            let currentMod = modificationDate()
-            if let currentMod, currentMod != lastModified {
-                lastModified = currentMod
-                loadFile()
+            let currentMod = Self.modificationDate(for: watchedURL)
+            Task { @MainActor in
+                guard isActive else { return }
+                if let currentMod, currentMod != lastModified {
+                    lastModified = currentMod
+                    loadFile()
+                }
             }
         }
     }
@@ -502,7 +517,11 @@ struct LaTeXEditorView: View {
     }
 
     private func modificationDate() -> Date? {
-        try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
+        Self.modificationDate(for: fileURL)
+    }
+
+    nonisolated private static func modificationDate(for url: URL) -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
     }
 }
 

@@ -66,16 +66,13 @@ struct LaTeXTextEditor: NSViewRepresentable {
         context.coordinator.applyTheme(to: textView)
         context.coordinator.applyHighlighting()
         context.coordinator.refreshChangeTracking()
-
-        // Listen for SyncTeX scroll-to-line
-        NotificationCenter.default.addObserver(forName: .syncTeXScrollToLine, object: nil, queue: .main) { notification in
-            guard let range = notification.userInfo?["range"] as? NSRange else { return }
-            textView.setSelectedRange(range)
-            textView.scrollRangeToVisible(range)
-            textView.showFindIndicator(for: range)
-        }
+        context.coordinator.installSyncTeXObserver(for: textView)
 
         return scrollView
+    }
+
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        coordinator.removeSyncTeXObserver()
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -84,8 +81,6 @@ struct LaTeXTextEditor: NSViewRepresentable {
         textView.changeCoordinator = context.coordinator
 
         let textChanged = textView.string != text
-        let themeChanged = context.coordinator.theme?.name != theme?.name
-        let fontChanged = context.coordinator.fontSize != fontSize
         let baselineChanged = context.coordinator.baselineText != baselineText
 
         if textChanged {
@@ -129,10 +124,40 @@ struct LaTeXTextEditor: NSViewRepresentable {
         var baselineText: String
         private var changeHunks: [ChangeHunk] = []
         private var isUpdating = false
+        private var syncTeXObserver: NSObjectProtocol?
 
         init(parent: LaTeXTextEditor) {
             self.parent = parent
             baselineText = parent.baselineText
+        }
+
+        deinit {
+            removeSyncTeXObserver()
+        }
+
+        @MainActor
+        fileprivate func installSyncTeXObserver(for textView: ChangeTrackingTextView) {
+            removeSyncTeXObserver()
+            syncTeXObserver = NotificationCenter.default.addObserver(
+                forName: .syncTeXScrollToLine,
+                object: nil,
+                queue: .main
+            ) { [weak textView] notification in
+                guard let range = notification.userInfo?["range"] as? NSRange,
+                      let textView else { return }
+                Task { @MainActor in
+                    textView.setSelectedRange(range)
+                    textView.scrollRangeToVisible(range)
+                    textView.showFindIndicator(for: range)
+                }
+            }
+        }
+
+        fileprivate func removeSyncTeXObserver() {
+            if let syncTeXObserver {
+                NotificationCenter.default.removeObserver(syncTeXObserver)
+                self.syncTeXObserver = nil
+            }
         }
 
         @MainActor
@@ -178,7 +203,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
             if range.length > 0 {
                 let selected = (textView.string as NSString).substring(with: range)
                 let content = "[Source: LaTeX editor]\n\(selected)"
-                try? content.write(toFile: "/tmp/canopee_selection.txt", atomically: true, encoding: .utf8)
+                try? content.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
             }
         }
 
@@ -463,14 +488,17 @@ fileprivate final class PersistentSelectionLayoutManager: NSLayoutManager {
 
     private func shouldKeepCustomSelectionColor(for charRange: NSRange) -> Bool {
         guard let textView = textContainers.compactMap({ $0.textView }).first else { return false }
-        guard textView.window?.firstResponder !== textView else { return false }
 
-        return textView.selectedRanges
-            .lazy
-            .map(\.rangeValue)
-            .contains { selectedRange in
-                selectedRange.length > 0 && NSIntersectionRange(selectedRange, charRange).length > 0
-            }
+        return MainActor.assumeIsolated {
+            guard textView.window?.firstResponder !== textView else { return false }
+
+            return textView.selectedRanges
+                .lazy
+                .map(\.rangeValue)
+                .contains { selectedRange in
+                    selectedRange.length > 0 && NSIntersectionRange(selectedRange, charRange).length > 0
+                }
+        }
     }
 }
 
@@ -513,6 +541,15 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         super.drawBackground(in: rect)
         drawGutter(in: rect)
         drawChangeHighlights(in: rect)
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        needsDisplay = true
+    }
+
+    override func setNeedsDisplay(_ invalidRect: NSRect, avoidAdditionalLayout flag: Bool) {
+        super.setNeedsDisplay(expandedInvalidationRect(for: invalidRect), avoidAdditionalLayout: flag)
     }
 
 
@@ -564,7 +601,7 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
     }
 
     private func drawGutter(in dirtyRect: NSRect) {
-        let gutterRect = NSRect(x: dirtyRect.minX, y: dirtyRect.minY, width: min(gutterWidth, bounds.width), height: dirtyRect.height)
+        let gutterRect = NSRect(x: 0, y: dirtyRect.minY, width: min(gutterWidth, bounds.width), height: dirtyRect.height)
         gutterBackgroundColor.setFill()
         gutterRect.fill()
 
@@ -598,9 +635,21 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         }
     }
 
+    private func expandedInvalidationRect(for invalidRect: NSRect) -> NSRect {
+        guard gutterWidth > 0 else { return invalidRect }
+
+        let maxX = max(invalidRect.maxX, gutterWidth)
+        return NSRect(
+            x: 0,
+            y: invalidRect.minY,
+            width: min(bounds.width, maxX),
+            height: invalidRect.height
+        )
+    }
+
     private func drawLineNumbers(in dirtyRect: NSRect) {
-        guard let layoutManager = layoutManager,
-              let textContainer = textContainer else { return }
+        guard let layoutManager = layoutManager, let textContainer else { return }
+        layoutManager.ensureLayout(for: textContainer)
         let textOrigin = textContainerOrigin
         let visible = visibleRect
         let attrs: [NSAttributedString.Key: Any] = [
@@ -615,7 +664,7 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
 
         while glyphIndex < totalGlyphs {
             var lineFragmentRange = NSRange()
-            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineFragmentRange, withoutAdditionalLayout: true)
+            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineFragmentRange, withoutAdditionalLayout: false)
             let y = lineRect.minY + textOrigin.y
 
             if y + lineRect.height >= visible.minY && y <= visible.maxY {
@@ -630,7 +679,8 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
                 label.draw(in: labelRect, withAttributes: attrs)
             }
 
-            glyphIndex = NSMaxRange(lineFragmentRange)
+            let nextGlyphIndex = NSMaxRange(lineFragmentRange)
+            glyphIndex = nextGlyphIndex > glyphIndex ? nextGlyphIndex : glyphIndex + 1
             lineNumber += 1
         }
     }
@@ -674,7 +724,8 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
     }
 
     private func markerRect(for hunk: ChangeHunk) -> NSRect? {
-        guard let layoutManager = layoutManager else { return nil }
+        guard let layoutManager = layoutManager, let textContainer else { return nil }
+        layoutManager.ensureLayout(for: textContainer)
         let textOrigin = textContainerOrigin
         let textLength = (string as NSString).length
 
@@ -682,7 +733,7 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
             let safeLocation = min(hunk.currentRange.location, max(0, textLength - 1))
             let glyphIndex = layoutManager.glyphIndexForCharacter(at: safeLocation)
             // Only first visual line fragment — not the entire wrapped extent
-            let firstLineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            let firstLineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: false)
             return NSRect(x: 0, y: firstLineRect.minY + textOrigin.y, width: gutterWidth, height: firstLineRect.height)
         }
 
@@ -695,11 +746,11 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
 
         if clampedLocation >= textLength {
             let lastGlyphIndex = max(0, layoutManager.numberOfGlyphs - 1)
-            let lastRect = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            let lastRect = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil, withoutAdditionalLayout: false)
             yPosition = lastRect.maxY + textOrigin.y
         } else {
             let glyphIndex = layoutManager.glyphIndexForCharacter(at: clampedLocation)
-            let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: false)
             yPosition = lineRect.minY + textOrigin.y
         }
 
@@ -707,13 +758,16 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
     }
 
     private func highlightRect(for hunk: ChangeHunk, using layoutManager: NSLayoutManager, textOrigin: NSPoint) -> NSRect? {
+        if let textContainer {
+            layoutManager.ensureLayout(for: textContainer)
+        }
         let textLength = (string as NSString).length
 
         if hunk.currentRange.length > 0, textLength > 0 {
             let safeLocation = min(hunk.currentRange.location, max(0, textLength - 1))
             let glyphIndex = layoutManager.glyphIndexForCharacter(at: safeLocation)
             // Only first visual line — compact highlight
-            let firstLineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            let firstLineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: false)
             let y = firstLineRect.minY + textOrigin.y
             return NSRect(x: gutterWidth + 4, y: y, width: bounds.width - gutterWidth - 12, height: firstLineRect.height)
         }
@@ -727,11 +781,11 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
 
         if clampedLocation >= textLength {
             let lastGlyphIndex = max(0, layoutManager.numberOfGlyphs - 1)
-            let lastRect = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            let lastRect = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil, withoutAdditionalLayout: false)
             yPosition = lastRect.maxY + textOrigin.y
         } else {
             let glyphIndex = layoutManager.glyphIndexForCharacter(at: clampedLocation)
-            let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: true)
+            let lineRect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil, withoutAdditionalLayout: false)
             yPosition = lineRect.minY + textOrigin.y
         }
 

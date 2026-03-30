@@ -19,6 +19,7 @@ struct PDFReaderView: View {
     @State private var isEditingNote = false
     @State private var editingNoteText = ""
     @State private var undoAction: (() -> Void)?
+    @State private var contextWriteID = UUID()
 
     private var paper: Paper? {
         try? modelContext.fetch(
@@ -153,34 +154,50 @@ struct PDFReaderView: View {
         selectedAnnotation = nil
         if !paper.isRead { paper.isRead = true }
 
-        writePaperContext()
+        if isActive {
+            writePaperContext()
+        }
     }
 
     private func writePaperContext() {
-        guard let doc = document, let paper else { return }
+        guard document != nil, let paper else { return }
         // Clear selection when switching papers
         try? "(no text currently selected)".write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
         selectedText = ""
 
+        let paperURL = paper.fileURL
+        let title = paper.title
+        let authors = paper.authors
+        let year = paper.year.map(String.init) ?? "unknown"
+        let journal = paper.journal ?? "unknown"
+        let doi = paper.doi ?? "unknown"
+        let writeID = UUID()
+        contextWriteID = writeID
+
         DispatchQueue.global(qos: .utility).async {
+            guard let snapshotDocument = PDFDocument(url: paperURL) else { return }
+
             var fullText = """
             ========================================
             CURRENTLY OPEN PAPER IN CANOPÉE
             ========================================
-            Title: \(paper.title)
-            Authors: \(paper.authors)
-            Year: \(paper.year.map(String.init) ?? "unknown")
-            Journal: \(paper.journal ?? "unknown")
-            DOI: \(paper.doi ?? "unknown")
-            Pages: \(doc.pageCount)
+            Title: \(title)
+            Authors: \(authors)
+            Year: \(year)
+            Journal: \(journal)
+            DOI: \(doi)
+            Pages: \(snapshotDocument.pageCount)
             ========================================
 
             """
-            for i in 0..<doc.pageCount {
-                if let page = doc.page(at: i), let text = page.string {
+            for i in 0..<snapshotDocument.pageCount {
+                if let page = snapshotDocument.page(at: i), let text = page.string {
                     fullText += "--- Page \(i + 1) ---\n\(text)\n\n"
                 }
             }
+
+            let shouldWrite = DispatchQueue.main.sync { contextWriteID == writeID }
+            guard shouldWrite else { return }
             try? fullText.write(toFile: "/tmp/canope_paper.txt", atomically: true, encoding: .utf8)
         }
     }

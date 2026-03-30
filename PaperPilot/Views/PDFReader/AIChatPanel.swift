@@ -3,6 +3,12 @@ import SwiftTerm
 import PDFKit
 import MetalKit
 
+private func makeTerminalFont(size: CGFloat) -> NSFont {
+    NSFont(name: "Menlo", size: size)
+        ?? NSFont.userFixedPitchFont(ofSize: size)
+        ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+}
+
 // MARK: - Terminal Tab
 
 struct TerminalTab: Identifiable {
@@ -244,7 +250,7 @@ struct TerminalPanel: View {
     private func applyFontSize(_ size: CGFloat) {
         currentFontSize = size
         for (_, tv) in terminalViews {
-            tv.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+            tv.font = makeTerminalFont(size: size)
         }
     }
 
@@ -316,7 +322,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
 
     func makeNSView(context: Context) -> FocusAwareLocalProcessTerminalView {
         let tv = FocusAwareLocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
-        tv.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        tv.font = makeTerminalFont(size: fontSize)
         tv.optionAsMetaKey = false
         tv.nativeBackgroundColor = theme.bg
         tv.nativeForegroundColor = theme.fg
@@ -328,6 +334,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
         env.append("CANOPE_SELECTION=/tmp/canope_selection.txt")
         env.append("CANOPE_PAPER=/tmp/canope_paper.txt")
         tv.startProcess(executable: shell, args: ["-l"], environment: env, execName: shell)
+        ChildProcessRegistry.shared.track(terminalView: tv)
 
         enableMetalWhenReady(for: tv)
 
@@ -342,7 +349,10 @@ struct TerminalViewWrapper: NSViewRepresentable {
         nsView.shouldCaptureFocusFromClicks = isActive
     }
 
-    static func dismantleNSView(_ nsView: FocusAwareLocalProcessTerminalView, coordinator: ()) {}
+    static func dismantleNSView(_ nsView: FocusAwareLocalProcessTerminalView, coordinator: ()) {
+        nsView.prepareForRemoval()
+        ChildProcessRegistry.shared.untrack(terminalView: nsView)
+    }
 
     private func enableMetalWhenReady(for tv: FocusAwareLocalProcessTerminalView, remainingAttempts: Int = 40) {
         guard remainingAttempts > 0 else { return }
@@ -404,18 +414,20 @@ final class EventForwardingView: NSView {
     }
 }
 
-final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView {
+@MainActor
+final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildProcessTerminable {
     var shouldCaptureFocusFromClicks = true
     private var clickMonitor: Any?
+    private var scrollMonitor: Any?
 
-    deinit {
-        removeClickMonitor()
+    func terminateTrackedProcess() {
+        terminate()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {
-            removeClickMonitor()
+            removeEventMonitors()
         } else {
             installClickMonitorIfNeeded()
             installScrollMonitor()
@@ -428,8 +440,6 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView {
             window.makeFirstResponder(self)
         }
     }
-
-    private var scrollMonitor: Any?
 
     func installScrollMonitor() {
         guard scrollMonitor == nil else { return }
@@ -460,6 +470,11 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView {
         }
     }
 
+    func prepareForRemoval() {
+        removeEventMonitors()
+        terminate()
+    }
+
     private func installClickMonitorIfNeeded() {
         guard clickMonitor == nil else { return }
         clickMonitor = NSEvent.addLocalMonitorForEvents(
@@ -481,5 +496,16 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView {
         guard let clickMonitor else { return }
         NSEvent.removeMonitor(clickMonitor)
         self.clickMonitor = nil
+    }
+
+    private func removeScrollMonitor() {
+        guard let scrollMonitor else { return }
+        NSEvent.removeMonitor(scrollMonitor)
+        self.scrollMonitor = nil
+    }
+
+    private func removeEventMonitors() {
+        removeClickMonitor()
+        removeScrollMonitor()
     }
 }
