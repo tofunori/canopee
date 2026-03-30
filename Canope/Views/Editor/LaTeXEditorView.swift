@@ -8,6 +8,11 @@ extension Notification.Name {
 }
 
 struct LaTeXEditorView: View {
+    private struct PendingAnnotation: Identifiable {
+        let id = UUID()
+        var draft: LaTeXAnnotationDraft
+    }
+
     let fileURL: URL
     var isActive: Bool = true
     @Binding var showTerminal: Bool
@@ -33,6 +38,7 @@ struct LaTeXEditorView: View {
     @State private var latexAnnotations: [LaTeXAnnotation] = []
     @State private var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] = []
     @State private var selectedEditorRange: NSRange?
+    @State private var pendingAnnotation: PendingAnnotation?
 
     // PDF pane tabs (compiled + reference articles)
     enum PdfPaneTab: Hashable {
@@ -161,6 +167,18 @@ struct LaTeXEditorView: View {
                 }
                 } // close VStack (file tabs + editor/PDF)
             }
+        }
+        .sheet(item: $pendingAnnotation) { pending in
+            LaTeXAnnotationNoteSheet(
+                selectedText: pending.draft.selectedText,
+                initialNote: pending.draft.note,
+                onCancel: {
+                    pendingAnnotation = nil
+                },
+                onSave: { note in
+                    savePendingAnnotation(note: note)
+                }
+            )
         }
         .onChange(of: syncToLine) {
             if let line = syncToLine {
@@ -443,7 +461,7 @@ struct LaTeXEditorView: View {
             .help("Sauvegarder (⌘S)")
             .keyboardShortcut("s", modifiers: .command)
 
-            Button(action: createAnnotationFromSelection) {
+            Button(action: beginAnnotationFromSelection) {
                 Image(systemName: "highlighter")
             }
             .buttonStyle(.plain)
@@ -665,16 +683,24 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func createAnnotationFromSelection() {
+    private func beginAnnotationFromSelection() {
         guard let range = selectedEditorRange,
               canCreateAnnotationFromSelection,
               let draft = LaTeXAnnotationStore.makeDraft(from: range, in: text) else {
             return
         }
 
+        pendingAnnotation = PendingAnnotation(draft: draft)
+    }
+
+    private func savePendingAnnotation(note: String) {
+        guard var draft = pendingAnnotation?.draft else { return }
+        draft.note = note
+
         latexAnnotations.append(LaTeXAnnotationStore.createAnnotation(from: draft))
         persistAnnotations()
         reconcileAnnotations()
+        pendingAnnotation = nil
     }
 
     private func loadExistingPDF() {
@@ -910,5 +936,79 @@ struct PDFPreviewView: NSViewRepresentable {
                 onInverseSync?(result.line)
             }
         }
+    }
+}
+
+private struct LaTeXAnnotationNoteSheet: View {
+    let selectedText: String
+    let initialNote: String
+    let onCancel: () -> Void
+    let onSave: (String) -> Void
+
+    @State private var note: String
+
+    init(
+        selectedText: String,
+        initialNote: String,
+        onCancel: @escaping () -> Void,
+        onSave: @escaping (String) -> Void
+    ) {
+        self.selectedText = selectedText
+        self.initialNote = initialNote
+        self.onCancel = onCancel
+        self.onSave = onSave
+        _note = State(initialValue: initialNote)
+    }
+
+    private var trimmedNote: String {
+        note.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Nouvelle annotation")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Extrait")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                ScrollView {
+                    Text(selectedText)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(minHeight: 90, maxHeight: 140)
+                .background(Color.yellow.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Note")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $note)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 140)
+                    .padding(6)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+
+            HStack {
+                Button("Annuler", action: onCancel)
+                Spacer()
+                Button("Ajouter") {
+                    onSave(trimmedNote)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(trimmedNote.isEmpty)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 480, idealWidth: 540)
     }
 }
