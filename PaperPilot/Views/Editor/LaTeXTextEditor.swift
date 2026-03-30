@@ -19,11 +19,19 @@ struct LaTeXTextEditor: NSViewRepresentable {
         scrollView.appearance = NSAppearance(named: .darkAqua)
         scrollView.scrollerStyle = .overlay
 
-        let textView = ChangeTrackingTextView()
+        let textStorage = NSTextStorage()
+        let layoutManager = PersistentSelectionLayoutManager()
+        let textContainer = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        textStorage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(textContainer)
+
+        let textView = ChangeTrackingTextView(frame: .zero, textContainer: textContainer)
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true
-        textView.isRichText = false
+        textView.isRichText = true
+        textView.usesFontPanel = false
+        textView.usesRuler = false
         textView.usesAdaptiveColorMappingForDarkAppearance = false
         textView.drawsBackground = true
         // Force aqua on textView only — prevents dark mode from dimming syntax colors
@@ -40,12 +48,12 @@ struct LaTeXTextEditor: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: textView.gutterWidth + 6, height: 8)
 
         // Soft word wrap — text flows to fit pane width, adjusts on resize
-        textView.textContainer?.lineBreakMode = .byWordWrapping
+        textContainer.lineBreakMode = .byWordWrapping
         textView.autoresizingMask = [.width]
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
-        textView.textContainer?.widthTracksTextView = true
+        textContainer.widthTracksTextView = true
 
         textView.delegate = context.coordinator
         context.coordinator.parent = self
@@ -58,6 +66,14 @@ struct LaTeXTextEditor: NSViewRepresentable {
         context.coordinator.applyTheme(to: textView)
         context.coordinator.applyHighlighting()
         context.coordinator.refreshChangeTracking()
+
+        // Listen for SyncTeX scroll-to-line
+        NotificationCenter.default.addObserver(forName: .syncTeXScrollToLine, object: nil, queue: .main) { notification in
+            guard let range = notification.userInfo?["range"] as? NSRange else { return }
+            textView.setSelectedRange(range)
+            textView.scrollRangeToVisible(range)
+            textView.showFindIndicator(for: range)
+        }
 
         return scrollView
     }
@@ -75,7 +91,15 @@ struct LaTeXTextEditor: NSViewRepresentable {
         if textChanged {
             let selectedRange = textView.selectedRange()
             textView.string = text
-            textView.setSelectedRange(selectedRange)
+            let maxLen = (text as NSString).length
+            let clampedLoc = min(selectedRange.location, maxLen)
+            let clampedLen = min(selectedRange.length, maxLen - clampedLoc)
+            textView.setSelectedRange(NSRange(location: clampedLoc, length: clampedLen))
+        }
+
+        // Always ensure aqua appearance for correct syntax colors
+        if textView.appearance?.name != .aqua {
+            textView.appearance = NSAppearance(named: .aqua)
         }
 
         context.coordinator.fontSize = fontSize
@@ -85,10 +109,11 @@ struct LaTeXTextEditor: NSViewRepresentable {
         context.coordinator.errorLines = errorLines
         context.coordinator.applyTheme(to: textView)
 
-        if textChanged || themeChanged || fontChanged || baselineChanged {
+        if textChanged || baselineChanged {
             context.coordinator.refreshChangeTracking()
-            context.coordinator.applyHighlighting()
         }
+        // Always re-apply highlighting — theme/font changes and text changes both need it
+        context.coordinator.applyHighlighting()
     }
 
     func makeCoordinator() -> Coordinator {
@@ -118,14 +143,15 @@ struct LaTeXTextEditor: NSViewRepresentable {
             let cursor = t?.env ?? NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1)
             let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 
-            textView.font = font
             textView.backgroundColor = bg
-            textView.textColor = fg
+            // Don't set textView.textColor — it wipes ALL foreground attributes
             textView.insertionPointColor = cursor
+            let selectionColor = cursor.withAlphaComponent(0.35)
             textView.selectedTextAttributes = [
-                .backgroundColor: cursor.withAlphaComponent(0.35),
+                .backgroundColor: selectionColor,
                 .foregroundColor: NSColor.white,
             ]
+            textView.persistentSelectionBackgroundColor = selectionColor
             textView.typingAttributes = [
                 .font: font,
                 .foregroundColor: fg,
@@ -408,6 +434,46 @@ private extension Array where Element == TrackedLine {
     }
 }
 
+fileprivate final class PersistentSelectionLayoutManager: NSLayoutManager {
+    var persistentSelectionBackgroundColor = NSColor.systemPurple.withAlphaComponent(0.35)
+
+    override func fillBackgroundRectArray(
+        _ rectArray: UnsafePointer<NSRect>,
+        count rectCount: Int,
+        forCharacterRange charRange: NSRange,
+        color: NSColor
+    ) {
+        let fillColor = shouldKeepCustomSelectionColor(for: charRange)
+            ? persistentSelectionBackgroundColor
+            : color
+
+        // AppKit reads the current graphics-state fill color here; the `color`
+        // parameter is informational and passing a replacement to `super` is not enough.
+        fillColor.setFill()
+
+        super.fillBackgroundRectArray(
+            rectArray,
+            count: rectCount,
+            forCharacterRange: charRange,
+            color: fillColor
+        )
+
+        color.setFill()
+    }
+
+    private func shouldKeepCustomSelectionColor(for charRange: NSRange) -> Bool {
+        guard let textView = textContainers.compactMap({ $0.textView }).first else { return false }
+        guard textView.window?.firstResponder !== textView else { return false }
+
+        return textView.selectedRanges
+            .lazy
+            .map(\.rangeValue)
+            .contains { selectedRange in
+                selectedRange.length > 0 && NSIntersectionRange(selectedRange, charRange).length > 0
+            }
+    }
+}
+
 @MainActor
 fileprivate final class ChangeTrackingTextView: NSTextView {
     struct MarkerFrame {
@@ -432,14 +498,48 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
     private var markerFrames: [MarkerFrame] = []
     private var selectedMarkerID: UUID?
 
+    var persistentSelectionBackgroundColor: NSColor {
+        get {
+            (layoutManager as? PersistentSelectionLayoutManager)?.persistentSelectionBackgroundColor
+                ?? markerColor.withAlphaComponent(0.3)
+        }
+        set {
+            (layoutManager as? PersistentSelectionLayoutManager)?.persistentSelectionBackgroundColor = newValue
+            needsDisplay = true
+        }
+    }
+
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         drawGutter(in: rect)
         drawChangeHighlights(in: rect)
     }
 
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+
+        // ⌘+click → forward SyncTeX (anywhere in text area)
+        if event.modifierFlags.contains(.command) && point.x > gutterWidth {
+            let charIndex = characterIndexForInsertion(at: point)
+            let nsString = string as NSString
+            if charIndex < nsString.length {
+                // Count which line this character is on
+                var lineNumber = 1
+                var scanPos = 0
+                while scanPos < charIndex {
+                    var lineEnd = 0
+                    nsString.getLineStart(nil, end: &lineEnd, contentsEnd: nil, for: NSRange(location: scanPos, length: 0))
+                    if lineEnd <= scanPos { break }
+                    if lineEnd > charIndex { break }
+                    scanPos = lineEnd
+                    lineNumber += 1
+                }
+                NotificationCenter.default.post(name: .syncTeXForwardSync, object: nil, userInfo: ["line": lineNumber])
+            }
+            return
+        }
+
         guard point.x <= gutterWidth else {
             super.mouseDown(with: event)
             return

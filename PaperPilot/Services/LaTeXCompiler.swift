@@ -33,10 +33,10 @@ struct LaTeXCompiler {
         let latexmkPath = findExecutable("latexmk")
         if let latexmk = latexmkPath {
             process.executableURL = URL(fileURLWithPath: latexmk)
-            process.arguments = ["-pdf", "-interaction=nonstopmode", "-halt-on-error", file.lastPathComponent]
+            process.arguments = ["-pdf", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", file.lastPathComponent]
         } else if let pdflatex = findExecutable("pdflatex") {
             process.executableURL = URL(fileURLWithPath: pdflatex)
-            process.arguments = ["-interaction=nonstopmode", "-halt-on-error", file.lastPathComponent]
+            process.arguments = ["-synctex=1", "-interaction=nonstopmode", "-halt-on-error", file.lastPathComponent]
         } else {
             return CompilationResult(
                 success: false,

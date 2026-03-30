@@ -1,6 +1,11 @@
 import SwiftUI
 import PDFKit
 
+extension Notification.Name {
+    static let syncTeXScrollToLine = Notification.Name("syncTeXScrollToLine")
+    static let syncTeXForwardSync = Notification.Name("syncTeXForwardSync")
+}
+
 struct LaTeXEditorView: View {
     let fileURL: URL
     @Binding var showTerminal: Bool
@@ -18,6 +23,8 @@ struct LaTeXEditorView: View {
     @State private var splitLayout: SplitLayout = .horizontal
     @State private var editorFontSize: CGFloat = 14
     @State private var editorTheme: Int = 0
+    @State private var syncTarget: SyncTeXForwardResult?
+    @State private var syncToLine: Int?
     @State private var lastModified: Date?
 
     enum SplitLayout: String {
@@ -112,6 +119,17 @@ struct LaTeXEditorView: View {
                 }
             }
         }
+        .onChange(of: syncToLine) {
+            if let line = syncToLine {
+                scrollEditorToLine(line)
+                syncToLine = nil
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .syncTeXForwardSync)) { notification in
+            if let line = notification.userInfo?["line"] as? Int {
+                forwardSync(line: line)
+            }
+        }
         .onAppear {
             loadFile()
             loadExistingPDF()
@@ -174,7 +192,9 @@ struct LaTeXEditorView: View {
     private var pdfPane: some View {
         Group {
             if let pdf = compiledPDF {
-                PDFPreviewView(document: pdf)
+                PDFPreviewView(document: pdf, syncTarget: syncTarget, onInverseSync: { line in
+                    syncToLine = line
+                })
             } else {
                 ContentUnavailableView(
                     "Pas encore compilé",
@@ -407,6 +427,39 @@ struct LaTeXEditorView: View {
         }
     }
 
+    private func scrollEditorToLine(_ lineNumber: Int) {
+        let lines = text.components(separatedBy: "\n")
+        guard lineNumber > 0 && lineNumber <= lines.count else { return }
+        var charOffset = 0
+        for i in 0..<(lineNumber - 1) {
+            charOffset += lines[i].count + 1
+        }
+        // Select entire line so it highlights in yellow (showFindIndicator)
+        let lineLength = lines[lineNumber - 1].count
+        let range = NSRange(location: charOffset, length: lineLength)
+        NotificationCenter.default.post(name: .syncTeXScrollToLine, object: nil, userInfo: ["range": range])
+    }
+
+    // MARK: - SyncTeX
+
+    private func forwardSync(line: Int) {
+        let pdfPath = fileURL.deletingPathExtension().appendingPathExtension("pdf").path
+        guard FileManager.default.fileExists(atPath: pdfPath) else { return }
+        let texFile = fileURL.lastPathComponent
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let result = SyncTeXService.forwardSync(line: line, texFile: texFile, pdfPath: pdfPath) {
+                DispatchQueue.main.async {
+                    syncTarget = result
+                    // Clear after a moment so it can be re-triggered
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        syncTarget = nil
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Compilation
 
     private func compile() {
@@ -453,22 +506,73 @@ struct LaTeXEditorView: View {
     }
 }
 
-// MARK: - PDF Preview
+// MARK: - PDF Preview with SyncTeX inverse sync
 
 struct PDFPreviewView: NSViewRepresentable {
     let document: PDFDocument
+    var syncTarget: SyncTeXForwardResult?
+    var onInverseSync: ((Int) -> Void)?
 
     func makeNSView(context: Context) -> PDFView {
         let pdfView = PDFView()
         pdfView.document = document
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
+
+        // Add ⌘+click gesture for inverse sync
+        let clickGesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleClick(_:)))
+        clickGesture.numberOfClicksRequired = 1
+        pdfView.addGestureRecognizer(clickGesture)
+        context.coordinator.pdfView = pdfView
+
         return pdfView
     }
 
     func updateNSView(_ pdfView: PDFView, context: Context) {
         if pdfView.document !== document {
             pdfView.document = document
+        }
+        context.coordinator.onInverseSync = onInverseSync
+        context.coordinator.pdfView = pdfView
+
+        // Forward sync: scroll to target
+        if let target = syncTarget,
+           let page = document.page(at: target.page - 1) {
+            let pageBounds = page.bounds(for: .mediaBox)
+            let pdfKitY = pageBounds.height - target.v
+            let rect = CGRect(x: target.h, y: pdfKitY, width: max(target.width, 100), height: max(target.height, 14))
+            pdfView.go(to: rect, on: page)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    class Coordinator: NSObject {
+        weak var pdfView: PDFView?
+        var onInverseSync: ((Int) -> Void)?
+
+        @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
+            guard let pdfView = pdfView,
+                  NSApp.currentEvent?.modifierFlags.contains(.command) == true else { return }
+
+            let locationInView = gesture.location(in: pdfView)
+            guard let page = pdfView.page(for: locationInView, nearest: true),
+                  let pageIndex = pdfView.document?.index(for: page) else { return }
+
+            let pagePoint = pdfView.convert(locationInView, to: page)
+            let pageBounds = page.bounds(for: .mediaBox)
+
+            let synctexX = pagePoint.x
+            let synctexY = pageBounds.height - pagePoint.y
+
+            let pdfPath = pdfView.document?.documentURL?.path ?? ""
+            guard !pdfPath.isEmpty else { return }
+            let pg = pageIndex + 1
+
+            if let result = SyncTeXService.inverseSync(page: pg, x: synctexX, y: synctexY, pdfPath: pdfPath) {
+                onInverseSync?(result.line)
+            }
         }
     }
 }
