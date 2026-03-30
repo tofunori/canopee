@@ -30,6 +30,8 @@ struct LaTeXEditorView: View {
     @State private var syncTarget: SyncTeXForwardResult?
     @State private var syncToLine: Int?
     @State private var lastModified: Date?
+    @State private var latexAnnotations: [LaTeXAnnotation] = []
+    @State private var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] = []
 
     // PDF pane tabs (compiled + reference articles)
     enum PdfPaneTab: Hashable {
@@ -200,7 +202,8 @@ struct LaTeXEditorView: View {
                 fontSize: editorFontSize,
                 theme: Self.editorThemes[editorTheme],
                 baselineText: savedText,
-                onTextChange: {}
+                resolvedAnnotations: resolvedLaTeXAnnotations,
+                onTextChange: reconcileAnnotations
             )
             if showErrors {
                 Divider()
@@ -555,12 +558,15 @@ struct LaTeXEditorView: View {
         guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
         text = content
         savedText = content
+        latexAnnotations = LaTeXAnnotationStore.load(for: fileURL)
+        reconcileAnnotations()
         lastModified = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
     }
 
     private func saveFile() {
         try? text.write(to: fileURL, atomically: true, encoding: .utf8)
         savedText = text
+        reconcileAnnotations()
         lastModified = modificationDate()
         compile()
     }
@@ -571,6 +577,8 @@ struct LaTeXEditorView: View {
             if let content = try? String(contentsOf: url, encoding: .utf8) {
                 text = content
                 savedText = content
+                latexAnnotations = LaTeXAnnotationStore.load(for: url)
+                reconcileAnnotations()
             }
         }
     }
@@ -622,7 +630,12 @@ struct LaTeXEditorView: View {
         text = result.joined(separator: "\n")
         savedText = text
         try? text.write(to: fileURL, atomically: true, encoding: .utf8)
+        reconcileAnnotations()
         lastModified = modificationDate()
+    }
+
+    private func reconcileAnnotations() {
+        resolvedLaTeXAnnotations = LaTeXAnnotationStore.resolve(latexAnnotations, in: text)
     }
 
     private func loadExistingPDF() {

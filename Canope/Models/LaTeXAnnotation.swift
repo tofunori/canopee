@@ -24,6 +24,14 @@ struct LaTeXAnnotationDraft: Equatable {
     var suffixContext: String
 }
 
+struct ResolvedLaTeXAnnotation: Identifiable, Equatable {
+    var annotation: LaTeXAnnotation
+    var resolvedRange: NSRange?
+    var isDetached: Bool
+
+    var id: UUID { annotation.id }
+}
+
 enum LaTeXAnnotationStore {
     private static let sidecarSuffix = ".canope-annotations.json"
     private static let contextRadius = 80
@@ -105,6 +113,17 @@ enum LaTeXAnnotationStore {
         )
     }
 
+    static func resolve(_ annotations: [LaTeXAnnotation], in text: String) -> [ResolvedLaTeXAnnotation] {
+        let nsText = text as NSString
+        return annotations.map { annotation in
+            guard let range = resolvedRange(for: annotation, in: nsText) else {
+                return ResolvedLaTeXAnnotation(annotation: annotation, resolvedRange: nil, isDetached: true)
+            }
+
+            return ResolvedLaTeXAnnotation(annotation: annotation, resolvedRange: range, isDetached: false)
+        }
+    }
+
     private static func contextSnapshot(for range: NSRange, in text: String) -> (selectedText: String, range: NSRange, prefixContext: String, suffixContext: String)? {
         let nsText = text as NSString
         let fullRange = NSRange(location: 0, length: nsText.length)
@@ -127,5 +146,72 @@ enum LaTeXAnnotationStore {
             prefixContext: nsText.substring(with: prefixRange),
             suffixContext: nsText.substring(with: suffixRange)
         )
+    }
+
+    private static func resolvedRange(for annotation: LaTeXAnnotation, in text: NSString) -> NSRange? {
+        let fullRange = NSRange(location: 0, length: text.length)
+        let preferredRange = annotation.utf16Range
+
+        if preferredRange.location != NSNotFound,
+           NSMaxRange(preferredRange) <= text.length,
+           text.substring(with: preferredRange) == annotation.selectedText {
+            return preferredRange
+        }
+
+        let candidates = allRanges(of: annotation.selectedText, in: text)
+        guard !candidates.isEmpty else { return nil }
+
+        if candidates.count == 1 {
+            return candidates[0]
+        }
+
+        return candidates.max { lhs, rhs in
+            candidateScore(lhs, for: annotation, in: text) < candidateScore(rhs, for: annotation, in: text)
+        }
+        .flatMap { NSIntersectionRange($0, fullRange).length == $0.length ? $0 : nil }
+    }
+
+    private static func allRanges(of needle: String, in text: NSString) -> [NSRange] {
+        guard !needle.isEmpty else { return [] }
+
+        var ranges: [NSRange] = []
+        var searchRange = NSRange(location: 0, length: text.length)
+
+        while true {
+            let found = text.range(of: needle, options: [], range: searchRange)
+            guard found.location != NSNotFound else { break }
+            ranges.append(found)
+
+            let nextLocation = NSMaxRange(found)
+            guard nextLocation < text.length else { break }
+            searchRange = NSRange(location: nextLocation, length: text.length - nextLocation)
+        }
+
+        return ranges
+    }
+
+    private static func candidateScore(_ range: NSRange, for annotation: LaTeXAnnotation, in text: NSString) -> Int {
+        var score = 0
+        let prefixLength = min(annotation.prefixContext.count, range.location)
+        let suffixLength = min(annotation.suffixContext.count, text.length - NSMaxRange(range))
+
+        if prefixLength > 0 {
+            let prefixRange = NSRange(location: range.location - prefixLength, length: prefixLength)
+            let prefix = text.substring(with: prefixRange)
+            if prefix.hasSuffix(annotation.prefixContext.suffix(prefixLength)) {
+                score += prefixLength
+            }
+        }
+
+        if suffixLength > 0 {
+            let suffixRange = NSRange(location: NSMaxRange(range), length: suffixLength)
+            let suffix = text.substring(with: suffixRange)
+            if suffix.hasPrefix(annotation.suffixContext.prefix(suffixLength)) {
+                score += suffixLength
+            }
+        }
+
+        let distance = abs(range.location - annotation.utf16Location)
+        return score - distance
     }
 }

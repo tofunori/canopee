@@ -7,6 +7,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
     var fontSize: CGFloat = 14
     var theme: (name: String, bg: NSColor, fg: NSColor, comment: NSColor, command: NSColor, math: NSColor, env: NSColor, brace: NSColor)?
     let baselineText: String
+    var resolvedAnnotations: [ResolvedLaTeXAnnotation] = []
     let onTextChange: () -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -65,6 +66,11 @@ struct LaTeXTextEditor: NSViewRepresentable {
         textView.string = text
         context.coordinator.applyTheme(to: textView)
         context.coordinator.applyHighlighting()
+        context.coordinator.cacheHighlightInputs(
+            themeName: theme?.name,
+            fontSize: fontSize,
+            resolvedAnnotations: resolvedAnnotations
+        )
         context.coordinator.refreshChangeTracking()
         context.coordinator.installSyncTeXObserver(for: textView)
 
@@ -82,6 +88,9 @@ struct LaTeXTextEditor: NSViewRepresentable {
 
         let textChanged = textView.string != text
         let baselineChanged = context.coordinator.baselineText != baselineText
+        let annotationsChanged = context.coordinator.cachedResolvedAnnotations != resolvedAnnotations
+        let themeChanged = context.coordinator.cachedThemeName != theme?.name
+        let fontChanged = context.coordinator.cachedFontSize != fontSize
 
         if textChanged {
             let selectedRange = textView.selectedRange()
@@ -102,13 +111,23 @@ struct LaTeXTextEditor: NSViewRepresentable {
             context.coordinator.theme = theme
         }
         context.coordinator.errorLines = errorLines
-        context.coordinator.applyTheme(to: textView)
+        context.coordinator.resolvedAnnotations = resolvedAnnotations
+        if themeChanged || fontChanged {
+            context.coordinator.applyTheme(to: textView)
+        }
 
         if textChanged || baselineChanged {
             context.coordinator.refreshChangeTracking()
         }
-        // Always re-apply highlighting — theme/font changes and text changes both need it
-        context.coordinator.applyHighlighting()
+
+        if textChanged || baselineChanged || annotationsChanged || themeChanged || fontChanged {
+            context.coordinator.applyHighlighting()
+            context.coordinator.cacheHighlightInputs(
+                themeName: theme?.name,
+                fontSize: fontSize,
+                resolvedAnnotations: resolvedAnnotations
+            )
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -122,6 +141,10 @@ struct LaTeXTextEditor: NSViewRepresentable {
         var fontSize: CGFloat = 14
         var theme: (name: String, bg: NSColor, fg: NSColor, comment: NSColor, command: NSColor, math: NSColor, env: NSColor, brace: NSColor)?
         var baselineText: String
+        var resolvedAnnotations: [ResolvedLaTeXAnnotation] = []
+        var cachedThemeName: String?
+        var cachedFontSize: CGFloat = 0
+        var cachedResolvedAnnotations: [ResolvedLaTeXAnnotation] = []
         private var changeHunks: [ChangeHunk] = []
         private var isUpdating = false
         private var syncTeXObserver: NSObjectProtocol?
@@ -189,6 +212,17 @@ struct LaTeXTextEditor: NSViewRepresentable {
             textView.deletedLineHighlightColor = NSColor.systemRed.withAlphaComponent(0.04)
         }
 
+        @MainActor
+        fileprivate func cacheHighlightInputs(
+            themeName: String?,
+            fontSize: CGFloat,
+            resolvedAnnotations: [ResolvedLaTeXAnnotation]
+        ) {
+            cachedThemeName = themeName
+            cachedFontSize = fontSize
+            cachedResolvedAnnotations = resolvedAnnotations
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = textView, !isUpdating else { return }
             parent.text = textView.string
@@ -237,6 +271,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
             highlight(storage, text: text, pattern: #"\$[^$]+\$"#, color: mathColor)
             highlight(storage, text: text, pattern: #"[{}]"#, color: braceColor)
             highlight(storage, text: text, pattern: #"[\[\]]"#, color: braceColor.withAlphaComponent(0.7))
+            applyAnnotationHighlights(to: storage)
             storage.endEditing()
             textView.typingAttributes = [
                 .font: font,
@@ -248,6 +283,13 @@ struct LaTeXTextEditor: NSViewRepresentable {
         func refreshChangeTracking() {
             guard let textView = textView else { return }
             baselineText = parent.baselineText
+
+            guard baselineText != textView.string else {
+                changeHunks = []
+                textView.changeHunks = []
+                return
+            }
+
             changeHunks = ChangeHunk.compute(baselineText: baselineText, currentText: textView.string)
             textView.changeHunks = changeHunks
         }
@@ -276,6 +318,15 @@ struct LaTeXTextEditor: NSViewRepresentable {
                 if let matchRange = match?.range {
                     storage.addAttribute(.foregroundColor, value: color, range: matchRange)
                 }
+            }
+        }
+
+        private func applyAnnotationHighlights(to storage: NSTextStorage) {
+            let highlightColor = NSColor.systemYellow.withAlphaComponent(0.22)
+
+            for resolved in resolvedAnnotations where !resolved.isDetached {
+                guard let range = resolved.resolvedRange else { continue }
+                storage.addAttribute(.backgroundColor, value: highlightColor, range: range)
             }
         }
 
