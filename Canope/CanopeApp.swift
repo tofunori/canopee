@@ -26,7 +26,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ChildProcessRegistry.shared.terminateAllTrackedChildren()
 
         // Clean up temp files
-        try? FileManager.default.removeItem(atPath: "/tmp/canope_selection.txt")
-        try? FileManager.default.removeItem(atPath: "/tmp/canope_paper.txt")
+        CanopeContextFiles.clearAll()
     }
 }
