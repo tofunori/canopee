@@ -146,12 +146,12 @@ struct AnnotationRowView: View {
 
     private var annotationTypeName: String {
         if annotation.isCanopeHighlightBlock { return "Surligné" }
+        if annotation.isTextBoxAnnotation { return "Texte" }
         switch annotation.type {
         case "Highlight": return "Surligné"
         case "Underline": return "Souligné"
         case "StrikeOut": return "Barré"
         case "Text": return "Note"
-        case "FreeText": return "Texte"
         case "Ink": return "Dessin"
         case "Square": return "Rectangle"
         case "Circle": return "Ovale"
@@ -162,6 +162,7 @@ struct AnnotationRowView: View {
 
     private var iconForType: String {
         if annotation.isCanopeHighlightBlock { return "highlighter" }
+        if annotation.isTextBoxAnnotation { return "textbox" }
         switch annotation.type {
         case "Highlight": return "highlighter"
         case "Underline": return "underline"

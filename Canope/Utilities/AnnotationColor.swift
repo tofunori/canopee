@@ -88,7 +88,7 @@ struct AnnotationColor {
         case "Highlight":
             return normalized(color)
         case "FreeText":
-            return applyingDefaultOpacityIfNeeded(color, alpha: defaultTextBoxFillOpacity)
+            return blendedOpaqueColor(color, intensity: defaultTextBoxFillOpacity)
         default:
             return normalized(color)
         }
@@ -113,12 +113,61 @@ struct AnnotationColor {
         applyingDefaultOpacityIfNeeded(color, alpha: defaultLiveHighlightOpacity)
     }
 
+    static func storedTextBoxFillColor(_ color: NSColor?) -> NSColor {
+        guard let color else {
+            return blendedOpaqueColor(yellow, intensity: defaultTextBoxFillOpacity)
+        }
+
+        let normalizedColor = normalized(color)
+        if normalizedColor.alphaComponent < 0.999 {
+            return blendedOpaqueColor(normalizedColor, intensity: defaultTextBoxFillOpacity)
+        }
+
+        let baseCandidates = loadFavorites() + legacyDefaults
+        if baseCandidates.contains(where: { colorsApproximatelyEqual(normalizedColor, $0) }) {
+            return blendedOpaqueColor(normalizedColor, intensity: defaultTextBoxFillOpacity)
+        }
+
+        let blendedCandidates = baseCandidates.map {
+            blendedOpaqueColor($0, intensity: defaultTextBoxFillOpacity)
+        }
+        if blendedCandidates.contains(where: { colorsApproximatelyEqual(normalizedColor, $0) }) {
+            return normalizedColor
+        }
+
+        return normalizedColor
+    }
+
     private static func applyingDefaultOpacityIfNeeded(_ color: NSColor, alpha: CGFloat) -> NSColor {
         let normalizedColor = normalized(color)
         if abs(normalizedColor.alphaComponent - 1.0) < 0.001 {
             return normalizedColor.withAlphaComponent(alpha)
         }
         return normalizedColor
+    }
+
+    private static func blendedOpaqueColor(_ color: NSColor, intensity: CGFloat, background: NSColor = .white) -> NSColor {
+        let normalizedColor = normalized(color)
+        let normalizedBackground = normalized(background)
+        let clampedIntensity = max(0.0, min(1.0, intensity))
+        let backgroundWeight = 1.0 - clampedIntensity
+
+        return NSColor(
+            red: normalizedBackground.redComponent * backgroundWeight + normalizedColor.redComponent * clampedIntensity,
+            green: normalizedBackground.greenComponent * backgroundWeight + normalizedColor.greenComponent * clampedIntensity,
+            blue: normalizedBackground.blueComponent * backgroundWeight + normalizedColor.blueComponent * clampedIntensity,
+            alpha: 1.0
+        )
+    }
+
+    private static func colorsApproximatelyEqual(_ lhs: NSColor, _ rhs: NSColor, tolerance: CGFloat = 0.01) -> Bool {
+        let lhs = normalized(lhs)
+        let rhs = normalized(rhs)
+
+        return abs(lhs.redComponent - rhs.redComponent) <= tolerance &&
+               abs(lhs.greenComponent - rhs.greenComponent) <= tolerance &&
+               abs(lhs.blueComponent - rhs.blueComponent) <= tolerance &&
+               abs(lhs.alphaComponent - rhs.alphaComponent) <= tolerance
     }
 
     private static func paletteMatches(_ lhs: [NSColor], _ rhs: [NSColor], tolerance: CGFloat = 0.01) -> Bool {

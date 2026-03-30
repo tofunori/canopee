@@ -61,7 +61,7 @@ struct PDFReaderView: View {
                         onDocumentChanged: {
                             hasUnsavedChanges = true
                             annotationRefreshToken = UUID()
-                            scheduleAutoSave()
+                            scheduleAutoSave(delay: preferredAutoSaveDelay())
                         },
                         onCurrentPageChanged: { pageIndex in
                             lastKnownPageIndex = pageIndex
@@ -173,7 +173,7 @@ struct PDFReaderView: View {
     private func loadDocument() {
         guard let paper else { return }
         if let loadedDocument = PDFDocument(url: paper.fileURL) {
-            AnnotationService.normalizeCustomHighlightAnnotations(in: loadedDocument)
+            AnnotationService.normalizeDocumentAnnotations(in: loadedDocument)
             document = loadedDocument
         } else {
             document = nil
@@ -239,6 +239,13 @@ struct PDFReaderView: View {
         }
     }
 
+    private func preferredAutoSaveDelay() -> TimeInterval {
+        if selectedAnnotation?.isTextBoxAnnotation == true || currentTool == .textBox {
+            return 0.9
+        }
+        return 0.25
+    }
+
     private func scheduleAutoSave(delay: TimeInterval = 0.25) {
         pendingSaveWorkItem?.cancel()
 
@@ -257,7 +264,7 @@ struct PDFReaderView: View {
         guard let data = try? Data(contentsOf: paper.fileURL),
               let refreshedDocument = PDFDocument(data: data) else {
             if let loadedDocument = PDFDocument(url: paper.fileURL) {
-                AnnotationService.normalizeCustomHighlightAnnotations(in: loadedDocument)
+                AnnotationService.normalizeDocumentAnnotations(in: loadedDocument)
                 document = loadedDocument
             } else {
                 document = nil
@@ -266,7 +273,7 @@ struct PDFReaderView: View {
             pdfViewRefreshToken = UUID()
             return
         }
-        AnnotationService.normalizeCustomHighlightAnnotations(in: refreshedDocument)
+        AnnotationService.normalizeDocumentAnnotations(in: refreshedDocument)
         document = refreshedDocument
         annotationRefreshToken = UUID()
         pdfViewRefreshToken = UUID()
@@ -288,10 +295,11 @@ struct PDFReaderView: View {
 
     private func deleteAnnotation(_ annotation: PDFAnnotation) {
         guard let page = annotation.page else { return }
-        page.removeAnnotation(annotation)
         if selectedAnnotation === annotation { selectedAnnotation = nil }
+        page.removeAnnotation(annotation)
         hasUnsavedChanges = true
         annotationRefreshToken = UUID()
+        scheduleAutoSave()
     }
 
     private func deleteAllAnnotations() {
@@ -305,13 +313,19 @@ struct PDFReaderView: View {
         selectedAnnotation = nil
         hasUnsavedChanges = true
         annotationRefreshToken = UUID()
+        scheduleAutoSave()
     }
 
     private func changeSelectedAnnotationColor(_ color: NSColor) {
         guard let annotation = selectedAnnotation else { return }
-        annotation.color = AnnotationColor.annotationColor(color, for: annotation.type ?? "")
+        if annotation.isTextBoxAnnotation {
+            annotation.setTextBoxFillColor(AnnotationColor.annotationColor(color, for: "FreeText"))
+        } else {
+            annotation.color = AnnotationColor.annotationColor(color, for: annotation.type ?? "")
+        }
         hasUnsavedChanges = true
         annotationRefreshToken = UUID()
+        scheduleAutoSave()
     }
 }
 

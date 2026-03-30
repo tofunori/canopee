@@ -97,6 +97,41 @@ struct AnnotationService {
         }
     }
 
+    private static func normalizeTextBoxAnnotations(in document: PDFDocument) {
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+            let annotations = page.annotations
+
+            for annotation in annotations {
+                if let customTextBox = TextBoxAnnotation.rehydrated(from: annotation) {
+                    page.removeAnnotation(annotation)
+                    page.addAnnotation(customTextBox)
+                    continue
+                }
+
+                guard annotation.type == "FreeText" else { continue }
+
+                let migratedTextBox = TextBoxAnnotation(
+                    bounds: annotation.bounds,
+                    text: annotation.contents ?? "",
+                    fillColor: AnnotationColor.storedTextBoxFillColor(annotation.color),
+                    font: annotation.font ?? .systemFont(ofSize: 12),
+                    fontColor: annotation.fontColor ?? .black,
+                    alignment: annotation.alignment,
+                    borderWidth: annotation.border?.lineWidth ?? 1.0
+                )
+                migratedTextBox.modificationDate = annotation.modificationDate
+                page.removeAnnotation(annotation)
+                page.addAnnotation(migratedTextBox)
+            }
+        }
+    }
+
+    static func normalizeDocumentAnnotations(in document: PDFDocument) {
+        normalizeCustomHighlightAnnotations(in: document)
+        normalizeTextBoxAnnotations(in: document)
+    }
+
     // MARK: - Text Note Annotation
 
     /// Create a sticky note annotation at a specific point on a page.
@@ -127,16 +162,36 @@ struct AnnotationService {
         let width: CGFloat = 200
         let height: CGFloat = 40
         let bounds = CGRect(x: point.x, y: point.y - height, width: width, height: height)
-        let annotation = PDFAnnotation(bounds: bounds, forType: .freeText, withProperties: nil)
-        annotation.contents = text
-        annotation.font = NSFont.systemFont(ofSize: fontSize)
-        annotation.fontColor = .black
-        annotation.color = AnnotationColor.annotationColor(color, for: "FreeText")
+        let annotation = TextBoxAnnotation(
+            bounds: bounds,
+            text: text,
+            fillColor: AnnotationColor.annotationColor(color, for: "FreeText"),
+            font: .systemFont(ofSize: fontSize),
+            fontColor: .black,
+            alignment: .left,
+            borderWidth: 1.0
+        )
+        page.addAnnotation(annotation)
+        return annotation
+    }
 
-        let border = PDFBorder()
-        border.lineWidth = 1
-        annotation.border = border
-
+    static func createTextBoxAnnotation(
+        bounds: CGRect,
+        on page: PDFPage,
+        text: String,
+        color: NSColor,
+        fontSize: CGFloat = 12,
+        alignment: NSTextAlignment = .left
+    ) -> PDFAnnotation {
+        let annotation = TextBoxAnnotation(
+            bounds: bounds,
+            text: text,
+            fillColor: AnnotationColor.annotationColor(color, for: "FreeText"),
+            font: .systemFont(ofSize: fontSize),
+            fontColor: .black,
+            alignment: alignment,
+            borderWidth: 1.0
+        )
         page.addAnnotation(annotation)
         return annotation
     }

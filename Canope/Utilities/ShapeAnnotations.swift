@@ -90,6 +90,130 @@ extension PDFAnnotation {
     }
 }
 
+// MARK: - Text Box Annotation
+
+final class TextBoxAnnotation: PDFAnnotation {
+    static let userNameMarker = "canope-textbox"
+    static let defaultBorderColor = NSColor.black
+    private static let lineFragmentPadding: CGFloat = 2.0
+
+    init(
+        bounds: CGRect,
+        text: String,
+        fillColor: NSColor,
+        font: NSFont,
+        fontColor: NSColor,
+        alignment: NSTextAlignment,
+        borderWidth: CGFloat = 1.0
+    ) {
+        super.init(bounds: bounds, forType: .square, withProperties: nil)
+        self.contents = text
+        self.userName = Self.userNameMarker
+        self.font = font
+        self.fontColor = fontColor
+        self.alignment = alignment
+        self.color = Self.defaultBorderColor
+        self.interiorColor = fillColor
+        let border = PDFBorder()
+        border.lineWidth = borderWidth
+        self.border = border
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    static func rehydrated(from annotation: PDFAnnotation) -> TextBoxAnnotation? {
+        guard annotation.isCanopeTextBox else { return nil }
+
+        let custom = TextBoxAnnotation(
+            bounds: annotation.bounds,
+            text: annotation.contents ?? "",
+            fillColor: annotation.textBoxFillColor,
+            font: annotation.font ?? .systemFont(ofSize: 12),
+            fontColor: annotation.fontColor ?? .black,
+            alignment: annotation.alignment,
+            borderWidth: annotation.border?.lineWidth ?? 1.0
+        )
+        custom.modificationDate = annotation.modificationDate
+        return custom
+    }
+
+    override func draw(with box: PDFDisplayBox, in context: CGContext) {
+        context.saveGState()
+
+        let borderWidth = max(1.0, border?.lineWidth ?? 1.0)
+        let drawingRect = bounds.insetBy(dx: borderWidth / 2, dy: borderWidth / 2)
+
+        let fill = (interiorColor ?? color).usingColorSpace(.deviceRGB) ?? (interiorColor ?? color)
+        context.setFillColor(fill.cgColor)
+        context.fill(drawingRect)
+
+        context.setStrokeColor(Self.defaultBorderColor.cgColor)
+        context.setLineWidth(borderWidth)
+        context.stroke(drawingRect)
+
+        let currentFont = font ?? NSFont.systemFont(ofSize: 12)
+        let currentFontColor = fontColor ?? NSColor.black
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = alignment
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        let descent = -currentFont.descender
+        let lineHeight = ceil(currentFont.ascender) + ceil(descent)
+        paragraphStyle.lineSpacing = -currentFont.leading
+        paragraphStyle.minimumLineHeight = lineHeight
+        paragraphStyle.maximumLineHeight = lineHeight
+
+        let textVerticalInset = 3.0 + round(descent) - descent
+        let textRect = drawingRect.insetBy(dx: Self.lineFragmentPadding, dy: textVerticalInset)
+        let attributedString = NSAttributedString(
+            string: contents ?? "",
+            attributes: [
+                .font: currentFont,
+                .foregroundColor: currentFontColor,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
+
+        NSGraphicsContext.saveGraphicsState()
+        let graphicsContext = NSGraphicsContext(cgContext: context, flipped: false)
+        NSGraphicsContext.current = graphicsContext
+        attributedString.draw(
+            with: textRect,
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        NSGraphicsContext.restoreGraphicsState()
+
+        context.restoreGState()
+    }
+}
+
+extension PDFAnnotation {
+    var isCanopeTextBox: Bool {
+        type == "Square" && userName == TextBoxAnnotation.userNameMarker
+    }
+
+    var isTextBoxAnnotation: Bool {
+        type == "FreeText" || isCanopeTextBox
+    }
+
+    var textBoxFillColor: NSColor {
+        if isCanopeTextBox {
+            return interiorColor ?? color
+        }
+        return AnnotationColor.storedTextBoxFillColor(color)
+    }
+
+    func setTextBoxFillColor(_ fillColor: NSColor) {
+        if isCanopeTextBox {
+            interiorColor = fillColor
+            color = TextBoxAnnotation.defaultBorderColor
+        } else {
+            color = fillColor
+        }
+    }
+}
+
 // MARK: - Rectangle Annotation
 
 class RectangleAnnotation: PDFAnnotation {
