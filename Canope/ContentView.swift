@@ -571,36 +571,89 @@ struct LaTeXEditorContainer: View {
         return openPaths.last
     }
 
-    var body: some View {
-        if openPaths.isEmpty {
-            LaTeXLandingView(onOpenTeX: onOpenTeX, onOpenPDF: onOpenPDF)
-        } else {
-            ZStack {
-                ForEach(openPaths, id: \.self) { path in
-                    let isActive = activePath == path
-                    LaTeXEditorView(
-                        fileURL: URL(fileURLWithPath: path),
-                        isActive: isActive,
-                        showTerminal: $showTerminal,
-                        onOpenPDF: onOpenPDF,
-                        onOpenInNewTab: onOpenTeX,
-                        openPaperIDs: openPaperIDs,
-                        siblingPaths: openPaths,
-                        onSwitchEditor: { selectedTab = .editor($0) },
-                        onCloseEditor: { p in
-                            onCloseEditor(p)
-                            if activePath == p {
-                                if let other = openPaths.first(where: { $0 != p }) {
-                                    selectedTab = .editor(other)
-                                } else {
-                                    selectedTab = .editor("")
-                                }
+    private func switchEditor(_ path: String) {
+        selectedTab = .editor(path)
+    }
+
+    private func closeEditor(_ path: String) {
+        onCloseEditor(path)
+        if activePath == path {
+            if let other = openPaths.first(where: { $0 != path }) {
+                selectedTab = .editor(other)
+            } else {
+                selectedTab = .editor("")
+            }
+        }
+    }
+
+    @State private var hoveredTabPath: String?
+
+    @ViewBuilder
+    private var editorTabBar: some View {
+        if openPaths.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    ForEach(openPaths, id: \.self) { path in
+                        let isCurrent = activePath == path
+                        let isHov = hoveredTabPath == path
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.green)
+                            Text(URL(fileURLWithPath: path).lastPathComponent)
+                                .font(.system(size: 11))
+                                .lineLimit(1)
+                            Button {
+                                closeEditor(path)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .opacity(isCurrent || isHov ? 1 : 0)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(
+                            isCurrent ? Color.white.opacity(0.06)
+                            : isHov ? Color.white.opacity(0.03)
+                            : Color.clear
+                        )
+                        .overlay(alignment: .bottom) {
+                            if isCurrent {
+                                Rectangle().fill(Color.green.opacity(0.5)).frame(height: 1.5)
                             }
                         }
-                    )
-                    .opacity(isActive ? 1 : 0)
-                    .allowsHitTesting(isActive)
+                        .contentShape(Rectangle())
+                        .onTapGesture { switchEditor(path) }
+                        .onHover { hoveredTabPath = $0 ? path : nil }
+                    }
                 }
+            }
+            .frame(height: 26)
+            .background(.bar.opacity(0.5))
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            if openPaths.isEmpty {
+                LaTeXLandingView(onOpenTeX: onOpenTeX, onOpenPDF: onOpenPDF)
+            }
+
+            ForEach(openPaths, id: \.self) { path in
+                LaTeXEditorView(
+                    fileURL: URL(fileURLWithPath: path),
+                    isActive: activePath == path,
+                    showTerminal: $showTerminal,
+                    onOpenPDF: onOpenPDF,
+                    onOpenInNewTab: onOpenTeX,
+                    openPaperIDs: openPaperIDs,
+                    editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil
+                )
+                .opacity(activePath == path ? 1 : 0)
+                .allowsHitTesting(activePath == path)
             }
         }
     }
