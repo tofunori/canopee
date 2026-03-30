@@ -155,7 +155,7 @@ struct MainWindow: View {
                             openPDFFile(url)
                         }, onOpenInNewTab: { url in
                             openTeXFile(url)
-                        })
+                        }, openPaperIDs: openPaperIDs)
                             .opacity(selectedTab == .editor(path) ? 1 : 0)
                             .allowsHitTesting(selectedTab == .editor(path))
                     }

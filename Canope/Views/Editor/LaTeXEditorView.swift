@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import PDFKit
 
 extension Notification.Name {
@@ -12,6 +13,7 @@ struct LaTeXEditorView: View {
     @Binding var showTerminal: Bool
     var onOpenPDF: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
+    var openPaperIDs: [UUID] = []
     @State private var text = ""
     @State private var savedText = ""
     @State private var compiledPDF: PDFDocument?
@@ -27,6 +29,18 @@ struct LaTeXEditorView: View {
     @State private var syncTarget: SyncTeXForwardResult?
     @State private var syncToLine: Int?
     @State private var lastModified: Date?
+
+    // PDF pane tabs (compiled + reference articles)
+    enum PdfPaneTab: Hashable {
+        case compiled
+        case reference(UUID)
+    }
+    @Query private var allPapers: [Paper]
+    @State private var pdfPaneTabs: [PdfPaneTab] = [.compiled]
+    @State private var selectedPdfTab: PdfPaneTab = .compiled
+    @State private var referencePDFs: [UUID: PDFDocument] = [:]
+    @State private var layoutBeforeReference: SplitLayout?
+    @State private var fitToWidthTrigger = false
 
     enum SplitLayout: String {
         case horizontal
@@ -91,18 +105,24 @@ struct LaTeXEditorView: View {
             // Main content: file browser | (editor / pdf split)
             HSplitView {
                 // File browser (left, resizable)
-                if showFileBrowser {
-                    FileBrowserView(rootURL: projectRoot) { url in
-                        let ext = url.pathExtension.lowercased()
-                        if ext == "pdf" {
-                            onOpenPDF?(url)
-                        } else if ext == "md" || ext == "tex" || ext == "bib" || ext == "txt" {
-                            onOpenInNewTab?(url)
-                        } else {
-                            openFile(url)
-                        }
+                FileBrowserView(rootURL: projectRoot) { url in
+                    let ext = url.pathExtension.lowercased()
+                    if ext == "pdf" {
+                        onOpenPDF?(url)
+                    } else if ext == "md" || ext == "tex" || ext == "bib" || ext == "txt" {
+                        onOpenInNewTab?(url)
+                    } else {
+                        openFile(url)
                     }
                 }
+                .frame(
+                    minWidth: showFileBrowser ? 140 : 0,
+                    idealWidth: showFileBrowser ? 190 : 0,
+                    maxWidth: showFileBrowser ? 280 : 0
+                )
+                .opacity(showFileBrowser ? 1 : 0)
+                .allowsHitTesting(showFileBrowser)
+                .clipped()
 
                 // Editor + PDF split (horizontal or vertical)
                 if splitLayout == .horizontal {
@@ -147,6 +167,15 @@ struct LaTeXEditorView: View {
                 startFileWatcher()
             } else {
                 stopFileWatcher()
+            }
+        }
+        .onChange(of: splitLayout) {
+            // Thicken dividers when layout changes (new split views are created)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                for window in NSApp.windows {
+                    guard let contentView = window.contentView else { continue }
+                    MainWindow.thickenSplitViews(contentView)
+                }
             }
         }
     }
@@ -200,18 +229,145 @@ struct LaTeXEditorView: View {
         }
     }
 
+    /// The PDF document for the currently selected pane tab
+    private var displayedPDF: PDFDocument? {
+        switch selectedPdfTab {
+        case .compiled: return compiledPDF
+        case .reference(let id): return referencePDFs[id]
+        }
+    }
+
+    private var isShowingReference: Bool {
+        if case .reference = selectedPdfTab { return true }
+        return false
+    }
+
+    private func paperFor(_ id: UUID) -> Paper? {
+        allPapers.first { $0.id == id }
+    }
+
     private var pdfPane: some View {
-        Group {
-            if let pdf = compiledPDF {
-                PDFPreviewView(document: pdf, syncTarget: syncTarget, onInverseSync: { line in
-                    syncToLine = line
-                })
-            } else {
-                ContentUnavailableView(
-                    "Pas encore compilé",
-                    systemImage: "doc.text",
-                    description: Text("⌘B pour compiler")
-                )
+        VStack(spacing: 0) {
+            // Tab bar (only shown when more than just compiled)
+            if pdfPaneTabs.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(pdfPaneTabs, id: \.self) { tab in
+                            pdfTabButton(tab)
+                        }
+                    }
+                }
+                .frame(height: 26)
+                .background(.bar)
+                Divider()
+            }
+
+            // Toolbar for reference tabs
+            if isShowingReference {
+                HStack(spacing: 6) {
+                    Spacer()
+                    Button { fitToWidth() } label: {
+                        Image(systemName: "arrow.left.and.right.square")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Ajuster à la largeur")
+                    Button { refreshCurrentReference() } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Actualiser (annotations)")
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+            }
+
+            // PDF content — each tab keeps its own PDFView to preserve scroll position
+            ZStack {
+                // Compiled PDF tab
+                Group {
+                    if let pdf = compiledPDF {
+                        PDFPreviewView(
+                            document: pdf,
+                            syncTarget: selectedPdfTab == .compiled ? syncTarget : nil,
+                            onInverseSync: { line in syncToLine = line },
+                            fitToWidthTrigger: selectedPdfTab == .compiled ? fitToWidthTrigger : false
+                        )
+                    } else {
+                        ContentUnavailableView(
+                            "Pas encore compilé",
+                            systemImage: "doc.text",
+                            description: Text("⌘B pour compiler")
+                        )
+                    }
+                }
+                .opacity(selectedPdfTab == .compiled ? 1 : 0)
+                .allowsHitTesting(selectedPdfTab == .compiled)
+
+                // Reference PDF tabs
+                ForEach(pdfPaneTabs.compactMap { tab -> UUID? in
+                    if case .reference(let id) = tab { return id } else { return nil }
+                }, id: \.self) { id in
+                    Group {
+                        if let pdf = referencePDFs[id] {
+                            PDFPreviewView(
+                                document: pdf,
+                                syncTarget: nil,
+                                onInverseSync: nil,
+                                fitToWidthTrigger: selectedPdfTab == .reference(id) ? fitToWidthTrigger : false
+                            )
+                        } else {
+                            ContentUnavailableView(
+                                "PDF introuvable",
+                                systemImage: "exclamationmark.triangle",
+                                description: Text("Le fichier PDF n'a pas pu être chargé")
+                            )
+                        }
+                    }
+                    .opacity(selectedPdfTab == .reference(id) ? 1 : 0)
+                    .allowsHitTesting(selectedPdfTab == .reference(id))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pdfTabButton(_ tab: PdfPaneTab) -> some View {
+        let isSelected = tab == selectedPdfTab
+        HStack(spacing: 4) {
+            switch tab {
+            case .compiled:
+                Image(systemName: "doc.text")
+                    .font(.system(size: 9))
+                Text("PDF compilé")
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+            case .reference(let id):
+                Image(systemName: "book")
+                    .font(.system(size: 9))
+                Text(paperFor(id)?.authorsShort ?? "Article")
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+                Button {
+                    closePdfTab(tab)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        .cornerRadius(4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // Only switch tab if this tab still exists (not just closed by ✕)
+            if pdfPaneTabs.contains(tab) {
+                selectedPdfTab = tab
             }
         }
     }
@@ -221,7 +377,11 @@ struct LaTeXEditorView: View {
     private var editorToolbar: some View {
         HStack(spacing: 8) {
             // Left group: file browser + LaTeX actions
-            Button(action: { showFileBrowser.toggle() }) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    showFileBrowser.toggle()
+                }
+            }) {
                 Image(systemName: "sidebar.left")
                     .symbolVariant(showFileBrowser ? .none : .slash)
             }
@@ -274,6 +434,30 @@ struct LaTeXEditorView: View {
             }
             .buttonStyle(.plain)
             .help("Console de compilation")
+
+            Divider().frame(height: 16)
+
+            // Reference paper picker (only papers open in tabs)
+            Menu {
+                let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
+                if openPapers.isEmpty {
+                    Text("Aucun article ouvert en onglet")
+                } else {
+                    ForEach(openPapers) { paper in
+                        Button {
+                            openReference(paper)
+                        } label: {
+                            let alreadyOpen = pdfPaneTabs.contains(.reference(paper.id))
+                            Text("\(alreadyOpen ? "✓ " : "")\(paper.authorsShort) (\(paper.year.map { String($0) } ?? "—")) — \(paper.title)")
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: pdfPaneTabs.count > 1 ? "book.fill" : "book")
+                    .foregroundStyle(pdfPaneTabs.count > 1 ? .blue : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Ouvrir un article de référence")
 
             Spacer()
 
@@ -471,6 +655,55 @@ struct LaTeXEditorView: View {
         }
     }
 
+    // MARK: - PDF Pane Tabs
+
+    private func openReference(_ paper: Paper) {
+        let tab = PdfPaneTab.reference(paper.id)
+        if pdfPaneTabs.contains(tab) {
+            selectedPdfTab = tab
+            return
+        }
+        guard let pdf = PDFDocument(url: paper.fileURL) else { return }
+        AnnotationService.normalizeDocumentAnnotations(in: pdf)
+        referencePDFs[paper.id] = pdf
+        pdfPaneTabs.append(tab)
+        selectedPdfTab = tab
+        if splitLayout == .editorOnly {
+            layoutBeforeReference = .editorOnly
+            splitLayout = .horizontal
+            showPDFPreview = true
+        }
+    }
+
+    private func closePdfTab(_ tab: PdfPaneTab) {
+        guard case .reference(let id) = tab else { return }
+        pdfPaneTabs.removeAll { $0 == tab }
+        referencePDFs.removeValue(forKey: id)
+        if selectedPdfTab == tab {
+            selectedPdfTab = .compiled
+        }
+        // Restore layout only if no more references AND user hasn't changed layout since
+        if pdfPaneTabs == [.compiled],
+           let previous = layoutBeforeReference,
+           compiledPDF == nil {
+            splitLayout = previous
+            showPDFPreview = previous != .editorOnly
+            layoutBeforeReference = nil
+        }
+    }
+
+    private func fitToWidth() {
+        fitToWidthTrigger.toggle()
+    }
+
+    private func refreshCurrentReference() {
+        guard case .reference(let id) = selectedPdfTab,
+              let paper = paperFor(id),
+              let pdf = PDFDocument(url: paper.fileURL) else { return }
+        AnnotationService.normalizeDocumentAnnotations(in: pdf)
+        referencePDFs[id] = pdf
+    }
+
     // MARK: - Compilation
 
     private func compile() {
@@ -531,12 +764,19 @@ struct PDFPreviewView: NSViewRepresentable {
     let document: PDFDocument
     var syncTarget: SyncTeXForwardResult?
     var onInverseSync: ((Int) -> Void)?
+    var fitToWidthTrigger: Bool = false
 
     func makeNSView(context: Context) -> PDFView {
         let pdfView = PDFView()
         pdfView.document = document
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
+
+        // Enable pinch-to-zoom: auto-scale sets the initial fit,
+        // then we disable it so manual zoom gestures work.
+        DispatchQueue.main.async {
+            pdfView.autoScales = false
+        }
 
         // Add ⌘+click gesture for inverse sync
         let clickGesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleClick(_:)))
@@ -550,9 +790,23 @@ struct PDFPreviewView: NSViewRepresentable {
     func updateNSView(_ pdfView: PDFView, context: Context) {
         if pdfView.document !== document {
             pdfView.document = document
+            // Fit to view first, then allow manual zoom
+            pdfView.autoScales = true
+            DispatchQueue.main.async {
+                pdfView.autoScales = false
+            }
         }
         context.coordinator.onInverseSync = onInverseSync
         context.coordinator.pdfView = pdfView
+
+        // Fit to width
+        if fitToWidthTrigger != context.coordinator.lastFitTrigger {
+            context.coordinator.lastFitTrigger = fitToWidthTrigger
+            pdfView.autoScales = true
+            DispatchQueue.main.async {
+                pdfView.autoScales = false
+            }
+        }
 
         // Forward sync: scroll to target
         if let target = syncTarget,
@@ -570,6 +824,7 @@ struct PDFPreviewView: NSViewRepresentable {
     class Coordinator: NSObject {
         weak var pdfView: PDFView?
         var onInverseSync: ((Int) -> Void)?
+        var lastFitTrigger: Bool = false
 
         @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
             guard let pdfView = pdfView,

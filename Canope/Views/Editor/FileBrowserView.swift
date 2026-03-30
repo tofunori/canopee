@@ -151,7 +151,6 @@ struct FileBrowserView: View {
                 }
             }
         }
-        .frame(minWidth: 140, idealWidth: 190, maxWidth: 280)
         .onAppear {
             refresh()
             isFocused = true
