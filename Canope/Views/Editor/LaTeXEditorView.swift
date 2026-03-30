@@ -828,6 +828,38 @@ struct LaTeXEditorView: View {
         reconcileAnnotations()
     }
 
+    private func sendAnnotationToClaude(_ resolved: ResolvedLaTeXAnnotation) {
+        let prompt = annotationPrompt(for: resolved)
+        CanopeContextFiles.writeAnnotationPrompt(prompt)
+        CanopeContextFiles.writeSelection(resolved.annotation.selectedText)
+        showTerminal = true
+
+        let userInfo = ["prompt": prompt]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NotificationCenter.default.post(name: .canopeSendPromptToTerminal, object: nil, userInfo: userInfo)
+        }
+    }
+
+    private func annotationPrompt(for resolved: ResolvedLaTeXAnnotation) -> String {
+        let annotation = resolved.annotation
+        let status = resolved.isDetached ? "detached" : "anchored"
+
+        return """
+        <canope_annotation>
+        file: \(fileURL.path)
+        status: \(status)
+
+        selected_text:
+        \(annotation.selectedText)
+
+        note:
+        \(annotation.note)
+        </canope_annotation>
+
+        Aide-moi avec cette annotation LaTeX. Réponds d’abord sur ce passage précis en tenant compte de la note.
+        """
+    }
+
     private func beginEditingAnnotation(_ annotationID: UUID) {
         guard let resolved = resolvedLaTeXAnnotations.first(where: { $0.annotation.id == annotationID }) else {
             return
@@ -907,6 +939,21 @@ struct LaTeXEditorView: View {
                             .multilineTextAlignment(.leading)
                             .lineLimit(3)
                     }
+
+                    HStack(spacing: 10) {
+                        Button("Modifier") {
+                            beginEditingAnnotation(annotation.id)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+
+                        Button("Envoyer") {
+                            sendAnnotationToClaude(resolved)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)

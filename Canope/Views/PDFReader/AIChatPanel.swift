@@ -3,6 +3,10 @@ import SwiftUI
 import PDFKit
 import MetalKit
 
+extension Notification.Name {
+    static let canopeSendPromptToTerminal = Notification.Name("canopeSendPromptToTerminal")
+}
+
 private let preferredTerminalCursorStyle: CursorStyle = .blinkBar
 
 private func makeTerminalFont(size: CGFloat) -> NSFont {
@@ -160,6 +164,10 @@ struct TerminalPanel: View {
             selectedTabID = tabs.first?.id
             isSplit = false
         }
+        .onReceive(NotificationCenter.default.publisher(for: .canopeSendPromptToTerminal)) { notification in
+            guard let prompt = notification.userInfo?["prompt"] as? String else { return }
+            sendPromptToFocusedTerminal(prompt)
+        }
         .onChange(of: isVisible) {
             guard isVisible else { return }
             DispatchQueue.main.async {
@@ -305,6 +313,24 @@ struct TerminalPanel: View {
 
         if let topTerminal = terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
             topTerminal.activateInputFocus()
+        }
+    }
+
+    private func sendPromptToFocusedTerminal(_ prompt: String) {
+        let payload = prompt.hasSuffix("\n") ? prompt : prompt + "\n"
+
+        if focusedPane == .bottom,
+           isSplit,
+           let bottomTabID = splitTabs.first?.id,
+           let bottomTerminal = splitTerminalViews[bottomTabID] as? FocusAwareLocalProcessTerminalView {
+            bottomTerminal.activateInputFocus()
+            bottomTerminal.send(txt: payload)
+            return
+        }
+
+        if let topTerminal = terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
+            topTerminal.activateInputFocus()
+            topTerminal.send(txt: payload)
         }
     }
 }
