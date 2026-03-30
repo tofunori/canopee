@@ -8,6 +8,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
     var theme: (name: String, bg: NSColor, fg: NSColor, comment: NSColor, command: NSColor, math: NSColor, env: NSColor, brace: NSColor)?
     let baselineText: String
     var resolvedAnnotations: [ResolvedLaTeXAnnotation] = []
+    let onSelectionChange: (NSRange?) -> Void
     let onTextChange: () -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -238,6 +239,9 @@ struct LaTeXTextEditor: NSViewRepresentable {
                 let selected = (textView.string as NSString).substring(with: range)
                 let content = "[Source: LaTeX editor]\n\(selected)"
                 try? content.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
+                parent.onSelectionChange(range)
+            } else {
+                parent.onSelectionChange(nil)
             }
         }
 

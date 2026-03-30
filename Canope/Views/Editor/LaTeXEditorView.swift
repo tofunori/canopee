@@ -32,6 +32,7 @@ struct LaTeXEditorView: View {
     @State private var lastModified: Date?
     @State private var latexAnnotations: [LaTeXAnnotation] = []
     @State private var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] = []
+    @State private var selectedEditorRange: NSRange?
 
     // PDF pane tabs (compiled + reference articles)
     enum PdfPaneTab: Hashable {
@@ -97,6 +98,15 @@ struct LaTeXEditorView: View {
     private var projectRoot: URL { fileURL.deletingLastPathComponent() }
     private var errorLines: Set<Int> {
         Set(errors.filter { !$0.isWarning && $0.line > 0 }.map { $0.line })
+    }
+    private var canCreateAnnotationFromSelection: Bool {
+        guard let range = selectedEditorRange, range.location != NSNotFound, range.length > 0 else {
+            return false
+        }
+
+        return !resolvedLaTeXAnnotations.contains { resolved in
+            resolved.resolvedRange == range
+        }
     }
 
     var body: some View {
@@ -203,6 +213,7 @@ struct LaTeXEditorView: View {
                 theme: Self.editorThemes[editorTheme],
                 baselineText: savedText,
                 resolvedAnnotations: resolvedLaTeXAnnotations,
+                onSelectionChange: { selectedEditorRange = $0 },
                 onTextChange: reconcileAnnotations
             )
             if showErrors {
@@ -432,6 +443,14 @@ struct LaTeXEditorView: View {
             .help("Sauvegarder (⌘S)")
             .keyboardShortcut("s", modifiers: .command)
 
+            Button(action: createAnnotationFromSelection) {
+                Image(systemName: "highlighter")
+            }
+            .buttonStyle(.plain)
+            .help("Annoter la sélection (⇧⌘A)")
+            .keyboardShortcut("a", modifiers: [.command, .shift])
+            .disabled(!canCreateAnnotationFromSelection)
+
             // Reflow
             Button(action: reflowParagraphs) {
                 Image(systemName: "text.justify.leading")
@@ -636,6 +655,26 @@ struct LaTeXEditorView: View {
 
     private func reconcileAnnotations() {
         resolvedLaTeXAnnotations = LaTeXAnnotationStore.resolve(latexAnnotations, in: text)
+    }
+
+    private func persistAnnotations() {
+        if latexAnnotations.isEmpty {
+            try? LaTeXAnnotationStore.deleteSidecar(for: fileURL)
+        } else {
+            try? LaTeXAnnotationStore.save(latexAnnotations, for: fileURL)
+        }
+    }
+
+    private func createAnnotationFromSelection() {
+        guard let range = selectedEditorRange,
+              canCreateAnnotationFromSelection,
+              let draft = LaTeXAnnotationStore.makeDraft(from: range, in: text) else {
+            return
+        }
+
+        latexAnnotations.append(LaTeXAnnotationStore.createAnnotation(from: draft))
+        persistAnnotations()
+        reconcileAnnotations()
     }
 
     private func loadExistingPDF() {
