@@ -46,6 +46,26 @@ struct MainWindow: View {
         selectedTab = tab
     }
 
+    /// Find all NSSplitViews and make dividers thick + easy to grab
+    private func makeSplitersEasyToGrab() {
+        // Run multiple times to catch split views created after initial layout
+        for delay in [0.3, 1.0, 2.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                for window in NSApp.windows {
+                    guard let contentView = window.contentView else { continue }
+                    Self.thickenSplitViews(contentView)
+                }
+            }
+        }
+    }
+
+    static func thickenSplitViews(_ view: NSView) {
+        if let splitView = view as? NSSplitView {
+            splitView.dividerStyle = .thick
+        }
+        for sub in view.subviews { thickenSplitViews(sub) }
+    }
+
     func openTeXFile(_ url: URL) {
         let tab = TabItem.editor(url.path)
         if !openTabs.contains(tab) {
@@ -134,6 +154,8 @@ struct MainWindow: View {
                     ForEach(openEditorPaths, id: \.self) { path in
                         LaTeXEditorView(fileURL: URL(fileURLWithPath: path), showTerminal: $showTerminal, onOpenPDF: { url in
                             openPDFFile(url)
+                        }, onOpenInNewTab: { url in
+                            openTeXFile(url)
                         })
                             .opacity(selectedTab == .editor(path) ? 1 : 0)
                             .allowsHitTesting(selectedTab == .editor(path))
@@ -150,13 +172,15 @@ struct MainWindow: View {
                 // Shared terminal — always mounted, hidden when not needed
                 TerminalPanel(document: nil, selectedText: selectedText)
                     .frame(
-                        minWidth: showTerminal && selectedTab != .library ? 250 : 0,
-                        idealWidth: showTerminal && selectedTab != .library ? 400 : 0,
+                        minWidth: showTerminal && selectedTab != .library ? 300 : 0,
+                        idealWidth: showTerminal && selectedTab != .library ? 600 : 0,
                         maxWidth: showTerminal && selectedTab != .library ? .infinity : 0
                     )
                     .opacity(showTerminal && selectedTab != .library ? 1 : 0)
             }
         }
+        .onAppear { makeSplitersEasyToGrab() }
+        .onChange(of: selectedTab) { makeSplitersEasyToGrab() }
         .onChange(of: paperToOpen) {
             guard let id = paperToOpen else { return }
             let tab = TabItem.paper(id)

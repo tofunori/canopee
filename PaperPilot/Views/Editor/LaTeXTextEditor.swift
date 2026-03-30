@@ -15,9 +15,9 @@ struct LaTeXTextEditor: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
-        // Force light appearance so the text system doesn't dim our custom dark-theme colors
-        scrollView.appearance = NSAppearance(named: .aqua)
-        scrollView.contentView.appearance = scrollView.appearance
+        // Scroll view stays dark for scrollbar appearance
+        scrollView.appearance = NSAppearance(named: .darkAqua)
+        scrollView.scrollerStyle = .overlay
 
         let textView = ChangeTrackingTextView()
         textView.isEditable = true
@@ -26,7 +26,8 @@ struct LaTeXTextEditor: NSViewRepresentable {
         textView.isRichText = false
         textView.usesAdaptiveColorMappingForDarkAppearance = false
         textView.drawsBackground = true
-        textView.appearance = scrollView.appearance
+        // Force aqua on textView only — prevents dark mode from dimming syntax colors
+        textView.appearance = NSAppearance(named: .aqua)
         textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.backgroundColor = NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1)
         textView.textColor = NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1)

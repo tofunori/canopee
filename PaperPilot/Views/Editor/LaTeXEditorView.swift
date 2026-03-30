@@ -5,6 +5,7 @@ struct LaTeXEditorView: View {
     let fileURL: URL
     @Binding var showTerminal: Bool
     var onOpenPDF: ((URL) -> Void)?
+    var onOpenInNewTab: ((URL) -> Void)?
     @State private var text = ""
     @State private var savedText = ""
     @State private var compiledPDF: PDFDocument?
@@ -87,6 +88,8 @@ struct LaTeXEditorView: View {
                         let ext = url.pathExtension.lowercased()
                         if ext == "pdf" {
                             onOpenPDF?(url)
+                        } else if ext == "md" || ext == "tex" || ext == "bib" || ext == "txt" {
+                            onOpenInNewTab?(url)
                         } else {
                             openFile(url)
                         }
