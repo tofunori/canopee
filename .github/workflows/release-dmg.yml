@@ -76,6 +76,9 @@ jobs:
             echo "has_notary=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
       - name: Import Developer ID certificate
         if: ${{ steps.signing.outputs.has_signing == 'true' }}
         env:

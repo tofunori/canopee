@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_PATH="${PROJECT_PATH:-$ROOT_DIR/Canope.xcodeproj}"
+PROJECT_SPEC_PATH="${PROJECT_SPEC_PATH:-$ROOT_DIR/project.yml}"
 SCHEME="${SCHEME:-Canope}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 APP_NAME="${APP_NAME:-Canope}"
@@ -19,6 +20,16 @@ else
 fi
 
 DMG_PATH="${DMG_PATH:-$BUILD_ROOT/$DMG_NAME}"
+
+if [[ ! -d "$PROJECT_PATH" ]]; then
+  if [[ -f "$PROJECT_SPEC_PATH" ]] && command -v xcodegen >/dev/null 2>&1; then
+    echo "==> Generating Xcode project from $(basename "$PROJECT_SPEC_PATH")"
+    (cd "$ROOT_DIR" && xcodegen generate)
+  else
+    echo "Missing Xcode project at $PROJECT_PATH and xcodegen is unavailable." >&2
+    exit 1
+  fi
+fi
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$BUILD_ROOT"
