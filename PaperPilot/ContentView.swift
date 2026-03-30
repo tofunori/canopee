@@ -170,10 +170,14 @@ struct MainWindow: View {
                 }
 
                 // Shared terminal — always mounted, hidden when not needed
-                TerminalPanel(document: nil, selectedText: selectedText)
+                TerminalPanel(
+                    document: nil,
+                    selectedText: selectedText,
+                    isVisible: showTerminal && selectedTab != .library
+                )
                     .frame(
-                        minWidth: showTerminal && selectedTab != .library ? 300 : 0,
-                        idealWidth: showTerminal && selectedTab != .library ? 600 : 0,
+                        minWidth: showTerminal && selectedTab != .library ? 520 : 0,
+                        idealWidth: showTerminal && selectedTab != .library ? 920 : 0,
                         maxWidth: showTerminal && selectedTab != .library ? .infinity : 0
                     )
                     .opacity(showTerminal && selectedTab != .library ? 1 : 0)

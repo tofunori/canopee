@@ -1,7 +1,9 @@
 import SwiftUI
-import SwiftTerm
+@preconcurrency import SwiftTerm
 import PDFKit
 import MetalKit
+
+private let preferredTerminalCursorStyle: CursorStyle = .blinkBar
 
 private func makeTerminalFont(size: CGFloat) -> NSFont {
     NSFont(name: "Menlo", size: size)
@@ -21,6 +23,7 @@ struct TerminalTab: Identifiable {
 struct TerminalPanel: View {
     let document: PDFDocument?
     let selectedText: String
+    let isVisible: Bool
     @State private var tabs: [TerminalTab] = [TerminalTab()]
     @State private var selectedTabID: UUID? = nil
     @State private var terminalViews: [UUID: LocalProcessTerminalView] = [:]
@@ -188,6 +191,18 @@ struct TerminalPanel: View {
         .onAppear {
             selectedTabID = tabs.first?.id
         }
+        .onChange(of: isVisible) {
+            guard isVisible else { return }
+            DispatchQueue.main.async {
+                focusVisibleTerminal()
+            }
+        }
+        .onChange(of: selectedTabID) {
+            guard isVisible else { return }
+            DispatchQueue.main.async {
+                focusVisibleTerminal()
+            }
+        }
     }
 
     // MARK: - Tab Button
@@ -309,6 +324,20 @@ struct TerminalPanel: View {
             }
         }
     }
+
+    private func focusVisibleTerminal() {
+        if focusedPane == .bottom,
+           isSplit,
+           let bottomTabID = splitTabs.first?.id,
+           let bottomTerminal = splitTerminalViews[bottomTabID] as? FocusAwareLocalProcessTerminalView {
+            bottomTerminal.activateInputFocus()
+            return
+        }
+
+        if let topTerminal = terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
+            topTerminal.activateInputFocus()
+        }
+    }
 }
 
 // MARK: - SwiftTerm + Metal NSViewRepresentable
@@ -323,6 +352,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
     func makeNSView(context: Context) -> FocusAwareLocalProcessTerminalView {
         let tv = FocusAwareLocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         tv.font = makeTerminalFont(size: fontSize)
+        tv.getTerminal().setCursorStyle(preferredTerminalCursorStyle)
         tv.optionAsMetaKey = false
         tv.nativeBackgroundColor = theme.bg
         tv.nativeForegroundColor = theme.fg
@@ -334,6 +364,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
         env.append("CANOPE_SELECTION=/tmp/canope_selection.txt")
         env.append("CANOPE_PAPER=/tmp/canope_paper.txt")
         tv.startProcess(executable: shell, args: ["-l"], environment: env, execName: shell)
+        tv.schedulePreferredCursorWarmup()
         ChildProcessRegistry.shared.track(terminalView: tv)
 
         enableMetalWhenReady(for: tv)
@@ -367,6 +398,8 @@ struct TerminalViewWrapper: NSViewRepresentable {
             try tv.setUseMetal(true)
             if tv.isUsingMetalRenderer {
                 tv.metalBufferingMode = .perRowPersistent
+                tv.getTerminal().setCursorStyle(preferredTerminalCursorStyle)
+                tv.schedulePreferredCursorWarmup()
                 // Ensure MTKView forwards events to terminal
                 for subview in tv.subviews {
                     if let mtkView = subview as? MTKView {
@@ -420,6 +453,11 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
     private var clickMonitor: Any?
     private var scrollMonitor: Any?
 
+    override func cursorStyleChanged(source: Terminal, newStyle: CursorStyle) {
+        source.options.cursorStyle = preferredTerminalCursorStyle
+        super.cursorStyleChanged(source: source, newStyle: preferredTerminalCursorStyle)
+    }
+
     func terminateTrackedProcess() {
         terminate()
     }
@@ -431,6 +469,11 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
         } else {
             installClickMonitorIfNeeded()
             installScrollMonitor()
+            DispatchQueue.main.async { [weak self] in
+                self?.activateInputFocus()
+                self?.applyPreferredCursorAppearance()
+                self?.schedulePreferredCursorWarmup()
+            }
         }
     }
 
@@ -438,6 +481,23 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
         guard let window else { return }
         if window.firstResponder !== self {
             window.makeFirstResponder(self)
+        }
+        applyPreferredCursorAppearance()
+    }
+
+    private func applyPreferredCursorAppearance() {
+        let terminal = getTerminal()
+        terminal.setCursorStyle(preferredTerminalCursorStyle)
+        terminal.showCursor()
+        needsDisplay = true
+    }
+
+    func schedulePreferredCursorWarmup() {
+        let delays: [TimeInterval] = [0, 0.05, 0.15, 0.35, 0.7]
+        for delay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.applyPreferredCursorAppearance()
+            }
         }
     }
 

@@ -19,9 +19,9 @@ struct LaTeXEditorView: View {
     @State private var compileOutput: String = ""
     @State private var isCompiling = false
     @State private var showFileBrowser = true
-    @State private var showPDFPreview = true
+    @State private var showPDFPreview = false
     @State private var showErrors = false
-    @State private var splitLayout: SplitLayout = .horizontal
+    @State private var splitLayout: SplitLayout = .editorOnly
     @State private var editorFontSize: CGFloat = 14
     @State private var editorTheme: Int = 0
     @State private var syncTarget: SyncTeXForwardResult?
