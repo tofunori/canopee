@@ -404,13 +404,61 @@ struct LaTeXTextEditor: NSViewRepresentable {
             }
         }
 
+        @MainActor
         private func applyAnnotationHighlights(to storage: NSTextStorage) {
             let highlightColor = NSColor.systemYellow.withAlphaComponent(0.22)
+            let stringLength = storage.length
+            let diffRanges = changeHunks
+                .compactMap { hunk -> NSRange? in
+                    guard hunk.kind == .modifiedOrAdded,
+                          let changedRange = textView?.changedCharacterRange(for: hunk) else { return nil }
+                    let safeRange = NSIntersectionRange(changedRange, NSRange(location: 0, length: stringLength))
+                    return safeRange.length > 0 ? safeRange : nil
+                }
+                .sorted { lhs, rhs in
+                    if lhs.location == rhs.location {
+                        return lhs.length < rhs.length
+                    }
+                    return lhs.location < rhs.location
+                }
 
             for resolved in resolvedAnnotations where !resolved.isDetached {
                 guard let range = resolved.resolvedRange else { continue }
-                storage.addAttribute(.backgroundColor, value: highlightColor, range: range)
+                let safeRange = NSIntersectionRange(range, NSRange(location: 0, length: stringLength))
+                guard safeRange.length > 0 else { continue }
+
+                for visibleRange in annotationVisibleRanges(in: safeRange, excluding: diffRanges) {
+                    storage.addAttribute(.backgroundColor, value: highlightColor, range: visibleRange)
+                }
             }
+        }
+
+        private func annotationVisibleRanges(in range: NSRange, excluding excludedRanges: [NSRange]) -> [NSRange] {
+            guard range.length > 0 else { return [] }
+            guard !excludedRanges.isEmpty else { return [range] }
+
+            var visibleRanges: [NSRange] = []
+            var cursor = range.location
+            let end = NSMaxRange(range)
+
+            for excludedRange in excludedRanges {
+                let overlap = NSIntersectionRange(range, excludedRange)
+                guard overlap.length > 0 else { continue }
+
+                if overlap.location > cursor {
+                    visibleRanges.append(NSRange(location: cursor, length: overlap.location - cursor))
+                }
+                cursor = max(cursor, NSMaxRange(overlap))
+                if cursor >= end {
+                    break
+                }
+            }
+
+            if cursor < end {
+                visibleRanges.append(NSRange(location: cursor, length: end - cursor))
+            }
+
+            return visibleRanges.filter { $0.length > 0 }
         }
 
         @MainActor

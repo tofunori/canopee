@@ -14,6 +14,14 @@ extension Notification.Name {
 }
 
 struct LaTeXEditorView: View {
+    private enum SidebarSizing {
+        static let minWidth: CGFloat = 160
+        static let maxWidth: CGFloat = 320
+        static let defaultWidth: CGFloat = 220
+        static let activityBarWidth: CGFloat = 44
+        static let resizeHandleWidth: CGFloat = 8
+    }
+
     private struct PendingAnnotation: Identifiable {
         let id = UUID()
         var draft: LaTeXAnnotationDraft
@@ -48,6 +56,7 @@ struct LaTeXEditorView: View {
     @State private var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] = []
     @State private var selectedEditorRange: NSRange?
     @State private var pendingAnnotation: PendingAnnotation?
+    @State private var sidebarResizeStartWidth: CGFloat?
 
     // PDF pane tabs (compiled + reference articles)
     enum PdfPaneTab: Hashable {
@@ -148,6 +157,17 @@ struct LaTeXEditorView: View {
     private var selectedSidebarSection: SidebarSection {
         get { SidebarSection(rawValue: workspaceState.selectedSidebarSection) ?? .files }
         nonmutating set { workspaceState.selectedSidebarSection = newValue.rawValue }
+    }
+
+    private var sidebarWidth: CGFloat {
+        get {
+            let stored = CGFloat(workspaceState.sidebarWidth)
+            guard stored.isFinite, stored > 0 else { return SidebarSizing.defaultWidth }
+            return min(max(stored, SidebarSizing.minWidth), SidebarSizing.maxWidth)
+        }
+        nonmutating set {
+            workspaceState.sidebarWidth = Double(min(max(newValue, SidebarSizing.minWidth), SidebarSizing.maxWidth))
+        }
     }
 
     private var showPDFPreview: Bool {
@@ -358,18 +378,56 @@ struct LaTeXEditorView: View {
                 }
             }
             .frame(
-                minWidth: showSidebar ? 160 : 0,
-                idealWidth: showSidebar ? 220 : 0,
-                maxWidth: showSidebar ? 320 : 0
+                minWidth: showSidebar ? sidebarWidth : 0,
+                idealWidth: showSidebar ? sidebarWidth : 0,
+                maxWidth: showSidebar ? sidebarWidth : 0
             )
             .opacity(showSidebar ? 1 : 0)
             .allowsHitTesting(showSidebar)
             .clipped()
+
+            if showSidebar {
+                sidebarResizeHandle
+            }
         }
         .frame(
-            width: showSidebar ? 264 : 44
+            width: showSidebar
+                ? SidebarSizing.activityBarWidth + sidebarWidth + SidebarSizing.resizeHandleWidth + 1
+                : SidebarSizing.activityBarWidth
         )
         .animation(nil, value: showSidebar)
+    }
+
+    private var sidebarResizeHandle: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: SidebarSizing.resizeHandleWidth)
+            .contentShape(Rectangle())
+            .overlay {
+                Rectangle()
+                    .fill(Color.white.opacity(0.06))
+                    .frame(width: 1)
+            }
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let baseWidth = sidebarResizeStartWidth ?? sidebarWidth
+                        if sidebarResizeStartWidth == nil {
+                            sidebarResizeStartWidth = sidebarWidth
+                        }
+                        sidebarWidth = baseWidth + value.translation.width
+                    }
+                    .onEnded { _ in
+                        sidebarResizeStartWidth = nil
+                    }
+            )
     }
 
     private var sidebarActivityBar: some View {
@@ -443,12 +501,13 @@ struct LaTeXEditorView: View {
                 .padding(16)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 8) {
+                    LazyVStack(spacing: 6) {
                         ForEach(sidebarAnnotations, id: \.annotation.id) { resolved in
                             annotationRow(resolved)
                         }
                     }
-                    .padding(10)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
                 }
             }
         }
@@ -1557,66 +1616,68 @@ struct LaTeXEditorView: View {
     private func annotationRow(_ resolved: ResolvedLaTeXAnnotation) -> some View {
         let annotation = resolved.annotation
 
-        return HStack(alignment: .top, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Circle()
+                    .fill(resolved.isDetached ? Color.orange : Color.yellow)
+                    .frame(width: 7, height: 7)
+                Text(resolved.isDetached ? "À recoller" : "Ancrée")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    deleteAnnotation(annotation.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Supprimer l’annotation")
+            }
+
             Button {
                 beginEditingAnnotation(annotation.id)
             } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(resolved.isDetached ? Color.orange : Color.yellow)
-                            .frame(width: 7, height: 7)
-                        Text(resolved.isDetached ? "À recoller" : "Ancrée")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-
+                VStack(alignment: .leading, spacing: 4) {
                     Text(annotation.selectedText.replacingOccurrences(of: "\n", with: " "))
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: 11.5, design: .monospaced))
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(3)
+                        .lineLimit(2)
 
                     if !annotation.note.isEmpty {
                         Text(annotation.note)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.leading)
-                            .lineLimit(3)
+                            .lineLimit(2)
                     }
-
-                    HStack(spacing: 10) {
-                        Button("Modifier") {
-                            beginEditingAnnotation(annotation.id)
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-
-                        Button("Envoyer") {
-                            sendAnnotationToClaude(resolved)
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                    }
-                    .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
 
-            Button {
-                deleteAnnotation(annotation.id)
-            } label: {
-                Image(systemName: "trash")
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button("Modifier") {
+                    beginEditingAnnotation(annotation.id)
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+
+                Button("Envoyer") {
+                    sendAnnotationToClaude(resolved)
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
             }
-            .buttonStyle(.plain)
-            .help("Supprimer l’annotation")
+            .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private func loadExistingPDF() {

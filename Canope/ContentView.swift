@@ -32,7 +32,9 @@ private final class SplitViewGrabDelegate: NSObject, NSSplitViewDelegate {
 
     func splitView(
         _ splitView: NSSplitView,
-        additionalEffectiveRectOfDividerAt dividerIndex: Int
+        effectiveRect proposedEffectiveRect: NSRect,
+        forDrawnRect drawnRect: NSRect,
+        ofDividerAt dividerIndex: Int
     ) -> NSRect {
         MainWindow.expandedDividerRect(for: splitView, dividerIndex: dividerIndex, inset: extraHitInset)
     }
@@ -185,7 +187,6 @@ struct MainWindow: View {
                 )
                 splitView.delegate = delegate
             }
-            applyStableDividerCursorRects(to: splitView)
             splitView.needsDisplay = true
         }
         for sub in view.subviews { thickenSplitViews(sub) }
@@ -219,22 +220,6 @@ struct MainWindow: View {
                 height: height + inset * 2
             ).integral
         }
-    }
-
-    @MainActor
-    static func applyStableDividerCursorRects(to splitView: NSSplitView) {
-        splitView.discardCursorRects()
-
-        let cursor = splitView.isVertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown
-        let dividerCount = max(0, splitView.subviews.count - 1)
-
-        for dividerIndex in 0..<dividerCount {
-            let rect = expandedDividerRect(for: splitView, dividerIndex: dividerIndex, inset: 5)
-            guard !rect.isEmpty else { continue }
-            splitView.addCursorRect(rect, cursor: cursor)
-        }
-
-        splitView.window?.invalidateCursorRects(for: splitView)
     }
 
     func openTeXFile(_ url: URL) {
@@ -749,6 +734,7 @@ struct LaTeXEditorContainer: View {
         LaTeXEditorWorkspaceState(
             showSidebar: workspaceState.showSidebar,
             selectedSidebarSection: workspaceState.selectedSidebarSection,
+            sidebarWidth: workspaceState.sidebarWidth,
             showPDFPreview: workspaceState.showPDFPreview,
             showErrors: workspaceState.showErrors,
             splitLayout: workspaceState.splitLayout,
@@ -774,6 +760,7 @@ struct LaTeXEditorContainer: View {
 
         workspaceState.showSidebar = snapshot.showSidebar
         workspaceState.selectedSidebarSection = snapshot.selectedSidebarSection
+        workspaceState.sidebarWidth = snapshot.sidebarWidth
         workspaceState.showErrors = snapshot.showErrors
         workspaceState.splitLayout = snapshot.splitLayout
         workspaceState.showPDFPreview = snapshot.splitLayout != "editorOnly"
