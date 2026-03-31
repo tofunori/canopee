@@ -918,7 +918,9 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
 
         for hunk in changeHunks {
             guard let highlightRect = highlightRect(for: hunk, using: layoutManager, textOrigin: textOrigin) else { continue }
-            guard highlightRect.intersects(dirtyRect) else { continue }
+            let previewRect = deletedPreviewRect(for: hunk, using: layoutManager, textOrigin: textOrigin)
+            let dirtyCheckRect = previewRect.map { highlightRect.union($0) } ?? highlightRect
+            guard dirtyCheckRect.intersects(dirtyRect) else { continue }
 
             let accentWidth: CGFloat = 2.5
             switch hunk.kind {
@@ -941,9 +943,8 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
                 )
                 NSBezierPath(roundedRect: accentRect, xRadius: 1.5, yRadius: 1.5).fill()
 
-                if !deletedPreviewText(for: hunk).isEmpty {
-                    let anchorRect = changedInlineRect(for: hunk, using: layoutManager, textOrigin: textOrigin) ?? highlightRect
-                    drawDeletedPreview(for: hunk, near: anchorRect)
+                if let previewRect = deletedPreviewRect(for: hunk, using: layoutManager, textOrigin: textOrigin) {
+                    drawDeletedPreview(for: hunk, in: previewRect)
                 }
             }
         }
@@ -955,16 +956,40 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         let labelSize = previewLayout.size
         let lineAlignedY = rect.minY + floor((rect.height - labelSize.height) / 2)
         let reservedGap: CGFloat = 4
+        let minimumX = textContainerOrigin.x + 2
         let textRect = NSRect(
-            x: min(
-                max(gutterWidth + 8, rect.minX - labelSize.width - reservedGap),
-                bounds.width - labelSize.width - 8
-            ),
+            x: max(minimumX, rect.minX - labelSize.width - reservedGap),
             y: max(0, lineAlignedY),
             width: labelSize.width,
             height: labelSize.height
         )
         label.draw(with: textRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+
+    private func drawDeletedPreview(for hunk: ChangeHunk, in rect: NSRect) {
+        guard let previewLayout = deletedPreviewLayout(for: hunk) else { return }
+        let label = previewLayout.label
+        label.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+
+    private func deletedPreviewRect(for hunk: ChangeHunk, using layoutManager: NSLayoutManager, textOrigin: NSPoint) -> NSRect? {
+        guard hunk.kind == .modifiedOrAdded,
+              let previewLayout = deletedPreviewLayout(for: hunk) else { return nil }
+
+        let anchorRect = changedInlineRect(for: hunk, using: layoutManager, textOrigin: textOrigin)
+            ?? highlightRect(for: hunk, using: layoutManager, textOrigin: textOrigin)
+        guard let anchorRect else { return nil }
+
+        let reservedGap: CGFloat = 4
+        let minimumX = textOrigin.x + 2
+        let drawX = max(minimumX, anchorRect.minX - previewLayout.size.width - reservedGap)
+        let lineAlignedY = anchorRect.minY + floor((anchorRect.height - previewLayout.size.height) / 2)
+        return NSRect(
+            x: drawX,
+            y: max(0, lineAlignedY),
+            width: previewLayout.size.width,
+            height: previewLayout.size.height
+        )
     }
 
     fileprivate func deletedPreviewLayout(for hunk: ChangeHunk) -> (label: NSAttributedString, size: NSSize, width: CGFloat, anchorLocation: Int)? {

@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import ObjectiveC
 
 enum AppChromeMetrics {
     static let topBarHeight: CGFloat = 24
@@ -19,6 +20,22 @@ enum TabItem: Hashable {
     case paper(UUID)
     case editor(String) // file path as string (URL isn't Hashable)
     case pdfFile(String) // standalone PDF file path
+}
+
+@MainActor
+private enum SplitViewGrabAssociation {
+    static let delegateKey = malloc(1)!
+}
+
+private final class SplitViewGrabDelegate: NSObject, NSSplitViewDelegate {
+    private let extraHitInset: CGFloat = 5
+
+    func splitView(
+        _ splitView: NSSplitView,
+        additionalEffectiveRectOfDividerAt dividerIndex: Int
+    ) -> NSRect {
+        MainWindow.expandedDividerRect(for: splitView, dividerIndex: dividerIndex, inset: extraHitInset)
+    }
 }
 
 struct MainWindow: View {
@@ -140,6 +157,7 @@ struct MainWindow: View {
     }
 
     /// Find all NSSplitViews and make dividers thick + easy to grab
+    @MainActor
     private func makeSplitersEasyToGrab() {
         // Run multiple times to catch split views created after initial layout
         for delay in [0.3, 1.0, 2.0] {
@@ -152,11 +170,71 @@ struct MainWindow: View {
         }
     }
 
+    @MainActor
     static func thickenSplitViews(_ view: NSView) {
         if let splitView = view as? NSSplitView {
             splitView.dividerStyle = .thick
+            if splitView.delegate == nil || splitView.delegate is SplitViewGrabDelegate {
+                let delegate = (objc_getAssociatedObject(splitView, SplitViewGrabAssociation.delegateKey) as? SplitViewGrabDelegate)
+                    ?? SplitViewGrabDelegate()
+                objc_setAssociatedObject(
+                    splitView,
+                    SplitViewGrabAssociation.delegateKey,
+                    delegate,
+                    .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+                )
+                splitView.delegate = delegate
+            }
+            applyStableDividerCursorRects(to: splitView)
+            splitView.needsDisplay = true
         }
         for sub in view.subviews { thickenSplitViews(sub) }
+    }
+
+    @MainActor
+    static func expandedDividerRect(for splitView: NSSplitView, dividerIndex: Int, inset: CGFloat) -> NSRect {
+        guard dividerIndex >= 0, dividerIndex < splitView.subviews.count - 1 else { return .zero }
+
+        let precedingFrame = splitView.subviews[dividerIndex].frame
+        let followingFrame = splitView.subviews[dividerIndex + 1].frame
+
+        if splitView.isVertical {
+            let gapStart = precedingFrame.maxX
+            let gapEnd = followingFrame.minX
+            let width = max(splitView.dividerThickness, gapEnd - gapStart)
+            return NSRect(
+                x: gapStart - inset,
+                y: 0,
+                width: width + inset * 2,
+                height: splitView.bounds.height
+            ).integral
+        } else {
+            let gapStart = precedingFrame.maxY
+            let gapEnd = followingFrame.minY
+            let height = max(splitView.dividerThickness, gapEnd - gapStart)
+            return NSRect(
+                x: 0,
+                y: gapStart - inset,
+                width: splitView.bounds.width,
+                height: height + inset * 2
+            ).integral
+        }
+    }
+
+    @MainActor
+    static func applyStableDividerCursorRects(to splitView: NSSplitView) {
+        splitView.discardCursorRects()
+
+        let cursor = splitView.isVertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown
+        let dividerCount = max(0, splitView.subviews.count - 1)
+
+        for dividerIndex in 0..<dividerCount {
+            let rect = expandedDividerRect(for: splitView, dividerIndex: dividerIndex, inset: 5)
+            guard !rect.isEmpty else { continue }
+            splitView.addCursorRect(rect, cursor: cursor)
+        }
+
+        splitView.window?.invalidateCursorRects(for: splitView)
     }
 
     func openTeXFile(_ url: URL) {

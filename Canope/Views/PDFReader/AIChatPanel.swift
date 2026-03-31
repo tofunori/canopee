@@ -199,18 +199,22 @@ struct TerminalPanel: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .canopeSendPromptToTerminal)) { notification in
+            guard isVisible else { return }
             guard let prompt = notification.userInfo?["prompt"] as? String else { return }
             sendPromptToFocusedTerminal(prompt)
         }
         .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalAddTab)) { _ in
+            guard isVisible else { return }
             addTab()
         }
         .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalApplyTheme)) { notification in
+            guard isVisible else { return }
             guard let index = notification.userInfo?["themeIndex"] as? Int,
                   Self.themes.indices.contains(index) else { return }
             applyTheme(index)
         }
         .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalApplyFontSize)) { notification in
+            guard isVisible else { return }
             guard let size = notification.userInfo?["fontSize"] as? CGFloat else { return }
             applyFontSize(size)
         }

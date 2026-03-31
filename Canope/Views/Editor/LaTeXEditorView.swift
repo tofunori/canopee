@@ -474,6 +474,45 @@ struct LaTeXEditorView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
+
+            if !lineDiffs.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Toutes les modifications")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 6)
+                    Button {
+                        rejectAllDiffs()
+                    } label: {
+                        Label("Tout rejeter", systemImage: "xmark")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.red.opacity(0.08))
+                    .clipShape(Capsule())
+                    .help("Rejeter tout")
+
+                    Button {
+                        acceptAllDiffs()
+                    } label: {
+                        Label("Tout accepter", systemImage: "checkmark")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.green.opacity(0.08))
+                    .clipShape(Capsule())
+                    .help("Accepter tout")
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+            }
+
             Divider()
 
             if lineDiffs.isEmpty {
@@ -576,14 +615,24 @@ struct LaTeXEditorView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
+                    rejectDiff(diff)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.red)
+                .help("Rejeter cette modification")
+
+                Button {
                     acceptDiff(diff)
                 } label: {
-                    Label("Accepter", systemImage: "checkmark")
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption2)
+                    Image(systemName: "checkmark")
+                        .font(.caption2.weight(.semibold))
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.green)
+                .help("Accepter cette modification")
 
                 Image(systemName: "arrow.turn.down.right")
                     .font(.caption2)
@@ -592,28 +641,40 @@ struct LaTeXEditorView: View {
 
             switch diff.type {
             case .added:
-                diffSnippet(
-                    title: "Après",
-                    text: diff.text,
-                    tint: Color.green.opacity(0.18)
+                compactDiffSnippet(
+                    prefix: "+",
+                    text: compactPreviewText(diff.text),
+                    accent: .green
                 )
             case .removed:
-                diffSnippet(
-                    title: "Avant",
-                    text: diff.text,
-                    tint: Color.red.opacity(0.18)
+                compactDiffSnippet(
+                    prefix: "-",
+                    text: compactPreviewText(diff.text),
+                    accent: .red,
+                    strikeText: true
                 )
             case .modified(let oldLine):
                 VStack(alignment: .leading, spacing: 6) {
-                    diffSnippet(
-                        title: "Avant",
-                        text: oldLine,
-                        tint: Color.red.opacity(0.18)
+                    compactDiffSnippet(
+                        prefix: "-",
+                        text: focusedDiffText(
+                            line: oldLine,
+                            changeStart: diffCoreRanges(old: oldLine, new: diff.text).oldStart,
+                            changeLength: diffCoreRanges(old: oldLine, new: diff.text).oldLength,
+                            accent: .red,
+                            strikeChanged: true
+                        ),
+                        accent: .red
                     )
-                    diffSnippet(
-                        title: "Après",
-                        text: diff.text,
-                        tint: Color.green.opacity(0.18)
+                    compactDiffSnippet(
+                        prefix: "+",
+                        text: focusedDiffText(
+                            line: diff.text,
+                            changeStart: diffCoreRanges(old: oldLine, new: diff.text).newStart,
+                            changeLength: diffCoreRanges(old: oldLine, new: diff.text).newLength,
+                            accent: .green
+                        ),
+                        accent: .green
                     )
                 }
             case .unchanged:
@@ -630,21 +691,29 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func diffSnippet(title: String, text: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(previewText(text))
+    private func compactDiffSnippet(
+        prefix: String,
+        text: Text,
+        accent: Color,
+        strikeText: Bool = false
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(prefix)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundStyle(accent)
+
+            text
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.primary)
-                .lineLimit(4)
+                .strikethrough(strikeText, color: accent)
+                .underline(strikeText, color: accent)
+                .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(tint)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private func diffLabel(for diff: LineDiff) -> String {
@@ -681,6 +750,79 @@ struct LaTeXEditorView: View {
         return String(compact.prefix(limit)) + "…"
     }
 
+    private func compactPreviewText(_ value: String, context: Int = 56) -> Text {
+        Text(previewText(value, limit: context))
+    }
+
+    private func focusedDiffText(
+        line: String,
+        changeStart: Int,
+        changeLength: Int,
+        accent: Color,
+        strikeChanged: Bool = false,
+        context: Int = 18
+    ) -> Text {
+        let nsLine = line as NSString
+        let totalLength = nsLine.length
+        let safeStart = min(max(changeStart, 0), totalLength)
+        let safeLength = min(max(changeLength, 0), max(0, totalLength - safeStart))
+
+        let prefixStart = max(0, safeStart - context)
+        let prefixLength = max(0, safeStart - prefixStart)
+        let suffixStart = min(totalLength, safeStart + safeLength)
+        let suffixLength = min(context, max(0, totalLength - suffixStart))
+
+        let prefixText = nsLine.substring(with: NSRange(location: prefixStart, length: prefixLength))
+        let changedText = safeLength > 0
+            ? nsLine.substring(with: NSRange(location: safeStart, length: safeLength))
+            : ""
+        let suffixText = suffixLength > 0
+            ? nsLine.substring(with: NSRange(location: suffixStart, length: suffixLength))
+            : ""
+
+        let leadingEllipsis = prefixStart > 0 ? "…" : ""
+        let trailingEllipsis = suffixStart + suffixLength < totalLength ? "…" : ""
+
+        let basePrefix = Text(leadingEllipsis + prefixText).foregroundStyle(.secondary)
+        let baseSuffix = Text(suffixText + trailingEllipsis).foregroundStyle(.secondary)
+
+        if changedText.isEmpty {
+            return basePrefix + baseSuffix
+        }
+
+        let changed = Text(changedText)
+            .fontWeight(.semibold)
+            .foregroundStyle(strikeChanged ? accent : .primary)
+            .strikethrough(strikeChanged, color: accent)
+            .underline(strikeChanged, color: accent)
+
+        return basePrefix + changed + baseSuffix
+    }
+
+    private func diffCoreRanges(old: String, new: String) -> (oldStart: Int, oldLength: Int, newStart: Int, newLength: Int) {
+        let oldUnits = Array(old.utf16)
+        let newUnits = Array(new.utf16)
+        let sharedCount = min(oldUnits.count, newUnits.count)
+        var prefix = 0
+        while prefix < sharedCount && oldUnits[prefix] == newUnits[prefix] {
+            prefix += 1
+        }
+
+        var oldSuffix = oldUnits.count
+        var newSuffix = newUnits.count
+        while oldSuffix > prefix && newSuffix > prefix && oldUnits[oldSuffix - 1] == newUnits[newSuffix - 1] {
+            oldSuffix -= 1
+            newSuffix -= 1
+        }
+
+        return (
+            oldStart: prefix,
+            oldLength: max(0, oldSuffix - prefix),
+            newStart: prefix,
+            newLength: max(0, newSuffix - prefix)
+        )
+    }
+
     private func acceptDiff(_ diff: LineDiff) {
         var baselineLines = savedText.components(separatedBy: "\n")
         let targetIndex = max(0, diff.lineNumber - 1)
@@ -700,6 +842,38 @@ struct LaTeXEditorView: View {
         }
 
         savedText = baselineLines.joined(separator: "\n")
+    }
+
+    private func rejectDiff(_ diff: LineDiff) {
+        var currentLines = text.components(separatedBy: "\n")
+        let targetIndex = max(0, diff.lineNumber - 1)
+
+        switch diff.type {
+        case .added:
+            guard targetIndex < currentLines.count else { return }
+            currentLines.remove(at: targetIndex)
+        case .removed:
+            let insertionIndex = min(targetIndex, currentLines.count)
+            currentLines.insert(diff.text, at: insertionIndex)
+        case .modified(let oldLine):
+            guard targetIndex < currentLines.count else { return }
+            currentLines[targetIndex] = oldLine
+        case .unchanged:
+            return
+        }
+
+        text = currentLines.joined(separator: "\n")
+        reconcileAnnotations()
+    }
+
+    private func acceptAllDiffs() {
+        savedText = text
+        reconcileAnnotations()
+    }
+
+    private func rejectAllDiffs() {
+        text = savedText
+        reconcileAnnotations()
     }
 
     /// The PDF document for the currently selected pane tab
@@ -803,7 +977,7 @@ struct LaTeXEditorView: View {
                 }
             }
         }
-        .frame(minWidth: 180, idealWidth: 280, maxWidth: 420)
+        .frame(minWidth: 180, idealWidth: 320, maxWidth: .infinity)
     }
 
     @ViewBuilder
@@ -1107,10 +1281,12 @@ struct LaTeXEditorView: View {
 
     // MARK: - File Operations
 
-    private func loadFile() {
+    private func loadFile(useAsBaseline: Bool = true) {
         guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
         text = content
-        savedText = content
+        if useAsBaseline {
+            savedText = content
+        }
         latexAnnotations = LaTeXAnnotationStore.load(for: fileURL)
         reconcileAnnotations()
         lastModified = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
@@ -1678,7 +1854,7 @@ struct LaTeXEditorView: View {
                 guard isActive else { return }
                 if let currentMod, currentMod != lastModified {
                     lastModified = currentMod
-                    loadFile()
+                    loadFile(useAsBaseline: false)
                 }
             }
         }
