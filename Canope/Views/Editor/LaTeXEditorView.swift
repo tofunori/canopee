@@ -10,6 +10,7 @@ enum EditorChromeMetrics {
 extension Notification.Name {
     static let syncTeXScrollToLine = Notification.Name("syncTeXScrollToLine")
     static let syncTeXForwardSync = Notification.Name("syncTeXForwardSync")
+    static let editorRevealLocation = Notification.Name("editorRevealLocation")
 }
 
 struct LaTeXEditorView: View {
@@ -22,6 +23,7 @@ struct LaTeXEditorView: View {
     private enum SidebarSection: String {
         case files
         case annotations
+        case diff
     }
 
     let fileURL: URL
@@ -131,6 +133,11 @@ struct LaTeXEditorView: View {
                 return lhs.annotation.createdAt < rhs.annotation.createdAt
             }
         }
+    }
+
+    private var lineDiffs: [LineDiff] {
+        DiffEngine.diff(old: savedText, new: text)
+            .filter { $0.type != .unchanged }
     }
 
     private var showSidebar: Bool {
@@ -346,6 +353,8 @@ struct LaTeXEditorView: View {
                     fileBrowserSidebar
                 case .annotations:
                     annotationSidebar
+                case .diff:
+                    diffSidebar
                 }
             }
             .frame(
@@ -367,6 +376,7 @@ struct LaTeXEditorView: View {
         VStack(spacing: 8) {
             sidebarButton(for: .files, systemImage: "folder")
             sidebarButton(for: .annotations, systemImage: "note.text")
+            sidebarButton(for: .diff, systemImage: "arrow.left.arrow.right.square")
             Spacer()
         }
         .padding(.top, 10)
@@ -445,6 +455,56 @@ struct LaTeXEditorView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    private var diffSidebar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Label("Diff", systemImage: "arrow.left.arrow.right.square")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Spacer()
+                if !lineDiffs.isEmpty {
+                    Text("\(lineDiffs.count)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            Divider()
+
+            if lineDiffs.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.secondary)
+                    Text("Aucun changement")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Les modifications non sauvegardées du fichier apparaîtront ici.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(16)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(lineDiffs) { diff in
+                            diffRow(diff)
+                        }
+                    }
+                    .padding(10)
+                }
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
     private var editorPane: some View {
         VStack(spacing: 0) {
             if let editorTabBar {
@@ -501,6 +561,145 @@ struct LaTeXEditorView: View {
         }
         .frame(minWidth: 160, idealWidth: 620, maxWidth: .infinity)
         .layoutPriority(1)
+    }
+
+    @ViewBuilder
+    private func diffRow(_ diff: LineDiff) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(diffLabel(for: diff))
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(diffAccentColor(for: diff))
+                Text("Ligne \(max(diff.lineNumber, 1))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    acceptDiff(diff)
+                } label: {
+                    Label("Accepter", systemImage: "checkmark")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption2)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.green)
+
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            switch diff.type {
+            case .added:
+                diffSnippet(
+                    title: "Après",
+                    text: diff.text,
+                    tint: Color.green.opacity(0.18)
+                )
+            case .removed:
+                diffSnippet(
+                    title: "Avant",
+                    text: diff.text,
+                    tint: Color.red.opacity(0.18)
+                )
+            case .modified(let oldLine):
+                VStack(alignment: .leading, spacing: 6) {
+                    diffSnippet(
+                        title: "Avant",
+                        text: oldLine,
+                        tint: Color.red.opacity(0.18)
+                    )
+                    diffSnippet(
+                        title: "Après",
+                        text: diff.text,
+                        tint: Color.green.opacity(0.18)
+                    )
+                }
+            case .unchanged:
+                EmptyView()
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onTapGesture {
+            revealEditorLocation(for: diff)
+        }
+    }
+
+    private func diffSnippet(title: String, text: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(previewText(text))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.primary)
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(tint)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+    }
+
+    private func diffLabel(for diff: LineDiff) -> String {
+        switch diff.type {
+        case .added:
+            return "Ajout"
+        case .removed:
+            return "Suppression"
+        case .modified:
+            return "Modification"
+        case .unchanged:
+            return "Inchangé"
+        }
+    }
+
+    private func diffAccentColor(for diff: LineDiff) -> Color {
+        switch diff.type {
+        case .added:
+            return .green
+        case .removed:
+            return .red
+        case .modified:
+            return .orange
+        case .unchanged:
+            return .secondary
+        }
+    }
+
+    private func previewText(_ value: String, limit: Int = 180) -> String {
+        let compact = value.replacingOccurrences(of: "\t", with: "    ")
+        if compact.count <= limit {
+            return compact.isEmpty ? " " : compact
+        }
+        return String(compact.prefix(limit)) + "…"
+    }
+
+    private func acceptDiff(_ diff: LineDiff) {
+        var baselineLines = savedText.components(separatedBy: "\n")
+        let targetIndex = max(0, diff.lineNumber - 1)
+
+        switch diff.type {
+        case .added:
+            let insertionIndex = min(targetIndex, baselineLines.count)
+            baselineLines.insert(diff.text, at: insertionIndex)
+        case .removed:
+            guard targetIndex < baselineLines.count else { return }
+            baselineLines.remove(at: targetIndex)
+        case .modified:
+            guard targetIndex < baselineLines.count else { return }
+            baselineLines[targetIndex] = diff.text
+        case .unchanged:
+            return
+        }
+
+        savedText = baselineLines.joined(separator: "\n")
     }
 
     /// The PDF document for the currently selected pane tab
@@ -1280,17 +1479,100 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func scrollEditorToLine(_ lineNumber: Int) {
+    private func scrollEditorToLine(_ lineNumber: Int, selectingLine: Bool = true) {
         let lines = text.components(separatedBy: "\n")
         guard lineNumber > 0 && lineNumber <= lines.count else { return }
         var charOffset = 0
         for i in 0..<(lineNumber - 1) {
             charOffset += lines[i].count + 1
         }
-        // Select entire line so it highlights in yellow (showFindIndicator)
         let lineLength = lines[lineNumber - 1].count
         let range = NSRange(location: charOffset, length: lineLength)
-        NotificationCenter.default.post(name: .syncTeXScrollToLine, object: nil, userInfo: ["range": range])
+        NotificationCenter.default.post(
+            name: .syncTeXScrollToLine,
+            object: nil,
+            userInfo: [
+                "range": range,
+                "select": selectingLine,
+            ]
+        )
+    }
+
+    private func revealEditorLocation(for diff: LineDiff) {
+        revealEditorLocationForLine(
+            max(diff.lineNumber, 1),
+            columnOffset: diffRevealColumn(for: diff),
+            highlightLength: diffRevealLength(for: diff)
+        )
+    }
+
+    private func revealEditorLocationForLine(
+        _ lineNumber: Int,
+        columnOffset: Int = 0,
+        highlightLength: Int = 1
+    ) {
+        let lines = text.components(separatedBy: "\n")
+        guard lineNumber > 0 && lineNumber <= lines.count else { return }
+        var charOffset = 0
+        for i in 0..<(lineNumber - 1) {
+            charOffset += (lines[i] as NSString).length + 1
+        }
+        let lineNSString = lines[lineNumber - 1] as NSString
+        let clampedColumnOffset = min(max(columnOffset, 0), lineNSString.length)
+        NotificationCenter.default.post(
+            name: .editorRevealLocation,
+            object: nil,
+            userInfo: [
+                "location": charOffset + clampedColumnOffset,
+                "length": max(1, highlightLength),
+            ]
+        )
+    }
+
+    private func diffRevealColumn(for diff: LineDiff) -> Int {
+        switch diff.type {
+        case .added, .removed:
+            return 0
+        case .modified(let oldLine):
+            let oldUnits = Array(oldLine.utf16)
+            let newUnits = Array(diff.text.utf16)
+            let sharedCount = min(oldUnits.count, newUnits.count)
+            var prefix = 0
+            while prefix < sharedCount && oldUnits[prefix] == newUnits[prefix] {
+                prefix += 1
+            }
+            return prefix
+        case .unchanged:
+            return 0
+        }
+    }
+
+    private func diffRevealLength(for diff: LineDiff) -> Int {
+        switch diff.type {
+        case .added:
+            return min(max((diff.text as NSString).length, 1), 24)
+        case .removed:
+            return 1
+        case .modified(let oldLine):
+            let oldUnits = Array(oldLine.utf16)
+            let newUnits = Array(diff.text.utf16)
+            let sharedCount = min(oldUnits.count, newUnits.count)
+            var prefix = 0
+            while prefix < sharedCount && oldUnits[prefix] == newUnits[prefix] {
+                prefix += 1
+            }
+
+            var oldSuffix = oldUnits.count
+            var newSuffix = newUnits.count
+            while oldSuffix > prefix && newSuffix > prefix && oldUnits[oldSuffix - 1] == newUnits[newSuffix - 1] {
+                oldSuffix -= 1
+                newSuffix -= 1
+            }
+
+            return max(1, min(newSuffix - prefix, 24))
+        case .unchanged:
+            return 1
+        }
     }
 
     // MARK: - SyncTeX
