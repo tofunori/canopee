@@ -22,6 +22,8 @@ struct LaTeXTextEditor: NSViewRepresentable {
         // Scroll view stays dark for scrollbar appearance
         scrollView.appearance = NSAppearance(named: .darkAqua)
         scrollView.scrollerStyle = .overlay
+        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        scrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let textStorage = NSTextStorage()
         let layoutManager = PersistentSelectionLayoutManager()
@@ -58,6 +60,8 @@ struct LaTeXTextEditor: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textContainer.widthTracksTextView = true
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         textView.delegate = context.coordinator
         context.coordinator.parent = self

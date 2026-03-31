@@ -781,10 +781,10 @@ struct LaTeXEditorContainer: View {
                 LaTeXLandingView(onOpenTeX: onOpenTeX, onOpenPDF: onOpenPDF)
             }
 
-            ForEach(openPaths, id: \.self) { path in
+            if let activePath, !activePath.isEmpty {
                 LaTeXEditorView(
-                    fileURL: URL(fileURLWithPath: path),
-                    isActive: activePath == path,
+                    fileURL: URL(fileURLWithPath: activePath),
+                    isActive: true,
                     showTerminal: $showTerminal,
                     workspaceState: workspaceState,
                     terminalWorkspaceState: terminalWorkspaceState,
@@ -793,8 +793,6 @@ struct LaTeXEditorContainer: View {
                     openPaperIDs: openPaperIDs,
                     editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil
                 )
-                .opacity(activePath == path ? 1 : 0)
-                .allowsHitTesting(activePath == path)
             }
         }
         .onAppear {

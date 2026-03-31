@@ -246,6 +246,7 @@ struct LaTeXEditorView: View {
             if isActive {
                 startFileWatcher()
             }
+            refreshSplitGrabAreas()
         }
         .onDisappear {
             stopFileWatcher()
@@ -254,18 +255,28 @@ struct LaTeXEditorView: View {
             if isActive {
                 loadFile()
                 startFileWatcher()
+                refreshSplitGrabAreas()
             } else {
                 stopFileWatcher()
             }
         }
+        .onChange(of: fileURL) {
+            reloadActiveFileState()
+        }
         .onChange(of: splitLayout) {
-            // Thicken dividers when layout changes (new split views are created)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                for window in NSApp.windows {
-                    guard let contentView = window.contentView else { continue }
-                    MainWindow.thickenSplitViews(contentView)
-                }
-            }
+            refreshSplitGrabAreas()
+        }
+        .onChange(of: showSidebar) {
+            refreshSplitGrabAreas()
+        }
+        .onChange(of: showPDFPreview) {
+            refreshSplitGrabAreas()
+        }
+        .onChange(of: showTerminal) {
+            refreshSplitGrabAreas()
+        }
+        .onChange(of: panelArrangement) {
+            refreshSplitGrabAreas()
         }
     }
 
@@ -279,10 +290,12 @@ struct LaTeXEditorView: View {
                 HSplitView {
                     embeddedTerminalPane
                     editorAndPDFPane
+                        .layoutPriority(1)
                 }
             case .editorPDFTerminal, .pdfEditorTerminal:
                 HSplitView {
                     editorAndPDFPane
+                        .layoutPriority(1)
                     embeddedTerminalPane
                 }
             }
@@ -293,17 +306,19 @@ struct LaTeXEditorView: View {
 
     @ViewBuilder
     private var editorAndPDFPane: some View {
-        if splitLayout == .horizontal {
+        if !showPDFPreview {
+            editorPane
+        } else if splitLayout == .horizontal {
             HSplitView {
-                if showPDFPreview && isPDFLeadingInLayout { pdfPane }
+                if isPDFLeadingInLayout { pdfPane }
                 editorPane
-                if showPDFPreview && !isPDFLeadingInLayout { pdfPane }
+                if !isPDFLeadingInLayout { pdfPane }
             }
         } else if splitLayout == .vertical {
             VSplitView {
-                if showPDFPreview && isPDFLeadingInLayout { pdfPane }
+                if isPDFLeadingInLayout { pdfPane }
                 editorPane
-                if showPDFPreview && !isPDFLeadingInLayout { pdfPane }
+                if !isPDFLeadingInLayout { pdfPane }
             }
         } else {
             editorPane
@@ -318,7 +333,7 @@ struct LaTeXEditorView: View {
             topInset: 0,
             showsInlineControls: false
         )
-        .frame(minWidth: 160, idealWidth: 360, maxWidth: .infinity)
+        .frame(minWidth: 160, idealWidth: 320, maxWidth: .infinity)
     }
 
     private var sidebarPane: some View {
@@ -343,10 +358,9 @@ struct LaTeXEditorView: View {
             .clipped()
         }
         .frame(
-            minWidth: 44,
-            idealWidth: showSidebar ? 264 : 44,
-            maxWidth: showSidebar ? 364 : 44
+            width: showSidebar ? 264 : 44
         )
+        .animation(nil, value: showSidebar)
     }
 
     private var sidebarActivityBar: some View {
@@ -485,6 +499,8 @@ struct LaTeXEditorView: View {
                 .background(Color(nsColor: .controlBackgroundColor))
             }
         }
+        .frame(minWidth: 160, idealWidth: 620, maxWidth: .infinity)
+        .layoutPriority(1)
     }
 
     /// The PDF document for the currently selected pane tab
@@ -588,6 +604,7 @@ struct LaTeXEditorView: View {
                 }
             }
         }
+        .frame(minWidth: 180, idealWidth: 280, maxWidth: 420)
     }
 
     @ViewBuilder
@@ -641,9 +658,7 @@ struct LaTeXEditorView: View {
         HStack(spacing: 8) {
             toolbarCluster {
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        showSidebar.toggle()
-                    }
+                    showSidebar.toggle()
                 }) {
                     Image(systemName: "sidebar.left")
                         .symbolVariant(showSidebar ? .none : .slash)
@@ -1146,13 +1161,11 @@ struct LaTeXEditorView: View {
         let isActive = showSidebar && selectedSidebarSection == section
 
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                if isActive {
-                    showSidebar = false
-                } else {
-                    selectedSidebarSection = section
-                    showSidebar = true
-                }
+            if isActive {
+                showSidebar = false
+            } else {
+                selectedSidebarSection = section
+                showSidebar = true
             }
         } label: {
             Image(systemName: systemImage)
@@ -1235,6 +1248,35 @@ struct LaTeXEditorView: View {
         let pdfURL = fileURL.deletingPathExtension().appendingPathExtension("pdf")
         if FileManager.default.fileExists(atPath: pdfURL.path) {
             compiledPDF = PDFDocument(url: pdfURL)
+        } else {
+            compiledPDF = nil
+        }
+    }
+
+    private func reloadActiveFileState() {
+        stopFileWatcher()
+        pendingAnnotation = nil
+        selectedEditorRange = nil
+        syncTarget = nil
+        syncToLine = nil
+        errors = []
+        compileOutput = ""
+        loadFile()
+        loadExistingPDF()
+        if isActive {
+            startFileWatcher()
+        }
+        refreshSplitGrabAreas()
+    }
+
+    private func refreshSplitGrabAreas() {
+        for delay in [0.05, 0.2, 0.45] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                for window in NSApp.windows {
+                    guard let contentView = window.contentView else { continue }
+                    MainWindow.thickenSplitViews(contentView)
+                }
+            }
         }
     }
 
