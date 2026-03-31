@@ -47,42 +47,76 @@ struct PaperTableView: View {
     }
 
     var body: some View {
-        tableContent
-            .contextMenu(forSelectionType: UUID.self) { items in
-                contextMenuContent(items)
-            } primaryAction: { items in
-                for id in items {
-                    if let paper = allPapers.first(where: { $0.id == id }) {
-                        onOpenPaper(paper)
+        VStack(spacing: 0) {
+            libraryToolbar
+            Divider()
+
+            tableContent
+                .contextMenu(forSelectionType: UUID.self) { items in
+                    contextMenuContent(items)
+                } primaryAction: { items in
+                    for id in items {
+                        if let paper = allPapers.first(where: { $0.id == id }) {
+                            onOpenPaper(paper)
+                        }
                     }
                 }
-            }
-            .searchable(text: $searchText, prompt: "Rechercher titre, auteurs, DOI…")
-            .onChange(of: selection) {
-                inspectedPaperID = selection.count == 1 ? selection.first : nil
-            }
-            .navigationTitle(navigationTitle)
-            .toolbar { toolbarContent }
-            .fileImporter(
-                isPresented: $isImporting,
-                allowedContentTypes: [UTType.pdf],
-                allowsMultipleSelection: true
-            ) { result in
-                handleImport(result)
-            }
-            .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
-                handleDrop(providers)
-                return true
-            }
-            .overlay {
-                if filteredPapers.isEmpty {
-                    ContentUnavailableView {
-                        Label("Aucun article", systemImage: "doc.text")
-                    } description: {
-                        Text("Importez un PDF avec le bouton + ou glissez-le ici")
+                .onChange(of: selection) {
+                    inspectedPaperID = selection.count == 1 ? selection.first : nil
+                }
+                .overlay {
+                    if filteredPapers.isEmpty {
+                        ContentUnavailableView {
+                            Label("Aucun article", systemImage: "doc.text")
+                        } description: {
+                            Text("Importez un PDF avec le bouton + ou glissez-le ici")
+                        }
                     }
                 }
+        }
+        .fileImporter(
+            isPresented: $isImporting,
+            allowedContentTypes: [UTType.pdf],
+            allowsMultipleSelection: true
+        ) { result in
+            handleImport(result)
+        }
+        .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+            handleDrop(providers)
+            return true
+        }
+    }
+
+    private var libraryToolbar: some View {
+        HStack(spacing: 10) {
+            Text(navigationTitle)
+                .font(.system(size: 13, weight: .semibold))
+
+            Spacer(minLength: 8)
+
+            Button(action: { isImporting = true }) {
+                Label("Importer un PDF", systemImage: "plus")
+                    .labelStyle(.iconOnly)
             }
+            .buttonStyle(.plain)
+            .help("Importer un PDF")
+
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Rechercher titre, auteurs, DOI…", text: $searchText)
+                    .textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .frame(width: 260, height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar.opacity(0.65))
     }
 
     // MARK: - Table
@@ -224,18 +258,6 @@ struct PaperTableView: View {
                 Divider()
                 Button("Supprimer", role: .destructive) { deletePapers(items) }
             }
-        }
-    }
-
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
-            Button(action: { isImporting = true }) {
-                Image(systemName: "plus")
-            }
-            .help("Importer un PDF")
         }
     }
 

@@ -3,8 +3,8 @@ import SwiftData
 import PDFKit
 
 enum EditorChromeMetrics {
-    static let toolbarHeight: CGFloat = 36
-    static let tabBarHeight: CGFloat = 26
+    static let toolbarHeight: CGFloat = 32
+    static let tabBarHeight: CGFloat = 24
 }
 
 extension Notification.Name {
@@ -638,7 +638,7 @@ struct LaTeXEditorView: View {
     // MARK: - Toolbar
 
     private var editorToolbar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             toolbarCluster {
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.15)) {
@@ -776,7 +776,7 @@ struct LaTeXEditorView: View {
                 .help("Ordre des panneaux")
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 8)
 
             toolbarCluster {
                 Menu {
@@ -864,29 +864,29 @@ struct LaTeXEditorView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .frame(height: EditorChromeMetrics.toolbarHeight)
         .background(.bar)
     }
 
     private var toolbarInnerDivider: some View {
         Divider()
-            .frame(height: 14)
+            .frame(height: 12)
     }
 
     private func toolbarCluster<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             content()
         }
-        .padding(.horizontal, 10)
-        .frame(height: 24)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.white.opacity(0.035))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .stroke(Color.white.opacity(0.05), lineWidth: 1)
         )
     }

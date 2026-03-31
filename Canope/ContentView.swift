@@ -1,6 +1,11 @@
 import SwiftUI
 import SwiftData
 
+enum AppChromeMetrics {
+    static let topBarHeight: CGFloat = 24
+    static let topButtonSize: CGFloat = 24
+}
+
 enum SidebarSelection: Hashable {
     case allPapers
     case favorites
@@ -251,7 +256,7 @@ struct MainWindow: View {
                 )
 
                 // Action buttons (right side, aligned with section row)
-                HStack(spacing: 2) {
+                HStack(spacing: 1) {
                     // Open .tex file (with recent files)
                     Menu {
                         let recents = Self.recentTeXFiles
@@ -272,8 +277,8 @@ struct MainWindow: View {
                         }
                     } label: {
                         Image(systemName: "doc.badge.plus")
-                            .font(.system(size: 12))
-                            .frame(width: 28, height: 28)
+                            .font(.system(size: 11))
+                            .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
                     }
                     .buttonStyle(.plain)
                     .help("Ouvrir un fichier .tex (⌘O)")
@@ -292,16 +297,16 @@ struct MainWindow: View {
                             }
                         } label: {
                             Image(systemName: splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
-                                .font(.system(size: 12))
-                                .frame(width: 28, height: 28)
+                                .font(.system(size: 11))
+                                .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
                         }
                         .buttonStyle(.plain)
                         .help("Split view")
                     }
                 }
-                .padding(.trailing, 6)
+                .padding(.trailing, 4)
             }
-            .frame(height: 28)
+            .frame(height: AppChromeMetrics.topBarHeight)
             .background(.bar)
 
             // Document tabs row (papers/PDFs from library)
@@ -331,7 +336,7 @@ struct MainWindow: View {
                         }
                     }
                 }
-                .frame(height: 26)
+                .frame(height: EditorChromeMetrics.tabBarHeight)
                 .background(.bar.opacity(0.7))
             }
 
@@ -432,7 +437,7 @@ struct TabBar: View {
                 }
             }
         }
-        .frame(height: 28)
+        .frame(height: AppChromeMetrics.topBarHeight)
         .clipped()
     }
 
@@ -470,12 +475,12 @@ struct SectionTab: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: 10))
                     .foregroundStyle(iconColor ?? (isSelected ? .primary : .secondary))
                 Text(label)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? .primary : .secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -487,7 +492,7 @@ struct SectionTab: View {
             )
             .overlay(alignment: .bottom) {
                 if isSelected {
-                    Rectangle().fill(Color.white.opacity(0.3)).frame(height: 1.5)
+                    Rectangle().fill(Color.white.opacity(0.3)).frame(height: 1)
                 }
             }
         }
@@ -519,10 +524,10 @@ struct TabButton: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: tabIcon)
-                .font(.system(size: 10))
+                .font(.system(size: 9))
                 .foregroundStyle(.secondary)
             Text(title)
-                .font(.system(size: 11))
+                .font(.system(size: 10))
                 .lineLimit(1)
                 .frame(maxWidth: 160)
             if let onClose {
@@ -535,7 +540,7 @@ struct TabButton: View {
                 .opacity(isSelected || isHovered ? 1 : 0)
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 8)
         .frame(maxHeight: .infinity)
         .background(
             isSelected ? Color.accentColor.opacity(0.12)
@@ -544,7 +549,7 @@ struct TabButton: View {
         )
         .overlay(alignment: .bottom) {
             if isSelected {
-                Rectangle().fill(Color.accentColor).frame(height: 2)
+                Rectangle().fill(Color.accentColor).frame(height: 1.5)
             }
         }
         .contentShape(Rectangle())
@@ -590,15 +595,6 @@ struct LibraryView: View {
                     systemImage: "info.circle",
                     description: Text("Sélectionnez un article pour voir ses infos")
                 )
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: { showInspector.toggle() }) {
-                    Image(systemName: "info.circle")
-                }
-                .help("Panneau info (⌘I)")
-                .keyboardShortcut("i", modifiers: .command)
             }
         }
         .onChange(of: inspectedPaperID) {
