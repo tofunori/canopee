@@ -170,7 +170,7 @@ struct TerminalPanel: View {
                 .opacity(isSplit ? 1 : 0)
             }
         }
-        .frame(minWidth: 200, maxWidth: .infinity)
+        .frame(minWidth: 160, maxWidth: .infinity)
         .onAppear {
             selectedTabID = tabs.first?.id
             isSplit = false
@@ -370,6 +370,8 @@ struct TerminalViewWrapper: NSViewRepresentable {
 
     func makeNSView(context: Context) -> FocusAwareLocalProcessTerminalView {
         let tv = FocusAwareLocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
         tv.font = makeTerminalFont(size: fontSize)
         tv.getTerminal().setCursorStyle(preferredTerminalCursorStyle)
         tv.optionAsMetaKey = false

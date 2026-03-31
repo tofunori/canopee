@@ -24,6 +24,7 @@ struct MainWindow: View {
     @State private var splitPaperID: UUID? = nil
     @State private var showTerminal = false
     @State private var isOpeningTeX = false
+    @State private var didRestoreWorkspace = false
 
     private var openPaperIDs: [UUID] {
         openTabs.compactMap { if case .paper(let id) = $0 { return id } else { return nil } }
@@ -104,6 +105,64 @@ struct MainWindow: View {
     static var recentTeXFiles: [String] {
         (UserDefaults.standard.stringArray(forKey: recentTeXKey) ?? [])
             .filter { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    private func persistWorkspaceState() {
+        guard didRestoreWorkspace else { return }
+
+        var savedTabs = openTabs.compactMap(MainWindowWorkspaceState.SavedTab.init)
+        if !savedTabs.contains(.library) {
+            savedTabs.insert(.library, at: 0)
+        }
+        savedTabs = deduplicated(savedTabs)
+
+        let selectedSavedTab = MainWindowWorkspaceState.SavedTab(selectedTab) ?? savedTabs.last ?? .library
+        let snapshot = MainWindowWorkspaceState(
+            openTabs: savedTabs,
+            selectedTab: selectedSavedTab,
+            showTerminal: showTerminal,
+            splitPaperID: splitPaperID
+        )
+        WorkspaceSessionStore.shared.saveMainWindowState(snapshot)
+    }
+
+    private func restoreWorkspaceStateIfNeeded() {
+        guard !didRestoreWorkspace else { return }
+        didRestoreWorkspace = true
+
+        guard let snapshot = WorkspaceSessionStore.shared.loadMainWindowState() else { return }
+
+        var restoredTabs = snapshot.openTabs.compactMap(\.tabItem)
+        if !restoredTabs.contains(.library) {
+            restoredTabs.insert(.library, at: 0)
+        }
+        restoredTabs = deduplicated(restoredTabs)
+        if restoredTabs.isEmpty {
+            restoredTabs = [.library]
+        }
+
+        openTabs = restoredTabs
+
+        if let restoredSelected = snapshot.selectedTab.tabItem {
+            if !openTabs.contains(restoredSelected) {
+                openTabs.append(restoredSelected)
+            }
+            selectedTab = restoredSelected
+        } else {
+            selectedTab = openTabs.last ?? .library
+        }
+
+        showTerminal = snapshot.showTerminal
+        if let splitID = snapshot.splitPaperID, openTabs.contains(.paper(splitID)) {
+            splitPaperID = splitID
+        } else {
+            splitPaperID = nil
+        }
+    }
+
+    private func deduplicated<T: Hashable>(_ values: [T]) -> [T] {
+        var seen = Set<T>()
+        return values.filter { seen.insert($0).inserted }
     }
 
     var body: some View {
@@ -268,15 +327,24 @@ struct MainWindow: View {
                     showsInlineControls: !isEditorSelected
                 )
                     .frame(
-                        minWidth: showTerminal && selectedTab != .library ? 520 : 0,
-                        idealWidth: showTerminal && selectedTab != .library ? 920 : 0,
+                        minWidth: showTerminal && selectedTab != .library ? 180 : 0,
+                        idealWidth: showTerminal && selectedTab != .library ? 680 : 0,
                         maxWidth: showTerminal && selectedTab != .library ? .infinity : 0
                     )
                     .opacity(showTerminal && selectedTab != .library ? 1 : 0)
             }
         }
-        .onAppear { makeSplitersEasyToGrab() }
-        .onChange(of: selectedTab) { makeSplitersEasyToGrab() }
+        .onAppear {
+            restoreWorkspaceStateIfNeeded()
+            makeSplitersEasyToGrab()
+        }
+        .onChange(of: selectedTab) {
+            makeSplitersEasyToGrab()
+            persistWorkspaceState()
+        }
+        .onChange(of: openTabs) { persistWorkspaceState() }
+        .onChange(of: showTerminal) { persistWorkspaceState() }
+        .onChange(of: splitPaperID) { persistWorkspaceState() }
         .onChange(of: paperToOpen) {
             guard let id = paperToOpen else { return }
             let tab = TabItem.paper(id)
@@ -559,6 +627,7 @@ struct StandalonePDFView: NSViewRepresentable {
 // MARK: - LaTeX Editor Container (manages multiple .tex files with sub-tabs)
 
 struct LaTeXEditorContainer: View {
+    @Query private var allPapers: [Paper]
     let openPaths: [String]
     @Binding var selectedTab: TabItem
     @Binding var showTerminal: Bool
@@ -566,6 +635,8 @@ struct LaTeXEditorContainer: View {
     var onOpenTeX: (URL) -> Void
     var onOpenPDF: (URL) -> Void
     var onCloseEditor: (String) -> Void
+    @StateObject private var workspaceState = LaTeXWorkspaceUIState()
+    @State private var didRestoreWorkspaceState = false
 
     /// The currently active editor path
     private var activePath: String? {
@@ -589,6 +660,64 @@ struct LaTeXEditorContainer: View {
     }
 
     @State private var hoveredTabPath: String?
+
+    private var workspaceSnapshot: LaTeXEditorWorkspaceState {
+        LaTeXEditorWorkspaceState(
+            showSidebar: workspaceState.showSidebar,
+            selectedSidebarSection: workspaceState.selectedSidebarSection,
+            showPDFPreview: workspaceState.showPDFPreview,
+            showErrors: workspaceState.showErrors,
+            splitLayout: workspaceState.splitLayout,
+            editorFontSize: workspaceState.editorFontSize,
+            editorTheme: workspaceState.editorTheme,
+            referencePaperIDs: workspaceState.referencePaperIDs,
+            selectedReferencePaperID: workspaceState.selectedReferencePaperID,
+            layoutBeforeReference: workspaceState.layoutBeforeReference
+        )
+    }
+
+    private func persistWorkspaceState() {
+        guard didRestoreWorkspaceState else { return }
+        WorkspaceSessionStore.shared.saveLaTeXWorkspaceState(workspaceSnapshot)
+    }
+
+    private func restoreWorkspaceStateIfNeeded() {
+        guard !didRestoreWorkspaceState else { return }
+        didRestoreWorkspaceState = true
+
+        guard let snapshot = WorkspaceSessionStore.shared.loadLaTeXWorkspaceState() else { return }
+
+        workspaceState.showSidebar = snapshot.showSidebar
+        workspaceState.selectedSidebarSection = snapshot.selectedSidebarSection
+        workspaceState.showErrors = snapshot.showErrors
+        workspaceState.splitLayout = snapshot.splitLayout
+        workspaceState.showPDFPreview = snapshot.splitLayout != "editorOnly"
+        workspaceState.editorFontSize = snapshot.editorFontSize
+        workspaceState.editorTheme = snapshot.editorTheme
+        workspaceState.layoutBeforeReference = snapshot.layoutBeforeReference
+
+        var seen = Set<UUID>()
+        let referenceIDs = snapshot.referencePaperIDs.filter { seen.insert($0).inserted }
+        workspaceState.referencePaperIDs = referenceIDs
+        workspaceState.selectedReferencePaperID = snapshot.selectedReferencePaperID
+        workspaceState.referencePDFs = loadReferencePDFs(for: referenceIDs)
+
+        if let selectedID = workspaceState.selectedReferencePaperID,
+           !referenceIDs.contains(selectedID) {
+            workspaceState.selectedReferencePaperID = nil
+        }
+    }
+
+    private func loadReferencePDFs(for ids: [UUID]) -> [UUID: PDFDocument] {
+        var documents: [UUID: PDFDocument] = [:]
+        for id in ids {
+            guard let paper = allPapers.first(where: { $0.id == id }),
+                  let pdf = PDFDocument(url: paper.fileURL) else { continue }
+            AnnotationService.normalizeDocumentAnnotations(in: pdf)
+            documents[id] = pdf
+        }
+        return documents
+    }
 
     @ViewBuilder
     private var editorTabBar: some View {
@@ -649,6 +778,7 @@ struct LaTeXEditorContainer: View {
                     fileURL: URL(fileURLWithPath: path),
                     isActive: activePath == path,
                     showTerminal: $showTerminal,
+                    workspaceState: workspaceState,
                     onOpenPDF: onOpenPDF,
                     onOpenInNewTab: onOpenTeX,
                     openPaperIDs: openPaperIDs,
@@ -657,6 +787,12 @@ struct LaTeXEditorContainer: View {
                 .opacity(activePath == path ? 1 : 0)
                 .allowsHitTesting(activePath == path)
             }
+        }
+        .onAppear {
+            restoreWorkspaceStateIfNeeded()
+        }
+        .onChange(of: workspaceSnapshot) {
+            persistWorkspaceState()
         }
     }
 }

@@ -19,7 +19,7 @@ struct LaTeXEditorView: View {
         var existingAnnotationID: UUID?
     }
 
-    private enum SidebarSection {
+    private enum SidebarSection: String {
         case files
         case annotations
     }
@@ -27,6 +27,7 @@ struct LaTeXEditorView: View {
     let fileURL: URL
     var isActive: Bool = true
     @Binding var showTerminal: Bool
+    @ObservedObject var workspaceState: LaTeXWorkspaceUIState
     var onOpenPDF: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
     var openPaperIDs: [UUID] = []
@@ -37,13 +38,6 @@ struct LaTeXEditorView: View {
     @State private var errors: [CompilationError] = []
     @State private var compileOutput: String = ""
     @State private var isCompiling = false
-    @State private var showSidebar = true
-    @State private var selectedSidebarSection: SidebarSection = .files
-    @State private var showPDFPreview = false
-    @State private var showErrors = false
-    @State private var splitLayout: SplitLayout = .editorOnly
-    @State private var editorFontSize: CGFloat = 14
-    @State private var editorTheme: Int = 0
     @State private var syncTarget: SyncTeXForwardResult?
     @State private var syncToLine: Int?
     @State private var lastModified: Date?
@@ -58,10 +52,6 @@ struct LaTeXEditorView: View {
         case reference(UUID)
     }
     @Query private var allPapers: [Paper]
-    @State private var pdfPaneTabs: [PdfPaneTab] = [.compiled]
-    @State private var selectedPdfTab: PdfPaneTab = .compiled
-    @State private var referencePDFs: [UUID: PDFDocument] = [:]
-    @State private var layoutBeforeReference: SplitLayout?
     @State private var fitToWidthTrigger = false
 
     enum SplitLayout: String {
@@ -140,6 +130,60 @@ struct LaTeXEditorView: View {
                 return lhs.annotation.createdAt < rhs.annotation.createdAt
             }
         }
+    }
+
+    private var showSidebar: Bool {
+        get { workspaceState.showSidebar }
+        nonmutating set { workspaceState.showSidebar = newValue }
+    }
+
+    private var selectedSidebarSection: SidebarSection {
+        get { SidebarSection(rawValue: workspaceState.selectedSidebarSection) ?? .files }
+        nonmutating set { workspaceState.selectedSidebarSection = newValue.rawValue }
+    }
+
+    private var showPDFPreview: Bool {
+        get { workspaceState.showPDFPreview }
+        nonmutating set { workspaceState.showPDFPreview = newValue }
+    }
+
+    private var showErrors: Bool {
+        get { workspaceState.showErrors }
+        nonmutating set { workspaceState.showErrors = newValue }
+    }
+
+    private var splitLayout: SplitLayout {
+        get { SplitLayout(rawValue: workspaceState.splitLayout) ?? .editorOnly }
+        nonmutating set {
+            workspaceState.splitLayout = newValue.rawValue
+            workspaceState.showPDFPreview = newValue != .editorOnly
+        }
+    }
+
+    private var editorFontSize: CGFloat {
+        get { CGFloat(workspaceState.editorFontSize) }
+        nonmutating set { workspaceState.editorFontSize = Double(newValue) }
+    }
+
+    private var editorTheme: Int {
+        get { min(max(workspaceState.editorTheme, 0), Self.editorThemes.count - 1) }
+        nonmutating set { workspaceState.editorTheme = newValue }
+    }
+
+    private var pdfPaneTabs: [PdfPaneTab] {
+        [.compiled] + workspaceState.referencePaperIDs.map { .reference($0) }
+    }
+
+    private var selectedPdfTab: PdfPaneTab {
+        if let id = workspaceState.selectedReferencePaperID {
+            return .reference(id)
+        }
+        return .compiled
+    }
+
+    private var layoutBeforeReference: SplitLayout? {
+        get { workspaceState.layoutBeforeReference.flatMap(SplitLayout.init(rawValue:)) }
+        nonmutating set { workspaceState.layoutBeforeReference = newValue?.rawValue }
     }
 
     var body: some View {
@@ -400,7 +444,7 @@ struct LaTeXEditorView: View {
     private var displayedPDF: PDFDocument? {
         switch selectedPdfTab {
         case .compiled: return compiledPDF
-        case .reference(let id): return referencePDFs[id]
+        case .reference(let id): return workspaceState.referencePDFs[id]
         }
     }
 
@@ -477,7 +521,7 @@ struct LaTeXEditorView: View {
                     if case .reference(let id) = tab { return id } else { return nil }
                 }, id: \.self) { id in
                     Group {
-                        if let pdf = referencePDFs[id] {
+                        if let pdf = workspaceState.referencePDFs[id] {
                             PDFPreviewView(
                                 document: pdf,
                                 syncTarget: nil,
@@ -534,7 +578,12 @@ struct LaTeXEditorView: View {
         .onTapGesture {
             // Only switch tab if this tab still exists (not just closed by ✕)
             if pdfPaneTabs.contains(tab) {
-                selectedPdfTab = tab
+                switch tab {
+                case .compiled:
+                    workspaceState.selectedReferencePaperID = nil
+                case .reference(let id):
+                    workspaceState.selectedReferencePaperID = id
+                }
             }
         }
     }
@@ -1161,14 +1210,14 @@ struct LaTeXEditorView: View {
     private func openReference(_ paper: Paper) {
         let tab = PdfPaneTab.reference(paper.id)
         if pdfPaneTabs.contains(tab) {
-            selectedPdfTab = tab
+            workspaceState.selectedReferencePaperID = paper.id
             return
         }
         guard let pdf = PDFDocument(url: paper.fileURL) else { return }
         AnnotationService.normalizeDocumentAnnotations(in: pdf)
-        referencePDFs[paper.id] = pdf
-        pdfPaneTabs.append(tab)
-        selectedPdfTab = tab
+        workspaceState.referencePDFs[paper.id] = pdf
+        workspaceState.referencePaperIDs.append(paper.id)
+        workspaceState.selectedReferencePaperID = paper.id
         if splitLayout == .editorOnly {
             layoutBeforeReference = .editorOnly
             splitLayout = .horizontal
@@ -1178,10 +1227,10 @@ struct LaTeXEditorView: View {
 
     private func closePdfTab(_ tab: PdfPaneTab) {
         guard case .reference(let id) = tab else { return }
-        pdfPaneTabs.removeAll { $0 == tab }
-        referencePDFs.removeValue(forKey: id)
+        workspaceState.referencePaperIDs.removeAll { $0 == id }
+        workspaceState.referencePDFs.removeValue(forKey: id)
         if selectedPdfTab == tab {
-            selectedPdfTab = .compiled
+            workspaceState.selectedReferencePaperID = nil
         }
         // Restore layout only if no more references AND user hasn't changed layout since
         if pdfPaneTabs == [.compiled],
@@ -1202,7 +1251,7 @@ struct LaTeXEditorView: View {
               let paper = paperFor(id),
               let pdf = PDFDocument(url: paper.fileURL) else { return }
         AnnotationService.normalizeDocumentAnnotations(in: pdf)
-        referencePDFs[id] = pdf
+        workspaceState.referencePDFs[id] = pdf
     }
 
     // MARK: - Compilation
