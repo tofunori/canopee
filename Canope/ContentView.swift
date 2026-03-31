@@ -25,6 +25,8 @@ struct MainWindow: View {
     @State private var showTerminal = false
     @State private var isOpeningTeX = false
     @State private var didRestoreWorkspace = false
+    @StateObject private var latexWorkspaceState = LaTeXWorkspaceUIState()
+    @StateObject private var terminalWorkspaceState = TerminalWorkspaceState()
 
     private var openPaperIDs: [UUID] {
         openTabs.compactMap { if case .paper(let id) = $0 { return id } else { return nil } }
@@ -41,6 +43,78 @@ struct MainWindow: View {
     private var isEditorSelected: Bool {
         if case .editor = selectedTab { return true }
         return false
+    }
+
+    @ViewBuilder
+    private var mainContentPane: some View {
+        ZStack {
+            LibraryView(paperToOpen: $paperToOpen)
+                .opacity(selectedTab == .library ? 1 : 0)
+                .allowsHitTesting(selectedTab == .library)
+
+            ForEach(openPaperIDs, id: \.self) { paperId in
+                if let paper = allPapers.first(where: { $0.id == paperId }) {
+                    Group {
+                        let isActive = selectedTab == .paper(paperId)
+                        if let splitID = splitPaperID,
+                           splitID != paperId,
+                           isActive {
+                            if let splitPaper = allPapers.first(where: { $0.id == splitID }) {
+                                HSplitView {
+                                    PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
+                                    PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
+                                }
+                            }
+                        } else {
+                            PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal)
+                        }
+                    }
+                    .opacity(selectedTab == .paper(paperId) ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .paper(paperId))
+                }
+            }
+
+            LaTeXEditorContainer(
+                openPaths: openEditorPaths.filter { !$0.isEmpty },
+                selectedTab: $selectedTab,
+                showTerminal: $showTerminal,
+                openPaperIDs: openPaperIDs,
+                workspaceState: latexWorkspaceState,
+                terminalWorkspaceState: terminalWorkspaceState,
+                onOpenTeX: { url in openTeXFile(url) },
+                onOpenPDF: { url in openPDFFile(url) },
+                onCloseEditor: { path in
+                    let tab = TabItem.editor(path)
+                    if let index = openTabs.firstIndex(of: tab) {
+                        openTabs.remove(at: index)
+                    }
+                }
+            )
+            .opacity(isEditorSelected ? 1 : 0)
+            .allowsHitTesting(isEditorSelected)
+
+            ForEach(openPDFPaths, id: \.self) { path in
+                StandalonePDFView(url: URL(fileURLWithPath: path))
+                    .opacity(selectedTab == .pdfFile(path) ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .pdfFile(path))
+            }
+        }
+    }
+
+    private var terminalPane: some View {
+        TerminalPanel(
+            workspaceState: terminalWorkspaceState,
+            document: nil,
+            isVisible: showTerminal && selectedTab != .library && !isEditorSelected,
+            topInset: 0,
+            showsInlineControls: true
+        )
+        .frame(
+            minWidth: showTerminal && selectedTab != .library && !isEditorSelected ? 180 : 0,
+            idealWidth: showTerminal && selectedTab != .library && !isEditorSelected ? 680 : 0,
+            maxWidth: showTerminal && selectedTab != .library && !isEditorSelected ? .infinity : 0
+        )
+        .opacity(showTerminal && selectedTab != .library && !isEditorSelected ? 1 : 0)
     }
 
     private func tabTitle(_ tab: TabItem) -> String {
@@ -265,73 +339,8 @@ struct MainWindow: View {
 
             // Content + resizable shared terminal
             HSplitView {
-                // Main content — keep all views alive
-                ZStack {
-                    LibraryView(paperToOpen: $paperToOpen)
-                        .opacity(selectedTab == .library ? 1 : 0)
-                        .allowsHitTesting(selectedTab == .library)
-
-                    ForEach(openPaperIDs, id: \.self) { paperId in
-                        if let paper = allPapers.first(where: { $0.id == paperId }) {
-                            Group {
-                                let isActive = selectedTab == .paper(paperId)
-                                if let splitID = splitPaperID,
-                                   splitID != paperId,
-                                   isActive {
-                                    if let splitPaper = allPapers.first(where: { $0.id == splitID }) {
-                                        HSplitView {
-                                            PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
-                                            PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
-                                        }
-                                    }
-                                } else {
-                                    PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal)
-                                }
-                            }
-                            .opacity(selectedTab == .paper(paperId) ? 1 : 0)
-                            .allowsHitTesting(selectedTab == .paper(paperId))
-                        }
-                    }
-
-                    // LaTeX editor container (with its own sub-tabs)
-                    LaTeXEditorContainer(
-                        openPaths: openEditorPaths.filter { !$0.isEmpty },
-                        selectedTab: $selectedTab,
-                        showTerminal: $showTerminal,
-                        openPaperIDs: openPaperIDs,
-                        onOpenTeX: { url in openTeXFile(url) },
-                        onOpenPDF: { url in openPDFFile(url) },
-                        onCloseEditor: { path in
-                            let tab = TabItem.editor(path)
-                            if let index = openTabs.firstIndex(of: tab) {
-                                openTabs.remove(at: index)
-                            }
-                        }
-                    )
-                    .opacity(isEditorSelected ? 1 : 0)
-                    .allowsHitTesting(isEditorSelected)
-
-                    // Standalone PDF tabs
-                    ForEach(openPDFPaths, id: \.self) { path in
-                        StandalonePDFView(url: URL(fileURLWithPath: path))
-                            .opacity(selectedTab == .pdfFile(path) ? 1 : 0)
-                            .allowsHitTesting(selectedTab == .pdfFile(path))
-                    }
-                }
-
-                // Shared terminal — always mounted, hidden when not needed
-                TerminalPanel(
-                    document: nil,
-                    isVisible: showTerminal && selectedTab != .library,
-                    topInset: isEditorSelected ? EditorChromeMetrics.toolbarHeight + 1 : 0,
-                    showsInlineControls: !isEditorSelected
-                )
-                    .frame(
-                        minWidth: showTerminal && selectedTab != .library ? 180 : 0,
-                        idealWidth: showTerminal && selectedTab != .library ? 680 : 0,
-                        maxWidth: showTerminal && selectedTab != .library ? .infinity : 0
-                    )
-                    .opacity(showTerminal && selectedTab != .library ? 1 : 0)
+                mainContentPane
+                terminalPane
             }
         }
         .onAppear {
@@ -632,10 +641,11 @@ struct LaTeXEditorContainer: View {
     @Binding var selectedTab: TabItem
     @Binding var showTerminal: Bool
     let openPaperIDs: [UUID]
+    @ObservedObject var workspaceState: LaTeXWorkspaceUIState
+    @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
     var onOpenTeX: (URL) -> Void
     var onOpenPDF: (URL) -> Void
     var onCloseEditor: (String) -> Void
-    @StateObject private var workspaceState = LaTeXWorkspaceUIState()
     @State private var didRestoreWorkspaceState = false
 
     /// The currently active editor path
@@ -668,6 +678,7 @@ struct LaTeXEditorContainer: View {
             showPDFPreview: workspaceState.showPDFPreview,
             showErrors: workspaceState.showErrors,
             splitLayout: workspaceState.splitLayout,
+            panelArrangement: workspaceState.panelArrangement,
             editorFontSize: workspaceState.editorFontSize,
             editorTheme: workspaceState.editorTheme,
             referencePaperIDs: workspaceState.referencePaperIDs,
@@ -692,6 +703,7 @@ struct LaTeXEditorContainer: View {
         workspaceState.showErrors = snapshot.showErrors
         workspaceState.splitLayout = snapshot.splitLayout
         workspaceState.showPDFPreview = snapshot.splitLayout != "editorOnly"
+        workspaceState.panelArrangement = snapshot.panelArrangement
         workspaceState.editorFontSize = snapshot.editorFontSize
         workspaceState.editorTheme = snapshot.editorTheme
         workspaceState.layoutBeforeReference = snapshot.layoutBeforeReference
@@ -779,6 +791,7 @@ struct LaTeXEditorContainer: View {
                     isActive: activePath == path,
                     showTerminal: $showTerminal,
                     workspaceState: workspaceState,
+                    terminalWorkspaceState: terminalWorkspaceState,
                     onOpenPDF: onOpenPDF,
                     onOpenInNewTab: onOpenTeX,
                     openPaperIDs: openPaperIDs,

@@ -28,6 +28,7 @@ struct LaTeXEditorView: View {
     var isActive: Bool = true
     @Binding var showTerminal: Bool
     @ObservedObject var workspaceState: LaTeXWorkspaceUIState
+    @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
     var onOpenPDF: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
     var openPaperIDs: [UUID] = []
@@ -160,6 +161,15 @@ struct LaTeXEditorView: View {
         }
     }
 
+    private var panelArrangement: LaTeXPanelArrangement {
+        get { workspaceState.panelArrangement }
+        nonmutating set { workspaceState.panelArrangement = newValue }
+    }
+
+    private var isPDFLeadingInLayout: Bool {
+        panelArrangement == .pdfEditorTerminal
+    }
+
     private var editorFontSize: CGFloat {
         get { CGFloat(workspaceState.editorFontSize) }
         nonmutating set { workspaceState.editorFontSize = Double(newValue) }
@@ -199,20 +209,7 @@ struct LaTeXEditorView: View {
 
                 // Right side: file tabs + editor + PDF
                 VStack(spacing: 0) {
-                // Editor + PDF split (horizontal or vertical)
-                if splitLayout == .horizontal {
-                    HSplitView {
-                        editorPane
-                        if showPDFPreview { pdfPane }
-                    }
-                } else if splitLayout == .vertical {
-                    VSplitView {
-                        editorPane
-                        if showPDFPreview { pdfPane }
-                    }
-                } else {
-                    editorPane
-                }
+                    workAreaPane
                 } // close VStack (file tabs + editor/PDF)
             }
         }
@@ -273,6 +270,56 @@ struct LaTeXEditorView: View {
     }
 
     // MARK: - Panes
+
+    @ViewBuilder
+    private var workAreaPane: some View {
+        if isActive && showTerminal {
+            switch panelArrangement {
+            case .terminalEditorPDF:
+                HSplitView {
+                    embeddedTerminalPane
+                    editorAndPDFPane
+                }
+            case .editorPDFTerminal, .pdfEditorTerminal:
+                HSplitView {
+                    editorAndPDFPane
+                    embeddedTerminalPane
+                }
+            }
+        } else {
+            editorAndPDFPane
+        }
+    }
+
+    @ViewBuilder
+    private var editorAndPDFPane: some View {
+        if splitLayout == .horizontal {
+            HSplitView {
+                if showPDFPreview && isPDFLeadingInLayout { pdfPane }
+                editorPane
+                if showPDFPreview && !isPDFLeadingInLayout { pdfPane }
+            }
+        } else if splitLayout == .vertical {
+            VSplitView {
+                if showPDFPreview && isPDFLeadingInLayout { pdfPane }
+                editorPane
+                if showPDFPreview && !isPDFLeadingInLayout { pdfPane }
+            }
+        } else {
+            editorPane
+        }
+    }
+
+    private var embeddedTerminalPane: some View {
+        TerminalPanel(
+            workspaceState: terminalWorkspaceState,
+            document: nil,
+            isVisible: isActive && showTerminal,
+            topInset: 0,
+            showsInlineControls: false
+        )
+        .frame(minWidth: 160, idealWidth: 360, maxWidth: .infinity)
+    }
 
     private var sidebarPane: some View {
         HStack(spacing: 0) {
@@ -708,6 +755,25 @@ struct LaTeXEditorView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Disposition")
+
+                Menu {
+                    ForEach(LaTeXPanelArrangement.allCases, id: \.self) { arrangement in
+                        Button {
+                            panelArrangement = arrangement
+                        } label: {
+                            HStack {
+                                if panelArrangement == arrangement {
+                                    Image(systemName: "checkmark")
+                                }
+                                Text(arrangement.title)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .buttonStyle(.plain)
+                .help("Ordre des panneaux")
             }
 
             Spacer(minLength: 12)

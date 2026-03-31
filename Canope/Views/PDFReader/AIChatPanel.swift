@@ -25,27 +25,45 @@ struct TerminalTab: Identifiable {
     var title: String = "Terminal"
 }
 
+@MainActor
+final class TerminalWorkspaceState: ObservableObject {
+    @Published var tabs: [TerminalTab]
+    @Published var selectedTabID: UUID?
+    @Published var terminalViews: [UUID: LocalProcessTerminalView]
+    @Published var currentTheme: Int
+    @Published var currentFontSize: CGFloat
+    @Published var isSplit: Bool
+    @Published var splitTerminalViews: [UUID: LocalProcessTerminalView]
+    @Published var splitTabs: [TerminalTab]
+    @Published var focusedPane: TerminalPanel.PaneID
+
+    init() {
+        let initialTab = TerminalTab()
+        self.tabs = [initialTab]
+        self.selectedTabID = initialTab.id
+        self.terminalViews = [:]
+        self.currentTheme = 0
+        self.currentFontSize = 14
+        self.isSplit = false
+        self.splitTerminalViews = [:]
+        self.splitTabs = [TerminalTab()]
+        self.focusedPane = .top
+    }
+}
+
 // MARK: - Terminal Panel with Tabs (SwiftTerm + Metal GPU)
 
 struct TerminalPanel: View {
+    @ObservedObject var workspaceState: TerminalWorkspaceState
     let document: PDFDocument?
     let isVisible: Bool
     let topInset: CGFloat
     let showsInlineControls: Bool
-    @State private var tabs: [TerminalTab] = [TerminalTab()]
-    @State private var selectedTabID: UUID? = nil
-    @State private var terminalViews: [UUID: LocalProcessTerminalView] = [:]
-    @State private var currentTheme = 0
-    @State private var currentFontSize: CGFloat = 14
-    @State private var isSplit = false
-    @State private var splitTerminalViews: [UUID: LocalProcessTerminalView] = [:]
-    @State private var splitTabs: [TerminalTab] = [TerminalTab()]
-    @State private var focusedPane: PaneID = .top
 
     enum PaneID { case top, bottom }
 
     private var currentTabID: UUID {
-        selectedTabID ?? tabs.first!.id
+        workspaceState.selectedTabID ?? workspaceState.tabs.first!.id
     }
 
     var body: some View {
@@ -61,7 +79,7 @@ struct TerminalPanel: View {
             HStack(spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
-                        ForEach(tabs) { tab in
+                        ForEach(workspaceState.tabs) { tab in
                             terminalTabButton(tab)
                         }
                     }
@@ -84,7 +102,7 @@ struct TerminalPanel: View {
                                 applyTheme(i)
                             } label: {
                                 HStack {
-                                    if i == currentTheme { Image(systemName: "checkmark") }
+                                    if i == workspaceState.currentTheme { Image(systemName: "checkmark") }
                                     Text(Self.themes[i].name)
                                 }
                             }
@@ -103,7 +121,7 @@ struct TerminalPanel: View {
                                 applyFontSize(CGFloat(size))
                             } label: {
                                 HStack {
-                                    if Int(currentFontSize) == size { Image(systemName: "checkmark") }
+                                    if Int(workspaceState.currentFontSize) == size { Image(systemName: "checkmark") }
                                     Text("\(size) pt")
                                 }
                             }
@@ -127,53 +145,58 @@ struct TerminalPanel: View {
             VSplitView {
                 // Top pane
                 VStack(spacing: 0) {
-                    if isSplit {
+                    if workspaceState.isSplit {
                         paneHeader(.top)
                     }
                     ZStack {
-                        ForEach(tabs) { tab in
+                        ForEach(workspaceState.tabs) { tab in
                             TerminalViewWrapper(
                                 tabID: tab.id,
-                                terminalViews: $terminalViews,
+                                terminalViews: $workspaceState.terminalViews,
                                 isActive: tab.id == currentTabID,
-                                fontSize: currentFontSize,
-                                theme: Self.themes[currentTheme]
+                                fontSize: workspaceState.currentFontSize,
+                                theme: Self.themes[workspaceState.currentTheme]
                             )
                             .opacity(tab.id == currentTabID ? 1 : 0)
                             .allowsHitTesting(tab.id == currentTabID)
                         }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { focusedPane = .top }
+                    .onTapGesture { workspaceState.focusedPane = .top }
                 }
 
                 // Bottom pane
                 VStack(spacing: 0) {
-                    if isSplit {
+                    if workspaceState.isSplit {
                         paneHeader(.bottom)
                     }
                     ZStack {
-                        ForEach(splitTabs) { tab in
+                        ForEach(workspaceState.splitTabs) { tab in
                             TerminalViewWrapper(
                                 tabID: tab.id,
-                                terminalViews: $splitTerminalViews,
-                                isActive: isSplit,
-                                fontSize: currentFontSize,
-                                theme: Self.themes[currentTheme]
+                                terminalViews: $workspaceState.splitTerminalViews,
+                                isActive: workspaceState.isSplit,
+                                fontSize: workspaceState.currentFontSize,
+                                theme: Self.themes[workspaceState.currentTheme]
                             )
                         }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { focusedPane = .bottom }
+                    .onTapGesture { workspaceState.focusedPane = .bottom }
                 }
-                .frame(minHeight: isSplit ? 100 : 0, maxHeight: isSplit ? .infinity : 0)
-                .opacity(isSplit ? 1 : 0)
+                .frame(minHeight: workspaceState.isSplit ? 100 : 0, maxHeight: workspaceState.isSplit ? .infinity : 0)
+                .opacity(workspaceState.isSplit ? 1 : 0)
             }
         }
         .frame(minWidth: 160, maxWidth: .infinity)
         .onAppear {
-            selectedTabID = tabs.first?.id
-            isSplit = false
+            if workspaceState.tabs.isEmpty {
+                let tab = TerminalTab()
+                workspaceState.tabs = [tab]
+                workspaceState.selectedTabID = tab.id
+            } else if workspaceState.selectedTabID == nil {
+                workspaceState.selectedTabID = workspaceState.tabs.first?.id
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .canopeSendPromptToTerminal)) { notification in
             guard let prompt = notification.userInfo?["prompt"] as? String else { return }
@@ -197,7 +220,7 @@ struct TerminalPanel: View {
                 focusVisibleTerminal()
             }
         }
-        .onChange(of: selectedTabID) {
+        .onChange(of: workspaceState.selectedTabID) {
             guard isVisible else { return }
             DispatchQueue.main.async {
                 focusVisibleTerminal()
@@ -216,7 +239,7 @@ struct TerminalPanel: View {
             Text(tab.title)
                 .font(.caption2)
                 .lineLimit(1)
-            if tabs.count > 1 {
+            if workspaceState.tabs.count > 1 {
                 Button(action: { closeTab(tab) }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 7, weight: .bold))
@@ -234,7 +257,7 @@ struct TerminalPanel: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { selectedTabID = tab.id }
+        .onTapGesture { workspaceState.selectedTabID = tab.id }
     }
 
     // MARK: - Themes (Kaku-inspired)
@@ -254,9 +277,14 @@ struct TerminalPanel: View {
     // MARK: - Actions
 
     private func applyTheme(_ index: Int) {
-        currentTheme = index
+        workspaceState.currentTheme = index
         let theme = Self.themes[index]
-        for (_, tv) in terminalViews {
+        for (_, tv) in workspaceState.terminalViews {
+            tv.nativeBackgroundColor = theme.bg
+            tv.nativeForegroundColor = theme.fg
+            tv.caretColor = theme.cursor
+        }
+        for (_, tv) in workspaceState.splitTerminalViews {
             tv.nativeBackgroundColor = theme.bg
             tv.nativeForegroundColor = theme.fg
             tv.caretColor = theme.cursor
@@ -264,8 +292,11 @@ struct TerminalPanel: View {
     }
 
     private func applyFontSize(_ size: CGFloat) {
-        currentFontSize = size
-        for (_, tv) in terminalViews {
+        workspaceState.currentFontSize = size
+        for (_, tv) in workspaceState.terminalViews {
+            tv.font = makeTerminalFont(size: size)
+        }
+        for (_, tv) in workspaceState.splitTerminalViews {
             tv.font = makeTerminalFont(size: size)
         }
     }
@@ -274,7 +305,7 @@ struct TerminalPanel: View {
     private func paneHeader(_ pane: PaneID) -> some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(focusedPane == pane ? Color.green : Color.gray.opacity(0.3))
+                .fill(workspaceState.focusedPane == pane ? Color.green : Color.gray.opacity(0.3))
                 .frame(width: 6, height: 6)
             Text(pane == .top ? "Haut" : "Bas")
                 .font(.system(size: 9))
@@ -290,52 +321,71 @@ struct TerminalPanel: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
-        .background(focusedPane == pane ? Color.accentColor.opacity(0.08) : Color.clear)
-        .onTapGesture { focusedPane = pane }
+        .background(workspaceState.focusedPane == pane ? Color.accentColor.opacity(0.08) : Color.clear)
+        .onTapGesture { workspaceState.focusedPane = pane }
     }
 
     private func closePane(_ pane: PaneID) {
         if pane == .bottom {
-            isSplit = false
-        } else if pane == .top && isSplit {
+            for terminal in workspaceState.splitTerminalViews.values {
+                if let terminal = terminal as? FocusAwareLocalProcessTerminalView {
+                    ChildProcessRegistry.shared.untrack(terminalView: terminal)
+                    terminal.prepareForRemoval()
+                }
+            }
+            workspaceState.splitTerminalViews = [:]
+            workspaceState.splitTabs = [TerminalTab()]
+            workspaceState.isSplit = false
+        } else if pane == .top && workspaceState.isSplit {
             // Close top: move bottom to top
-            tabs = splitTabs
-            terminalViews = splitTerminalViews
-            splitTabs = [TerminalTab()]
-            splitTerminalViews = [:]
-            selectedTabID = tabs.first?.id
-            isSplit = false
+            for terminal in workspaceState.terminalViews.values {
+                if let terminal = terminal as? FocusAwareLocalProcessTerminalView {
+                    ChildProcessRegistry.shared.untrack(terminalView: terminal)
+                    terminal.prepareForRemoval()
+                }
+            }
+            workspaceState.tabs = workspaceState.splitTabs
+            workspaceState.terminalViews = workspaceState.splitTerminalViews
+            workspaceState.splitTabs = [TerminalTab()]
+            workspaceState.splitTerminalViews = [:]
+            workspaceState.selectedTabID = workspaceState.tabs.first?.id
+            workspaceState.isSplit = false
         }
-        focusedPane = .top
+        workspaceState.focusedPane = .top
     }
 
     private func addTab() {
         let tab = TerminalTab()
-        tabs.append(tab)
-        selectedTabID = tab.id
+        workspaceState.tabs.append(tab)
+        workspaceState.selectedTabID = tab.id
     }
 
     private func closeTab(_ tab: TerminalTab) {
-        guard tabs.count > 1 else { return }
-        if let index = tabs.firstIndex(where: { $0.id == tab.id }) {
-            tabs.remove(at: index)
-            terminalViews.removeValue(forKey: tab.id)
-            if selectedTabID == tab.id {
-                selectedTabID = tabs[max(0, index - 1)].id
+        guard workspaceState.tabs.count > 1 else { return }
+        if let index = workspaceState.tabs.firstIndex(where: { $0.id == tab.id }) {
+            workspaceState.tabs.remove(at: index)
+            if let terminal = workspaceState.terminalViews.removeValue(forKey: tab.id) {
+                if let terminal = terminal as? FocusAwareLocalProcessTerminalView {
+                    ChildProcessRegistry.shared.untrack(terminalView: terminal)
+                    terminal.prepareForRemoval()
+                }
+            }
+            if workspaceState.selectedTabID == tab.id {
+                workspaceState.selectedTabID = workspaceState.tabs[max(0, index - 1)].id
             }
         }
     }
 
     private func focusVisibleTerminal() {
-        if focusedPane == .bottom,
-           isSplit,
-           let bottomTabID = splitTabs.first?.id,
-           let bottomTerminal = splitTerminalViews[bottomTabID] as? FocusAwareLocalProcessTerminalView {
+        if workspaceState.focusedPane == .bottom,
+           workspaceState.isSplit,
+           let bottomTabID = workspaceState.splitTabs.first?.id,
+           let bottomTerminal = workspaceState.splitTerminalViews[bottomTabID] as? FocusAwareLocalProcessTerminalView {
             bottomTerminal.activateInputFocus()
             return
         }
 
-        if let topTerminal = terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
+        if let topTerminal = workspaceState.terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
             topTerminal.activateInputFocus()
         }
     }
@@ -343,16 +393,16 @@ struct TerminalPanel: View {
     private func sendPromptToFocusedTerminal(_ prompt: String) {
         let payload = prompt.hasSuffix("\n") ? prompt : prompt + "\n"
 
-        if focusedPane == .bottom,
-           isSplit,
-           let bottomTabID = splitTabs.first?.id,
-           let bottomTerminal = splitTerminalViews[bottomTabID] as? FocusAwareLocalProcessTerminalView {
+        if workspaceState.focusedPane == .bottom,
+           workspaceState.isSplit,
+           let bottomTabID = workspaceState.splitTabs.first?.id,
+           let bottomTerminal = workspaceState.splitTerminalViews[bottomTabID] as? FocusAwareLocalProcessTerminalView {
             bottomTerminal.activateInputFocus()
             bottomTerminal.send(txt: payload)
             return
         }
 
-        if let topTerminal = terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
+        if let topTerminal = workspaceState.terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
             topTerminal.activateInputFocus()
             topTerminal.send(txt: payload)
         }
@@ -369,6 +419,17 @@ struct TerminalViewWrapper: NSViewRepresentable {
     let theme: (name: String, bg: NSColor, fg: NSColor, cursor: NSColor)
 
     func makeNSView(context: Context) -> FocusAwareLocalProcessTerminalView {
+        if let existing = terminalViews[tabID] as? FocusAwareLocalProcessTerminalView {
+            existing.font = makeTerminalFont(size: fontSize)
+            existing.nativeBackgroundColor = theme.bg
+            existing.nativeForegroundColor = theme.fg
+            existing.caretColor = theme.cursor
+            existing.shouldCaptureFocusFromClicks = isActive
+            existing.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            existing.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            return existing
+        }
+
         let tv = FocusAwareLocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -399,11 +460,14 @@ struct TerminalViewWrapper: NSViewRepresentable {
 
     func updateNSView(_ nsView: FocusAwareLocalProcessTerminalView, context: Context) {
         nsView.shouldCaptureFocusFromClicks = isActive
+        nsView.font = makeTerminalFont(size: fontSize)
+        nsView.nativeBackgroundColor = theme.bg
+        nsView.nativeForegroundColor = theme.fg
+        nsView.caretColor = theme.cursor
     }
 
     static func dismantleNSView(_ nsView: FocusAwareLocalProcessTerminalView, coordinator: ()) {
-        nsView.prepareForRemoval()
-        ChildProcessRegistry.shared.untrack(terminalView: nsView)
+        nsView.detachFromSwiftUIHierarchy()
     }
 
     private func enableMetalWhenReady(for tv: FocusAwareLocalProcessTerminalView, remainingAttempts: Int = 40) {
@@ -554,6 +618,10 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
     func prepareForRemoval() {
         removeEventMonitors()
         terminate()
+    }
+
+    func detachFromSwiftUIHierarchy() {
+        removeEventMonitors()
     }
 
     private func installClickMonitorIfNeeded() {

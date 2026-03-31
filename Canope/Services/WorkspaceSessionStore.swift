@@ -1,6 +1,23 @@
 import Foundation
 import PDFKit
 
+enum LaTeXPanelArrangement: String, Codable, CaseIterable, Equatable {
+    case editorPDFTerminal
+    case terminalEditorPDF
+    case pdfEditorTerminal
+
+    var title: String {
+        switch self {
+        case .editorPDFTerminal:
+            return "TeX | PDF | Terminal"
+        case .terminalEditorPDF:
+            return "Terminal | TeX | PDF"
+        case .pdfEditorTerminal:
+            return "PDF | TeX | Terminal"
+        }
+    }
+}
+
 struct MainWindowWorkspaceState: Codable, Equatable {
     enum SavedTab: Codable, Hashable {
         case library
@@ -95,11 +112,82 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var showPDFPreview: Bool
     var showErrors: Bool
     var splitLayout: String
+    var panelArrangement: LaTeXPanelArrangement
     var editorFontSize: Double
     var editorTheme: Int
     var referencePaperIDs: [UUID]
     var selectedReferencePaperID: UUID?
     var layoutBeforeReference: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case showSidebar
+        case selectedSidebarSection
+        case showPDFPreview
+        case showErrors
+        case splitLayout
+        case panelArrangement
+        case editorFontSize
+        case editorTheme
+        case referencePaperIDs
+        case selectedReferencePaperID
+        case layoutBeforeReference
+    }
+
+    init(
+        showSidebar: Bool,
+        selectedSidebarSection: String,
+        showPDFPreview: Bool,
+        showErrors: Bool,
+        splitLayout: String,
+        panelArrangement: LaTeXPanelArrangement,
+        editorFontSize: Double,
+        editorTheme: Int,
+        referencePaperIDs: [UUID],
+        selectedReferencePaperID: UUID?,
+        layoutBeforeReference: String?
+    ) {
+        self.showSidebar = showSidebar
+        self.selectedSidebarSection = selectedSidebarSection
+        self.showPDFPreview = showPDFPreview
+        self.showErrors = showErrors
+        self.splitLayout = splitLayout
+        self.panelArrangement = panelArrangement
+        self.editorFontSize = editorFontSize
+        self.editorTheme = editorTheme
+        self.referencePaperIDs = referencePaperIDs
+        self.selectedReferencePaperID = selectedReferencePaperID
+        self.layoutBeforeReference = layoutBeforeReference
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        showSidebar = try container.decode(Bool.self, forKey: .showSidebar)
+        selectedSidebarSection = try container.decode(String.self, forKey: .selectedSidebarSection)
+        showPDFPreview = try container.decode(Bool.self, forKey: .showPDFPreview)
+        showErrors = try container.decode(Bool.self, forKey: .showErrors)
+        splitLayout = try container.decode(String.self, forKey: .splitLayout)
+        panelArrangement = try container.decodeIfPresent(LaTeXPanelArrangement.self, forKey: .panelArrangement) ?? .editorPDFTerminal
+        editorFontSize = try container.decode(Double.self, forKey: .editorFontSize)
+        editorTheme = try container.decode(Int.self, forKey: .editorTheme)
+        referencePaperIDs = try container.decode([UUID].self, forKey: .referencePaperIDs)
+        selectedReferencePaperID = try container.decodeIfPresent(UUID.self, forKey: .selectedReferencePaperID)
+        layoutBeforeReference = try container.decodeIfPresent(String.self, forKey: .layoutBeforeReference)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(showSidebar, forKey: .showSidebar)
+        try container.encode(selectedSidebarSection, forKey: .selectedSidebarSection)
+        try container.encode(showPDFPreview, forKey: .showPDFPreview)
+        try container.encode(showErrors, forKey: .showErrors)
+        try container.encode(splitLayout, forKey: .splitLayout)
+        try container.encode(panelArrangement, forKey: .panelArrangement)
+        try container.encode(editorFontSize, forKey: .editorFontSize)
+        try container.encode(editorTheme, forKey: .editorTheme)
+        try container.encode(referencePaperIDs, forKey: .referencePaperIDs)
+        try container.encodeIfPresent(selectedReferencePaperID, forKey: .selectedReferencePaperID)
+        try container.encodeIfPresent(layoutBeforeReference, forKey: .layoutBeforeReference)
+    }
 }
 
 @MainActor
@@ -109,6 +197,7 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var showPDFPreview = false
     @Published var showErrors = false
     @Published var splitLayout = "editorOnly"
+    @Published var panelArrangement: LaTeXPanelArrangement = .editorPDFTerminal
     @Published var editorFontSize: Double = 14
     @Published var editorTheme = 0
     @Published var referencePaperIDs: [UUID] = []
