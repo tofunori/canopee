@@ -1954,7 +1954,7 @@ struct PDFPreviewView: NSViewRepresentable {
         let clickGesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleClick(_:)))
         clickGesture.numberOfClicksRequired = 1
         pdfView.addGestureRecognizer(clickGesture)
-        context.coordinator.pdfView = pdfView
+        context.coordinator.configureSelectionObservation(for: pdfView)
 
         return pdfView
     }
@@ -1969,7 +1969,7 @@ struct PDFPreviewView: NSViewRepresentable {
             }
         }
         context.coordinator.onInverseSync = onInverseSync
-        context.coordinator.pdfView = pdfView
+        context.coordinator.configureSelectionObservation(for: pdfView)
 
         // Fit to width
         if fitToWidthTrigger != context.coordinator.lastFitTrigger {
@@ -2001,9 +2001,33 @@ struct PDFPreviewView: NSViewRepresentable {
 
     @MainActor
     class Coordinator: NSObject {
+        private static let selectionFileQueue = DispatchQueue(label: "canope.pdf-preview-selection", qos: .utility)
+
         weak var pdfView: PDFView?
+        weak var observedSelectionPDFView: PDFView?
         var onInverseSync: ((SyncTeXInverseResult) -> Void)?
         var lastFitTrigger: Bool = false
+
+        func configureSelectionObservation(for pdfView: PDFView) {
+            self.pdfView = pdfView
+            guard observedSelectionPDFView !== pdfView else { return }
+
+            if let observedSelectionPDFView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: Notification.Name.PDFViewSelectionChanged,
+                    object: observedSelectionPDFView
+                )
+            }
+
+            observedSelectionPDFView = pdfView
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleSelectionChangedNotification(_:)),
+                name: Notification.Name.PDFViewSelectionChanged,
+                object: pdfView
+            )
+        }
 
         @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
             guard let pdfView = pdfView,
@@ -2059,6 +2083,22 @@ struct PDFPreviewView: NSViewRepresentable {
             let offset = wordRange.location - contextStart
 
             return SyncTeXHint(offset: offset, context: context)
+        }
+
+        @objc
+        private func handleSelectionChangedNotification(_ notification: Notification) {
+            guard let pdfView,
+                  let fileURL = pdfView.document?.documentURL else {
+                return
+            }
+
+            let selectedText = pdfView.currentSelection?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let state = ClaudeIDESelectionState.makeSnapshot(selectedText: selectedText, fileURL: fileURL)
+
+            Self.selectionFileQueue.async {
+                CanopeContextFiles.writeIDESelectionState(state)
+                CanopeContextFiles.clearLegacySelectionMirror()
+            }
         }
     }
 }
