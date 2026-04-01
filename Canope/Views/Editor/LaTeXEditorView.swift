@@ -14,12 +14,24 @@ extension Notification.Name {
 }
 
 struct LaTeXEditorView: View {
+    private static let threePaneCoordinateSpace = "LaTeXThreePaneLayout"
+
     private enum SidebarSizing {
         static let minWidth: CGFloat = 160
         static let maxWidth: CGFloat = 320
         static let defaultWidth: CGFloat = 220
         static let activityBarWidth: CGFloat = 44
         static let resizeHandleWidth: CGFloat = 8
+    }
+
+    private enum ThreePaneSizing {
+        static let dividerWidth: CGFloat = 10
+    }
+
+    private enum ThreePaneRole {
+        case terminal
+        case editor
+        case pdf
     }
 
     private struct PendingAnnotation: Identifiable {
@@ -75,6 +87,11 @@ struct LaTeXEditorView: View {
     @State private var selectedEditorRange: NSRange?
     @State private var pendingAnnotation: PendingAnnotation?
     @State private var sidebarResizeStartWidth: CGFloat?
+    @State private var threePaneLeftWidth: CGFloat?
+    @State private var threePaneRightWidth: CGFloat?
+    @State private var threePaneDragStartLeftWidth: CGFloat?
+    @State private var threePaneDragStartRightWidth: CGFloat?
+    @State private var isDraggingThreePaneDivider = false
 
     // PDF pane tabs (compiled + reference articles)
     enum PdfPaneTab: Hashable {
@@ -325,6 +342,8 @@ struct LaTeXEditorView: View {
             refreshSplitGrabAreas()
         }
         .onChange(of: panelArrangement) {
+            threePaneLeftWidth = nil
+            threePaneRightWidth = nil
             refreshSplitGrabAreas()
         }
     }
@@ -333,7 +352,9 @@ struct LaTeXEditorView: View {
 
     @ViewBuilder
     private var workAreaPane: some View {
-        if isActive && showTerminal {
+        if isActive && showTerminal && showPDFPreview && splitLayout == .horizontal {
+            horizontalThreePaneLayout
+        } else if isActive && showTerminal {
             switch panelArrangement {
             case .terminalEditorPDF:
                 HSplitView {
@@ -351,6 +372,189 @@ struct LaTeXEditorView: View {
         } else {
             editorAndPDFPane
         }
+    }
+
+    @ViewBuilder
+    private var horizontalThreePaneLayout: some View {
+        GeometryReader { proxy in
+            let roles = threePaneRoles
+            let totalContentWidth = max(0, proxy.size.width - (ThreePaneSizing.dividerWidth * 2))
+            let widths = resolvedThreePaneWidths(for: roles, totalContentWidth: totalContentWidth)
+
+            HStack(spacing: 0) {
+                threePaneView(for: roles.0)
+                    .frame(width: widths.left)
+
+                threePaneResizeHandle {
+                    guard !isDraggingThreePaneDivider else { return }
+                    NSCursor.resizeLeftRight.set()
+                } onExit: {
+                    guard !isDraggingThreePaneDivider else { return }
+                    NSCursor.arrow.set()
+                } drag: {
+                    AnyGesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.threePaneCoordinateSpace))
+                        .onChanged { value in
+                            if !isDraggingThreePaneDivider {
+                                isDraggingThreePaneDivider = true
+                                NSCursor.resizeLeftRight.set()
+                            }
+                            if threePaneDragStartLeftWidth == nil {
+                                threePaneDragStartLeftWidth = widths.left
+                            }
+                            let startLeft = threePaneDragStartLeftWidth ?? widths.left
+                            let leftMin = paneMinWidth(for: roles.0)
+                            let middleMin = paneMinWidth(for: roles.1)
+                            let maxLeft = max(leftMin, totalContentWidth - widths.right - middleMin)
+                            threePaneLeftWidth = min(max(startLeft + value.translation.width, leftMin), maxLeft)
+                        }
+                        .onEnded { _ in
+                            threePaneDragStartLeftWidth = nil
+                            isDraggingThreePaneDivider = false
+                            NSCursor.arrow.set()
+                        }
+                    )
+                }
+
+                threePaneView(for: roles.1)
+                    .frame(width: widths.middle)
+
+                threePaneResizeHandle {
+                    guard !isDraggingThreePaneDivider else { return }
+                    NSCursor.resizeLeftRight.set()
+                } onExit: {
+                    guard !isDraggingThreePaneDivider else { return }
+                    NSCursor.arrow.set()
+                } drag: {
+                    AnyGesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.threePaneCoordinateSpace))
+                        .onChanged { value in
+                            if !isDraggingThreePaneDivider {
+                                isDraggingThreePaneDivider = true
+                                NSCursor.resizeLeftRight.set()
+                            }
+                            if threePaneDragStartRightWidth == nil {
+                                threePaneDragStartRightWidth = widths.right
+                            }
+                            let startRight = threePaneDragStartRightWidth ?? widths.right
+                            let middleMin = paneMinWidth(for: roles.1)
+                            let rightMin = paneMinWidth(for: roles.2)
+                            let maxRight = max(rightMin, totalContentWidth - widths.left - middleMin)
+                            threePaneRightWidth = min(max(startRight - value.translation.width, rightMin), maxRight)
+                        }
+                        .onEnded { _ in
+                            threePaneDragStartRightWidth = nil
+                            isDraggingThreePaneDivider = false
+                            NSCursor.arrow.set()
+                        }
+                    )
+                }
+
+                threePaneView(for: roles.2)
+                    .frame(width: widths.right)
+            }
+            .coordinateSpace(name: Self.threePaneCoordinateSpace)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+        }
+    }
+
+    private var threePaneRoles: (ThreePaneRole, ThreePaneRole, ThreePaneRole) {
+        switch panelArrangement {
+        case .terminalEditorPDF:
+            return (.terminal, .editor, .pdf)
+        case .editorPDFTerminal:
+            return (.editor, .pdf, .terminal)
+        case .pdfEditorTerminal:
+            return (.pdf, .editor, .terminal)
+        }
+    }
+
+    @ViewBuilder
+    private func threePaneView(for role: ThreePaneRole) -> some View {
+        switch role {
+        case .terminal:
+            embeddedTerminalPane
+        case .editor:
+            editorPane
+        case .pdf:
+            pdfPane
+        }
+    }
+
+    private func paneMinWidth(for role: ThreePaneRole) -> CGFloat {
+        switch role {
+        case .terminal:
+            return 160
+        case .editor:
+            return 160
+        case .pdf:
+            return 180
+        }
+    }
+
+    private func paneIdealWidth(for role: ThreePaneRole) -> CGFloat {
+        switch role {
+        case .terminal:
+            return 320
+        case .editor:
+            return 620
+        case .pdf:
+            return 320
+        }
+    }
+
+    private func resolvedThreePaneWidths(
+        for roles: (ThreePaneRole, ThreePaneRole, ThreePaneRole),
+        totalContentWidth: CGFloat
+    ) -> (left: CGFloat, middle: CGFloat, right: CGFloat) {
+        let leftMin = paneMinWidth(for: roles.0)
+        let middleMin = paneMinWidth(for: roles.1)
+        let rightMin = paneMinWidth(for: roles.2)
+        let minimumTotal = leftMin + middleMin + rightMin
+        let availableWidth = max(totalContentWidth, minimumTotal)
+
+        let seededLeft = threePaneLeftWidth ?? paneIdealWidth(for: roles.0)
+        let seededRight = threePaneRightWidth ?? paneIdealWidth(for: roles.2)
+
+        let leftMaxBeforeRightClamp = max(leftMin, availableWidth - middleMin - rightMin)
+        let left = min(max(seededLeft, leftMin), leftMaxBeforeRightClamp)
+
+        let rightMaxBeforeLeftClamp = max(rightMin, availableWidth - left - middleMin)
+        let right = min(max(seededRight, rightMin), rightMaxBeforeLeftClamp)
+
+        let leftMax = max(leftMin, availableWidth - right - middleMin)
+        let clampedLeft = min(left, leftMax)
+        let rightMax = max(rightMin, availableWidth - clampedLeft - middleMin)
+        let clampedRight = min(right, rightMax)
+        let middle = max(middleMin, availableWidth - clampedLeft - clampedRight)
+
+        return (clampedLeft, middle, clampedRight)
+    }
+
+    private func threePaneResizeHandle(
+        onEnter: @escaping () -> Void,
+        onExit: @escaping () -> Void,
+        drag: @escaping () -> AnyGesture<DragGesture.Value>
+    ) -> some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: ThreePaneSizing.dividerWidth)
+            .contentShape(Rectangle())
+            .overlay {
+                Rectangle()
+                    .fill(Color.white.opacity(0.06))
+                    .frame(width: 1)
+            }
+            .onHover { hovering in
+                if hovering {
+                    onEnter()
+                } else {
+                    onExit()
+                }
+            }
+            .gesture(drag())
     }
 
     @ViewBuilder
