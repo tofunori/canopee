@@ -14,7 +14,10 @@ targets:
   Canope:
     type: application
     platform: macOS
-    sources: [Canope]
+    sources:
+      - Canope
+      - path: scripts/canope_claude_ide_bridge.py
+        buildPhase: resources
     dependencies:
       - package: SwiftTerm
     scheme:

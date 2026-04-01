@@ -447,8 +447,9 @@ struct TerminalViewWrapper: NSViewRepresentable {
 
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
-        env.append("CANOPE_SELECTION=/tmp/canope_selection.txt")
-        env.append("CANOPE_PAPER=/tmp/canope_paper.txt")
+        ClaudeIDEBridgeService.shared.startIfNeeded()
+        env = ClaudeCLIWrapperService.shared.apply(to: env, shellPath: shell)
+        env.append(contentsOf: CanopeContextFiles.terminalEnvironment)
         tv.startProcess(executable: shell, args: ["-l"], environment: env, execName: shell)
         tv.schedulePreferredCursorWarmup()
         ChildProcessRegistry.shared.track(terminalView: tv)

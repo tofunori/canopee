@@ -188,9 +188,11 @@ struct PDFReaderView: View {
 
     private func writePaperContext() {
         guard document != nil, let paper else { return }
-        // Clear selection when switching papers
-        try? "(no text currently selected)".write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
         selectedText = ""
+        CanopeContextFiles.writeIDESelectionState(
+            ClaudeIDESelectionState.makeSnapshot(selectedText: "", fileURL: paper.fileURL)
+        )
+        CanopeContextFiles.clearLegacySelectionMirror()
 
         let paperURL = paper.fileURL
         let title = paper.title

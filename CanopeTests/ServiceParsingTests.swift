@@ -92,4 +92,124 @@ final class ServiceParsingTests: XCTestCase {
 
         XCTAssertEqual(located, scriptURL.path)
     }
+
+    func testClaudeIDESelectionStateTracksZeroBasedLineAndCharacterOffsets() {
+        let text = "alpha\nbeta\ngamma"
+        let state = ClaudeIDESelectionState.make(
+            text: text,
+            fileURL: URL(fileURLWithPath: "/tmp/main.tex"),
+            range: NSRange(location: 2, length: 7)
+        )
+
+        XCTAssertEqual(state?.filePath, "/tmp/main.tex")
+        XCTAssertEqual(state?.text, "pha\nbet")
+        XCTAssertEqual(state?.selection.start.line, 0)
+        XCTAssertEqual(state?.selection.start.character, 2)
+        XCTAssertEqual(state?.selection.end.line, 1)
+        XCTAssertEqual(state?.selection.end.character, 3)
+    }
+
+    func testClaudeIDESelectionStatePreservesCollapsedSelectionsForCursorUpdates() {
+        let text = "alpha\nbeta"
+        let state = ClaudeIDESelectionState.make(
+            text: text,
+            fileURL: URL(fileURLWithPath: "/tmp/main.tex"),
+            range: NSRange(location: 6, length: 0)
+        )
+
+        XCTAssertEqual(state?.text, "")
+        XCTAssertEqual(state?.selection.start.line, 1)
+        XCTAssertEqual(state?.selection.start.character, 0)
+        XCTAssertEqual(state?.selection.end.line, 1)
+        XCTAssertEqual(state?.selection.end.character, 0)
+    }
+
+    func testClaudeIDESelectionStateSnapshotUsesSelectionTextAsStandaloneBuffer() {
+        let state = ClaudeIDESelectionState.makeSnapshot(
+            selectedText: "alpha\nbeta",
+            fileURL: URL(fileURLWithPath: "/tmp/paper.pdf")
+        )
+
+        XCTAssertEqual(state.filePath, "/tmp/paper.pdf")
+        XCTAssertEqual(state.text, "alpha\nbeta")
+        XCTAssertEqual(state.selection.start.line, 0)
+        XCTAssertEqual(state.selection.start.character, 0)
+        XCTAssertEqual(state.selection.end.line, 1)
+        XCTAssertEqual(state.selection.end.character, 4)
+    }
+
+    func testClaudeCLIWrapperServicePrependsWrapperDirectoryToPATHOnce() {
+        let environment = [
+            "TERM=xterm-256color",
+            "PATH=/usr/bin:/bin:/usr/bin",
+        ]
+
+        let updated = ClaudeCLIWrapperService.prependingToPATH("/tmp/canope-cli-bin", in: environment)
+        let path = updated.first(where: { $0.hasPrefix("PATH=") })
+
+        XCTAssertEqual(path, "PATH=/tmp/canope-cli-bin:/usr/bin:/bin")
+        XCTAssertEqual(updated.filter { $0.hasPrefix("PATH=") }.count, 1)
+    }
+
+    func testClaudeCLIWrapperScriptInjectsIDEFlagsForInteractiveSessions() {
+        let script = ClaudeCLIWrapperService.wrapperScript(realClaudePath: "/Users/tofunori/.local/bin/claude")
+
+        XCTAssertTrue(script.contains("exec \"$REAL_CLAUDE\" --append-system-prompt \"$APPEND_SYSTEM_PROMPT\" --mcp-config \"$MCP_CONFIG\" --ide \"$@\""))
+        XCTAssertTrue(script.contains("exec \"$REAL_CLAUDE\" --append-system-prompt \"$APPEND_SYSTEM_PROMPT\" --mcp-config \"$MCP_CONFIG\" \"$@\""))
+        XCTAssertTrue(script.contains("auth|doctor|install|mcp|plugin|plugins|setup-token|update|upgrade|agents|auto-mode"))
+        XCTAssertTrue(script.contains("--mcp-config=*"))
+        XCTAssertTrue(script.contains("--append-system-prompt=*"))
+        XCTAssertTrue(script.contains("/tmp/canopee_paper.txt"))
+    }
+
+    func testClaudeCLIWrapperScriptIncludesCanopeSessionPrompt() {
+        let prompt = ClaudeCLIWrapperService.canopeSessionSystemPrompt()
+
+        XCTAssertTrue(prompt.contains("sélection IDE"))
+        XCTAssertTrue(prompt.contains("/tmp/canopee_paper.txt"))
+        XCTAssertTrue(prompt.contains("pdf-selection"))
+    }
+
+    func testClaudeCLIWrapperZshBootstrapRCReappliesWrapperAfterUserZshrc() {
+        let script = ClaudeCLIWrapperService.zshBootstrapRC(
+            sourceDirectory: "/Users/tofunori",
+            wrapperDirectory: "/tmp/canope-cli-bin",
+            wrapperPath: "/tmp/canope-cli-bin/claude",
+            mcpConfigPath: "/tmp/canope_claude_ide_mcp.json",
+            alternateMcpConfigPath: "/tmp/canopee_claude_ide_mcp.json",
+            bridgeURL: "http://127.0.0.1:8765/sse"
+        )
+
+        XCTAssertTrue(script.contains("source '/Users/tofunori/.zshrc'"))
+        XCTAssertTrue(script.contains("export PATH='/tmp/canope-cli-bin':$PATH"))
+        XCTAssertTrue(script.contains("alias claude='/tmp/canope-cli-bin/claude'"))
+        XCTAssertTrue(script.contains("export CANOPE_CLAUDE_IDE_MCP_CONFIG='/tmp/canope_claude_ide_mcp.json'"))
+        XCTAssertTrue(script.contains("hash -r 2>/dev/null || rehash 2>/dev/null || true"))
+    }
+
+    func testClaudeCLIWrapperApplyKeepsWrapperVisibleInsideLoginZsh() throws {
+        let environment = ClaudeCLIWrapperService.shared.apply(
+            to: ["PATH=/usr/bin:/bin"],
+            shellPath: "/bin/zsh"
+        )
+        let environmentDictionary = Dictionary(
+            uniqueKeysWithValues: environment.compactMap { entry -> (String, String)? in
+                let parts = entry.split(separator: "=", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { return nil }
+                return (parts[0], parts[1])
+            }
+        )
+
+        XCTAssertEqual(environmentDictionary["ZDOTDIR"], "/tmp/canope-zdotdir")
+
+        let result = try ProcessRunner.run(
+            executable: "/bin/zsh",
+            args: ["-lic", "type claude"],
+            environment: environmentDictionary,
+            timeout: 5
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("/tmp/canope-cli-bin/claude"))
+    }
 }

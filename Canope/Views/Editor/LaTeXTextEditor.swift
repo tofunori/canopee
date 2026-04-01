@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct LaTeXTextEditor: NSViewRepresentable {
+    let fileURL: URL
     @Binding var text: String
     let errorLines: Set<Int>
     var fontSize: CGFloat = 14
@@ -277,10 +278,15 @@ struct LaTeXTextEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = textView else { return }
             let range = textView.selectedRange()
+            if let state = ClaudeIDESelectionState.make(
+                text: textView.string,
+                fileURL: parent.fileURL,
+                range: range
+            ) {
+                CanopeContextFiles.writeIDESelectionState(state)
+            }
+            CanopeContextFiles.clearLegacySelectionMirror()
             if range.length > 0 {
-                let selected = (textView.string as NSString).substring(with: range)
-                let content = "[Source: LaTeX editor]\n\(selected)"
-                try? content.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
                 parent.onSelectionChange(range)
             } else {
                 parent.onSelectionChange(nil)
@@ -481,7 +487,8 @@ struct LaTeXTextEditor: NSViewRepresentable {
             }
 
             for hunk in changeHunks where hunk.kind == .modifiedOrAdded {
-                guard let previewLayout = textView.deletedPreviewLayout(for: hunk) else { continue }
+                guard textView.shouldRenderInlineDeletedPreview(for: hunk),
+                      let previewLayout = textView.deletedPreviewLayout(for: hunk) else { continue }
                 let kernRange = textView.deletedPreviewKerningRange(
                     forAnchorLocation: previewLayout.anchorLocation,
                     stringLength: stringLength
@@ -516,7 +523,7 @@ private struct ChangeHunk: Identifiable, Equatable {
         let newLines = TrackedLine.make(from: currentText)
         let oldTexts = oldLines.map(\.text)
         let newTexts = newLines.map(\.text)
-        let segments = diffSegments(old: oldTexts, new: newTexts)
+        let segments = DiffEngine.lineSegments(old: oldTexts, new: newTexts)
         let oldNSString = baselineText as NSString
         let newNSString = currentText as NSString
 
@@ -540,84 +547,6 @@ private struct ChangeHunk: Identifiable, Equatable {
                 anchorLocation: anchorLocation
             )
         }
-    }
-
-    private struct DiffSegment {
-        let oldRange: Range<Int>
-        let newRange: Range<Int>
-    }
-
-    private static func diffSegments(old: [String], new: [String]) -> [DiffSegment] {
-        let dp = lcsMatrix(old: old, new: new)
-        var segments: [DiffSegment] = []
-        var i = 0
-        var j = 0
-        var oldStart: Int?
-        var newStart: Int?
-
-        func flush(upToOld oldEnd: Int, newEnd: Int) {
-            guard let oldStart, let newStart else { return }
-            segments.append(DiffSegment(oldRange: oldStart..<oldEnd, newRange: newStart..<newEnd))
-            selfReset()
-        }
-
-        func selfReset() {
-            oldStart = nil
-            newStart = nil
-        }
-
-        while i < old.count || j < new.count {
-            if i < old.count, j < new.count, old[i] == new[j] {
-                flush(upToOld: i, newEnd: j)
-                i += 1
-                j += 1
-            } else if j < new.count, i < old.count {
-                if oldStart == nil {
-                    oldStart = i
-                    newStart = j
-                }
-                if dp[i][j + 1] >= dp[i + 1][j] {
-                    j += 1
-                } else {
-                    i += 1
-                }
-            } else if j < new.count {
-                if oldStart == nil {
-                    oldStart = i
-                    newStart = j
-                }
-                j += 1
-            } else if i < old.count {
-                if oldStart == nil {
-                    oldStart = i
-                    newStart = j
-                }
-                i += 1
-            }
-        }
-
-        flush(upToOld: i, newEnd: j)
-        return segments
-    }
-
-    private static func lcsMatrix(old: [String], new: [String]) -> [[Int]] {
-        let oldCount = old.count
-        let newCount = new.count
-        var dp = Array(repeating: Array(repeating: 0, count: newCount + 1), count: oldCount + 1)
-
-        guard oldCount > 0, newCount > 0 else { return dp }
-
-        for i in stride(from: oldCount - 1, through: 0, by: -1) {
-            for j in stride(from: newCount - 1, through: 0, by: -1) {
-                if old[i] == new[j] {
-                    dp[i][j] = dp[i + 1][j + 1] + 1
-                } else {
-                    dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
-                }
-            }
-        }
-
-        return dp
     }
 }
 
@@ -745,7 +674,13 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
     private var selectedMarkerID: UUID?
     private var activeRevealRange: NSRange?
     private var revealClearWorkItem: DispatchWorkItem?
-    private let deletedPreviewSpacing: CGFloat = 0
+    private var deletedPreviewLineHeight: CGFloat {
+        let previewFont = font ?? NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let lineHeight = previewFont.ascender - previewFont.descender + 2
+        return max(18, ceil(lineHeight))
+    }
+
+    private var deletedPreviewVerticalPadding: CGFloat { 4 }
 
     var persistentSelectionBackgroundColor: NSColor {
         get {
@@ -991,8 +926,12 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
                 )
                 NSBezierPath(roundedRect: accentRect, xRadius: 1.5, yRadius: 1.5).fill()
 
-                if let previewRect = deletedPreviewRect(for: hunk, using: layoutManager, textOrigin: textOrigin) {
-                    drawDeletedPreview(for: hunk, in: previewRect)
+                if shouldRenderInlineDeletedPreview(for: hunk),
+                   let previewRect = deletedPreviewRect(for: hunk, using: layoutManager, textOrigin: textOrigin) {
+                    drawDeletedPreview(for: hunk, in: previewRect, truncates: true)
+                } else if shouldRenderBlockDeletedPreview(for: hunk),
+                          let previewRect = blockDeletedPreviewRect(for: hunk, using: layoutManager, textOrigin: textOrigin) {
+                    drawDeletedPreview(for: hunk, in: previewRect, truncates: false)
                 }
             }
         }
@@ -1014,14 +953,24 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         label.draw(with: textRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
-    private func drawDeletedPreview(for hunk: ChangeHunk, in rect: NSRect) {
-        guard let previewLayout = deletedPreviewLayout(for: hunk) else { return }
+    private func drawDeletedPreview(for hunk: ChangeHunk, in rect: NSRect, truncates: Bool) {
+        let wraps = !truncates
+        guard let previewLayout = deletedPreviewLayout(
+            for: hunk,
+            maxWidth: wraps ? rect.width : nil,
+            wraps: wraps
+        ) else { return }
         let label = previewLayout.label
-        label.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        var options: NSString.DrawingOptions = [.usesLineFragmentOrigin]
+        if truncates {
+            options.insert(.truncatesLastVisibleLine)
+        }
+        label.draw(with: rect, options: options)
     }
 
     private func deletedPreviewRect(for hunk: ChangeHunk, using layoutManager: NSLayoutManager, textOrigin: NSPoint) -> NSRect? {
         guard hunk.kind == .modifiedOrAdded,
+              shouldRenderInlineDeletedPreview(for: hunk),
               let previewLayout = deletedPreviewLayout(for: hunk) else { return nil }
 
         let anchorRect = changedInlineRect(for: hunk, using: layoutManager, textOrigin: textOrigin)
@@ -1030,17 +979,46 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
 
         let reservedGap: CGFloat = 4
         let minimumX = textOrigin.x + 2
-        let drawX = max(minimumX, anchorRect.minX - previewLayout.size.width - reservedGap)
+        let drawX = max(minimumX, anchorRect.minX - previewLayout.width - reservedGap)
         let lineAlignedY = anchorRect.minY + floor((anchorRect.height - previewLayout.size.height) / 2)
         return NSRect(
             x: drawX,
             y: max(0, lineAlignedY),
-            width: previewLayout.size.width,
+            width: previewLayout.width,
             height: previewLayout.size.height
         )
     }
 
-    fileprivate func deletedPreviewLayout(for hunk: ChangeHunk) -> (label: NSAttributedString, size: NSSize, width: CGFloat, anchorLocation: Int)? {
+    private func blockDeletedPreviewRect(for hunk: ChangeHunk, using layoutManager: NSLayoutManager, textOrigin: NSPoint) -> NSRect? {
+        guard hunk.kind == .modifiedOrAdded,
+              shouldRenderBlockDeletedPreview(for: hunk) else { return nil }
+
+        let anchorRect = changedInlineRect(for: hunk, using: layoutManager, textOrigin: textOrigin)
+            ?? highlightRect(for: hunk, using: layoutManager, textOrigin: textOrigin)
+        guard let anchorRect else { return nil }
+
+        let availableWidth = max(56, bounds.width - gutterWidth - 18)
+        guard let previewLayout = deletedPreviewLayout(
+            for: hunk,
+            maxWidth: availableWidth,
+            wraps: true
+        ) else { return nil }
+        let reservedHeight = blockDeletedPreviewReservedHeight(for: hunk, availableWidth: availableWidth)
+        let lineAlignedY = anchorRect.minY - reservedHeight + deletedPreviewVerticalPadding
+
+        return NSRect(
+            x: textOrigin.x + 4,
+            y: max(0, lineAlignedY),
+            width: previewLayout.width,
+            height: previewLayout.size.height
+        )
+    }
+
+    fileprivate func deletedPreviewLayout(
+        for hunk: ChangeHunk,
+        maxWidth: CGFloat? = nil,
+        wraps: Bool = false
+    ) -> (label: NSAttributedString, size: NSSize, width: CGFloat, anchorLocation: Int)? {
         let snippet = deletedPreviewText(for: hunk)
         guard !snippet.isEmpty else { return nil }
 
@@ -1056,7 +1034,7 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         let anchorLocation = min(safeRange.location + diff.newStart, currentNSString.length)
 
         let style = NSMutableParagraphStyle()
-        style.lineBreakMode = .byClipping
+        style.lineBreakMode = wraps ? .byWordWrapping : .byClipping
         let previewFont = font ?? NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         let previewColor = NSColor.systemRed.withAlphaComponent(0.96)
         let attributes: [NSAttributedString.Key: Any] = [
@@ -1070,16 +1048,29 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         ]
 
         let label = NSAttributedString(string: snippet, attributes: attributes)
+        let measuredWidth = maxWidth ?? CGFloat.greatestFiniteMagnitude
         let rawSize = label.boundingRect(
-            with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: 18),
+            with: NSSize(width: measuredWidth, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         ).integral.size
+        let drawWidth = maxWidth ?? rawSize.width
 
         return (
             label: label,
-            size: rawSize,
-            width: rawSize.width,
+            size: NSSize(width: drawWidth, height: rawSize.height),
+            width: drawWidth,
             anchorLocation: anchorLocation
+        )
+    }
+
+    private func blockDeletedPreviewReservedHeight(for hunk: ChangeHunk, availableWidth: CGFloat) -> CGFloat {
+        guard let previewLayout = deletedPreviewLayout(for: hunk, maxWidth: availableWidth, wraps: true) else {
+            return deletedPreviewLineHeight
+        }
+
+        return max(
+            deletedPreviewLineHeight,
+            ceil(previewLayout.size.height) + deletedPreviewVerticalPadding * 2
         )
     }
 
@@ -1099,8 +1090,62 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
 
     private func deletedPreviewLineStarts() -> Set<Int> {
         Set(
-            changeHunks.compactMap { deletedPreviewLineStart(for: $0) }
+            changeHunks.compactMap { hunk in
+                guard shouldRenderBlockDeletedPreview(for: hunk) else { return nil }
+                return deletedPreviewLineStart(for: hunk)
+            }
         )
+    }
+
+    private func blockDeletedPreviewHunk(forLineStart lineStart: Int) -> ChangeHunk? {
+        changeHunks.first { hunk in
+            guard shouldRenderBlockDeletedPreview(for: hunk) else { return false }
+            return deletedPreviewLineStart(for: hunk) == lineStart
+        }
+    }
+
+    fileprivate func shouldRenderInlineDeletedPreview(for hunk: ChangeHunk) -> Bool {
+        guard hunk.kind == .modifiedOrAdded else { return false }
+        guard !hunk.replacementText.isEmpty else { return false }
+
+        let deletedSnippet = deletedPreviewText(for: hunk)
+        guard !deletedSnippet.isEmpty else { return false }
+        guard !deletedSnippet.contains("\\n") else { return false }
+        guard deletedSnippet.count <= 28 else { return false }
+
+        let currentNSString = string as NSString
+        guard currentNSString.length > 0 else { return false }
+
+        if let changedRange = changedCharacterRange(for: hunk) {
+            let safeChangedRange = NSIntersectionRange(
+                changedRange,
+                NSRange(location: 0, length: currentNSString.length)
+            )
+            guard safeChangedRange.length > 0 else { return false }
+            let changedSegment = currentNSString.substring(with: safeChangedRange)
+            guard !changedSegment.contains("\n") else { return false }
+            guard safeChangedRange.length <= 40 else { return false }
+            guard !changeSpansMultipleVisualLines(for: safeChangedRange) else { return false }
+            return true
+        }
+
+        let safeRange = NSIntersectionRange(
+            hunk.currentRange,
+            NSRange(location: 0, length: currentNSString.length)
+        )
+        guard safeRange.location != NSNotFound else { return false }
+        let newSegment = safeRange.length > 0 ? currentNSString.substring(with: safeRange) : ""
+        guard !newSegment.contains("\n") else { return false }
+        guard safeRange.length <= 40 else { return false }
+        guard !changeSpansMultipleVisualLines(for: safeRange) else { return false }
+
+        return true
+    }
+
+    fileprivate func shouldRenderBlockDeletedPreview(for hunk: ChangeHunk) -> Bool {
+        guard hunk.kind == .modifiedOrAdded else { return false }
+        guard !shouldRenderInlineDeletedPreview(for: hunk) else { return false }
+        return !deletedPreviewText(for: hunk).isEmpty
     }
 
     private func deletedPreviewLineStart(for hunk: ChangeHunk) -> Int? {
@@ -1128,6 +1173,47 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         guard diff.newLength > 0 else { return nil }
 
         return NSRange(location: safeRange.location + diff.newStart, length: diff.newLength)
+    }
+
+    private func changeSpansMultipleVisualLines(for characterRange: NSRange) -> Bool {
+        guard let layoutManager, let textContainer else { return true }
+
+        let currentNSString = string as NSString
+        let safeRange = NSIntersectionRange(
+            characterRange,
+            NSRange(location: 0, length: currentNSString.length)
+        )
+        guard safeRange.location != NSNotFound else { return true }
+
+        layoutManager.ensureLayout(for: textContainer)
+
+        let glyphRange: NSRange
+        if safeRange.length > 0 {
+            glyphRange = layoutManager.glyphRange(forCharacterRange: safeRange, actualCharacterRange: nil)
+        } else {
+            guard layoutManager.numberOfGlyphs > 0 else { return false }
+            let anchorLocation = min(safeRange.location, max(0, currentNSString.length - 1))
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: anchorLocation)
+            glyphRange = NSRange(location: glyphIndex, length: 1)
+        }
+
+        guard glyphRange.length > 0 else { return false }
+
+        let firstGlyph = glyphRange.location
+        let lastGlyph = max(glyphRange.location, NSMaxRange(glyphRange) - 1)
+
+        let firstRect = layoutManager.lineFragmentUsedRect(
+            forGlyphAt: firstGlyph,
+            effectiveRange: nil,
+            withoutAdditionalLayout: false
+        )
+        let lastRect = layoutManager.lineFragmentUsedRect(
+            forGlyphAt: lastGlyph,
+            effectiveRange: nil,
+            withoutAdditionalLayout: false
+        )
+
+        return abs(firstRect.minY - lastRect.minY) > 0.5
     }
 
     private func changedInlineRect(for hunk: ChangeHunk, using layoutManager: NSLayoutManager, textOrigin: NSPoint) -> NSRect? {
@@ -1353,6 +1439,10 @@ extension ChangeTrackingTextView: @preconcurrency NSLayoutManagerDelegate {
     ) -> CGFloat {
         let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
         guard deletedPreviewLineStarts().contains(charIndex) else { return 0 }
-        return deletedPreviewSpacing
+        guard let textView = layoutManager.firstTextView as? ChangeTrackingTextView,
+              let hunk = textView.blockDeletedPreviewHunk(forLineStart: charIndex) else { return 0 }
+
+        let availableWidth = max(56, rect.width - textView.gutterWidth - 18)
+        return textView.blockDeletedPreviewReservedHeight(for: hunk, availableWidth: availableWidth)
     }
 }

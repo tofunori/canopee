@@ -20,6 +20,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Prefer classic key repeat over the macOS accent popup inside the app,
         // which makes terminal input behave like a real terminal.
         UserDefaults.standard.register(defaults: ["ApplePressAndHoldEnabled": false])
+        ClaudeIDEBridgeService.shared.startIfNeeded()
+        _ = ClaudeCLIWrapperService.shared.prepareWrapperIfNeeded()
 
         NotificationCenter.default.addObserver(
             self,

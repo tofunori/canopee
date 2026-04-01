@@ -61,9 +61,9 @@ A native macOS scientific paper reader, annotator, LaTeX editor, and AI assistan
 
 ### Claude Code Integration
 - **PDF context** — full paper text written to `/tmp/canope_paper.txt` (auto-updates on tab switch)
-- **Selection sync** — selected text (PDF or LaTeX) written to `/tmp/canope_selection.txt` in real-time
-- **Source tagging** — selections tagged with `[Source: PDF reader]` or `[Source: LaTeX editor]`
-- **CLAUDE.md instructions** — Claude Code automatically reads paper context and selection
+- **IDE bridge** — selected text from the PDF reader or LaTeX editor is sent to Claude Code through the built-in IDE MCP bridge
+- **Terminal wrapper** — `claude` launched from the integrated terminal automatically uses the Canope IDE bridge
+- **CLAUDE.md instructions** — Claude Code automatically reads paper context and IDE-backed selections
 - **Bi-directional workflow** — edit LaTeX in Claude Code terminal, changes auto-reload in the editor
 
 ### Keyboard Shortcuts
@@ -200,14 +200,15 @@ Canope writes context files that Claude Code reads automatically:
 | File | Content | Updated when |
 |------|---------|-------------|
 | `/tmp/canope_paper.txt` | Full text of the currently open paper | Tab switch |
-| `/tmp/canope_selection.txt` | Currently selected text (PDF or LaTeX) | Selection changes |
+| `/tmp/canope_ide_selection.json` | Current editor or PDF selection exposed through the IDE bridge | Selection changes |
+| `/tmp/canope_claude_ide_mcp.json` | Claude Code MCP config for the built-in Canope IDE bridge | App launch |
 
 Add this to your `~/.claude/CLAUDE.md` for automatic integration:
 
 ```markdown
 ## Canope
 - `/tmp/canope_paper.txt` — currently open paper (read when user asks about "the paper")
-- `/tmp/canope_selection.txt` — selected text (read when user asks about "the selection")
+- Selections from Canope now come from the IDE integration context
 - Do NOT use pdf-selection skill (reads from Skim, not Canope)
 ```
 

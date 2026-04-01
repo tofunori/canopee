@@ -11,3 +11,7 @@ DerivedData/
 
 # Build
 build/
+
+# Python helpers
+__pycache__/
+*.pyc

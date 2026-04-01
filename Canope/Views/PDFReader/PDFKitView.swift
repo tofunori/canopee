@@ -1870,8 +1870,14 @@ struct PDFKitView: NSViewRepresentable {
         }
 
         private func writeSelectionSnapshot(_ text: String) {
+            guard let fileURL = parent.document.documentURL else { return }
             Self.selectionFileQueue.async {
-                try? text.write(toFile: "/tmp/canope_selection.txt", atomically: true, encoding: .utf8)
+                let state = ClaudeIDESelectionState.makeSnapshot(
+                    selectedText: text,
+                    fileURL: fileURL
+                )
+                CanopeContextFiles.writeIDESelectionState(state)
+                CanopeContextFiles.clearLegacySelectionMirror()
             }
         }
 
@@ -2055,8 +2061,7 @@ struct PDFKitView: NSViewRepresentable {
                   !text.isEmpty else {
                 hasActiveSelection = false
                 parent.selectedText = ""
-                // Clear selection file
-                writeSelectionSnapshot("(no text currently selected)")
+                writeSelectionSnapshot("")
                 overlay?.clearSelection()
                 updateSelectionDismissInterception()
                 return
@@ -2064,9 +2069,7 @@ struct PDFKitView: NSViewRepresentable {
             hasActiveSelection = true
             isDragging = true
             parent.selectedText = text
-            // Write selection to temp file so Claude Code can read it
-            let content = "[Source: PDF reader]\n\(text)"
-            writeSelectionSnapshot(content)
+            writeSelectionSnapshot(text)
             refreshSelectionAppearance()
             updateSelectionDismissInterception()
         }

@@ -28,6 +28,29 @@ struct LaTeXEditorView: View {
         var existingAnnotationID: UUID?
     }
 
+    private struct DiffGroup: Identifiable, Equatable {
+        enum Kind {
+            case added
+            case removed
+            case modified
+        }
+
+        let id = UUID()
+        let startLine: Int
+        let endLine: Int
+        let oldLines: [String]
+        let newLines: [String]
+        let kind: Kind
+
+        static func == (lhs: DiffGroup, rhs: DiffGroup) -> Bool {
+            lhs.startLine == rhs.startLine &&
+            lhs.endLine == rhs.endLine &&
+            lhs.oldLines == rhs.oldLines &&
+            lhs.newLines == rhs.newLines &&
+            lhs.kind == rhs.kind
+        }
+    }
+
     private enum SidebarSection: String {
         case files
         case annotations
@@ -144,9 +167,22 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private var lineDiffs: [LineDiff] {
-        DiffEngine.diff(old: savedText, new: text)
-            .filter { $0.type != .unchanged }
+    private var diffGroups: [DiffGroup] {
+        DiffEngine.blocks(old: savedText, new: text).map { block in
+            DiffGroup(
+                startLine: block.startLine,
+                endLine: block.endLine,
+                oldLines: block.oldLines,
+                newLines: block.newLines,
+                kind: {
+                    switch block.kind {
+                    case .added: return .added
+                    case .removed: return .removed
+                    case .modified: return .modified
+                    }
+                }()
+            )
+        }
     }
 
     private var showSidebar: Bool {
@@ -168,6 +204,10 @@ struct LaTeXEditorView: View {
         nonmutating set {
             workspaceState.sidebarWidth = Double(min(max(newValue, SidebarSizing.minWidth), SidebarSizing.maxWidth))
         }
+    }
+
+    private var isCompactDiffSidebar: Bool {
+        sidebarWidth < 220
     }
 
     private var showPDFPreview: Bool {
@@ -268,6 +308,7 @@ struct LaTeXEditorView: View {
             }
         }
         .onAppear {
+            ClaudeIDEBridgeService.shared.startIfNeeded()
             loadFile()
             loadExistingPDF()
             if isActive {
@@ -520,9 +561,10 @@ struct LaTeXEditorView: View {
                 Label("Diff", systemImage: "arrow.left.arrow.right.square")
                     .font(.caption)
                     .fontWeight(.semibold)
+                    .lineLimit(1)
                 Spacer()
-                if !lineDiffs.isEmpty {
-                    Text("\(lineDiffs.count)")
+                if !diffGroups.isEmpty {
+                    Text("\(diffGroups.count)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
@@ -534,39 +576,31 @@ struct LaTeXEditorView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
 
-            if !lineDiffs.isEmpty {
+            if !diffGroups.isEmpty {
                 HStack(spacing: 6) {
-                    Text("Toutes les modifications")
+                    Text(isCompactDiffSidebar ? "Global" : "Toutes les modifications")
                         .font(.caption2)
+                        .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                     Spacer(minLength: 6)
-                    Button {
-                        rejectAllDiffs()
-                    } label: {
-                        Label("Tout rejeter", systemImage: "xmark")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.red.opacity(0.08))
-                    .clipShape(Capsule())
-                    .help("Rejeter tout")
+                    HStack(spacing: 6) {
+                        diffBatchActionButton(
+                            title: "Tout rejeter",
+                            systemImage: "xmark",
+                            tint: .red,
+                            compact: isCompactDiffSidebar,
+                            action: rejectAllDiffs
+                        )
 
-                    Button {
-                        acceptAllDiffs()
-                    } label: {
-                        Label("Tout accepter", systemImage: "checkmark")
-                            .font(.caption2)
+                        diffBatchActionButton(
+                            title: "Tout accepter",
+                            systemImage: "checkmark",
+                            tint: .green,
+                            compact: isCompactDiffSidebar,
+                            action: acceptAllDiffs
+                        )
                     }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.green.opacity(0.08))
-                    .clipShape(Capsule())
-                    .help("Accepter tout")
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
@@ -574,7 +608,7 @@ struct LaTeXEditorView: View {
 
             Divider()
 
-            if lineDiffs.isEmpty {
+            if diffGroups.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "checkmark.circle")
                         .font(.system(size: 18))
@@ -592,8 +626,8 @@ struct LaTeXEditorView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(lineDiffs) { diff in
-                            diffRow(diff)
+                        ForEach(diffGroups) { group in
+                            diffRow(group)
                         }
                     }
                     .padding(10)
@@ -601,6 +635,36 @@ struct LaTeXEditorView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func diffBatchActionButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        compact: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Group {
+                if compact {
+                    Image(systemName: systemImage)
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 22, height: 22)
+                } else {
+                    Label(title, systemImage: systemImage)
+                        .font(.caption2)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(tint)
+        .padding(.horizontal, compact ? 0 : 8)
+        .padding(.vertical, compact ? 0 : 4)
+        .background(tint.opacity(0.08))
+        .clipShape(Capsule())
+        .help(title)
     }
 
     private var editorPane: some View {
@@ -611,6 +675,7 @@ struct LaTeXEditorView: View {
             }
 
             LaTeXTextEditor(
+                fileURL: fileURL,
                 text: $text,
                 errorLines: errorLines,
                 fontSize: editorFontSize,
@@ -662,64 +727,67 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private func diffRow(_ diff: LineDiff) -> some View {
+    private func diffRow(_ group: DiffGroup) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(diffLabel(for: diff))
+                Text(diffLabel(for: group))
                     .font(.caption2)
                     .fontWeight(.semibold)
-                    .foregroundStyle(diffAccentColor(for: diff))
-                Text("Ligne \(max(diff.lineNumber, 1))")
+                    .foregroundStyle(diffAccentColor(for: group))
+                Text(diffLineLabel(for: group))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
-                    rejectDiff(diff)
+                    rejectDiffGroup(group)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption2.weight(.semibold))
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.red)
-                .help("Rejeter cette modification")
+                .help("Rejeter ce bloc")
 
                 Button {
-                    acceptDiff(diff)
+                    acceptDiffGroup(group)
                 } label: {
                     Image(systemName: "checkmark")
                         .font(.caption2.weight(.semibold))
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.green)
-                .help("Accepter cette modification")
+                .help("Accepter ce bloc")
 
                 Image(systemName: "arrow.turn.down.right")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
 
-            switch diff.type {
+            switch group.kind {
             case .added:
                 compactDiffSnippet(
                     prefix: "+",
-                    text: compactPreviewText(diff.text),
+                    text: compactPreviewText(group.newLines.joined(separator: "\n")),
                     accent: .green
                 )
             case .removed:
                 compactDiffSnippet(
                     prefix: "-",
-                    text: compactPreviewText(diff.text),
+                    text: compactPreviewText(group.oldLines.joined(separator: "\n")),
                     accent: .red,
                     strikeText: true
                 )
-            case .modified(let oldLine):
+            case .modified:
                 VStack(alignment: .leading, spacing: 6) {
+                    let oldText = group.oldLines.joined(separator: "\n")
+                    let newText = group.newLines.joined(separator: "\n")
+                    let coreRanges = diffCoreRanges(old: oldText, new: newText)
                     compactDiffSnippet(
                         prefix: "-",
                         text: focusedDiffText(
-                            line: oldLine,
-                            changeStart: diffCoreRanges(old: oldLine, new: diff.text).oldStart,
-                            changeLength: diffCoreRanges(old: oldLine, new: diff.text).oldLength,
+                            line: oldText,
+                            changeStart: coreRanges.oldStart,
+                            changeLength: coreRanges.oldLength,
                             accent: .red,
                             strikeChanged: true
                         ),
@@ -728,16 +796,14 @@ struct LaTeXEditorView: View {
                     compactDiffSnippet(
                         prefix: "+",
                         text: focusedDiffText(
-                            line: diff.text,
-                            changeStart: diffCoreRanges(old: oldLine, new: diff.text).newStart,
-                            changeLength: diffCoreRanges(old: oldLine, new: diff.text).newLength,
+                            line: newText,
+                            changeStart: coreRanges.newStart,
+                            changeLength: coreRanges.newLength,
                             accent: .green
                         ),
                         accent: .green
                     )
                 }
-            case .unchanged:
-                EmptyView()
             }
         }
         .padding(10)
@@ -746,7 +812,7 @@ struct LaTeXEditorView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture {
-            revealEditorLocation(for: diff)
+            revealEditorLocation(for: group)
         }
     }
 
@@ -775,29 +841,32 @@ struct LaTeXEditorView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
-    private func diffLabel(for diff: LineDiff) -> String {
-        switch diff.type {
+    private func diffLabel(for group: DiffGroup) -> String {
+        switch group.kind {
         case .added:
             return "Ajout"
         case .removed:
             return "Suppression"
         case .modified:
             return "Modification"
-        case .unchanged:
-            return "Inchangé"
         }
     }
 
-    private func diffAccentColor(for diff: LineDiff) -> Color {
-        switch diff.type {
+    private func diffLineLabel(for group: DiffGroup) -> String {
+        if group.startLine == group.endLine {
+            return "Ligne \(group.startLine)"
+        }
+        return "Lignes \(group.startLine)-\(group.endLine)"
+    }
+
+    private func diffAccentColor(for group: DiffGroup) -> Color {
+        switch group.kind {
         case .added:
             return .green
         case .removed:
             return .red
         case .modified:
             return .orange
-        case .unchanged:
-            return .secondary
         }
     }
 
@@ -882,44 +951,20 @@ struct LaTeXEditorView: View {
         )
     }
 
-    private func acceptDiff(_ diff: LineDiff) {
+    private func acceptDiffGroup(_ group: DiffGroup) {
         var baselineLines = savedText.components(separatedBy: "\n")
-        let targetIndex = max(0, diff.lineNumber - 1)
-
-        switch diff.type {
-        case .added:
-            let insertionIndex = min(targetIndex, baselineLines.count)
-            baselineLines.insert(diff.text, at: insertionIndex)
-        case .removed:
-            guard targetIndex < baselineLines.count else { return }
-            baselineLines.remove(at: targetIndex)
-        case .modified:
-            guard targetIndex < baselineLines.count else { return }
-            baselineLines[targetIndex] = diff.text
-        case .unchanged:
-            return
-        }
+        let targetIndex = min(max(0, group.startLine - 1), baselineLines.count)
+        let replaceCount = min(group.oldLines.count, max(0, baselineLines.count - targetIndex))
+        baselineLines.replaceSubrange(targetIndex..<(targetIndex + replaceCount), with: group.newLines)
 
         savedText = baselineLines.joined(separator: "\n")
     }
 
-    private func rejectDiff(_ diff: LineDiff) {
+    private func rejectDiffGroup(_ group: DiffGroup) {
         var currentLines = text.components(separatedBy: "\n")
-        let targetIndex = max(0, diff.lineNumber - 1)
-
-        switch diff.type {
-        case .added:
-            guard targetIndex < currentLines.count else { return }
-            currentLines.remove(at: targetIndex)
-        case .removed:
-            let insertionIndex = min(targetIndex, currentLines.count)
-            currentLines.insert(diff.text, at: insertionIndex)
-        case .modified(let oldLine):
-            guard targetIndex < currentLines.count else { return }
-            currentLines[targetIndex] = oldLine
-        case .unchanged:
-            return
-        }
+        let targetIndex = min(max(0, group.startLine - 1), currentLines.count)
+        let replaceCount = min(group.newLines.count, max(0, currentLines.count - targetIndex))
+        currentLines.replaceSubrange(targetIndex..<(targetIndex + replaceCount), with: group.oldLines)
 
         text = currentLines.joined(separator: "\n")
         reconcileAnnotations()
@@ -1493,7 +1538,13 @@ struct LaTeXEditorView: View {
 
     private func sendPromptToClaudeTerminal(_ prompt: String, selectionContent: String) {
         CanopeContextFiles.writeAnnotationPrompt(prompt)
-        CanopeContextFiles.writeSelection(selectionContent)
+        CanopeContextFiles.writeIDESelectionState(
+            ClaudeIDESelectionState.makeSnapshot(
+                selectedText: selectionContent,
+                fileURL: fileURL
+            )
+        )
+        CanopeContextFiles.clearLegacySelectionMirror()
         showTerminal = true
 
         let userInfo = ["prompt": prompt]
@@ -1735,11 +1786,30 @@ struct LaTeXEditorView: View {
         )
     }
 
-    private func revealEditorLocation(for diff: LineDiff) {
+    private func revealEditorLocation(for group: DiffGroup) {
+        let oldText = group.oldLines.first ?? ""
+        let newText = group.newLines.first ?? ""
+        let coreRanges = diffCoreRanges(old: oldText, new: newText)
+
+        let columnOffset: Int
+        let highlightLength: Int
+
+        switch group.kind {
+        case .added:
+            columnOffset = 0
+            highlightLength = min(max((newText as NSString).length, 1), 24)
+        case .removed:
+            columnOffset = 0
+            highlightLength = 1
+        case .modified:
+            columnOffset = coreRanges.newStart
+            highlightLength = max(1, min(coreRanges.newLength, 24))
+        }
+
         revealEditorLocationForLine(
-            max(diff.lineNumber, 1),
-            columnOffset: diffRevealColumn(for: diff),
-            highlightLength: diffRevealLength(for: diff)
+            max(group.startLine, 1),
+            columnOffset: columnOffset,
+            highlightLength: highlightLength
         )
     }
 
@@ -1764,52 +1834,6 @@ struct LaTeXEditorView: View {
                 "length": max(1, highlightLength),
             ]
         )
-    }
-
-    private func diffRevealColumn(for diff: LineDiff) -> Int {
-        switch diff.type {
-        case .added, .removed:
-            return 0
-        case .modified(let oldLine):
-            let oldUnits = Array(oldLine.utf16)
-            let newUnits = Array(diff.text.utf16)
-            let sharedCount = min(oldUnits.count, newUnits.count)
-            var prefix = 0
-            while prefix < sharedCount && oldUnits[prefix] == newUnits[prefix] {
-                prefix += 1
-            }
-            return prefix
-        case .unchanged:
-            return 0
-        }
-    }
-
-    private func diffRevealLength(for diff: LineDiff) -> Int {
-        switch diff.type {
-        case .added:
-            return min(max((diff.text as NSString).length, 1), 24)
-        case .removed:
-            return 1
-        case .modified(let oldLine):
-            let oldUnits = Array(oldLine.utf16)
-            let newUnits = Array(diff.text.utf16)
-            let sharedCount = min(oldUnits.count, newUnits.count)
-            var prefix = 0
-            while prefix < sharedCount && oldUnits[prefix] == newUnits[prefix] {
-                prefix += 1
-            }
-
-            var oldSuffix = oldUnits.count
-            var newSuffix = newUnits.count
-            while oldSuffix > prefix && newSuffix > prefix && oldUnits[oldSuffix - 1] == newUnits[newSuffix - 1] {
-                oldSuffix -= 1
-                newSuffix -= 1
-            }
-
-            return max(1, min(newSuffix - prefix, 24))
-        case .unchanged:
-            return 1
-        }
     }
 
     // MARK: - SyncTeX
