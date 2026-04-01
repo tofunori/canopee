@@ -505,6 +505,7 @@ private struct ChangeHunk: Identifiable, Equatable {
     let anchorLocation: Int
     let inlinePresentation: InlineDiffPresentation?
     let inlineContentRange: NSRange?
+    let focusedCurrentRange: NSRange?
 
     static func compute(baselineText: String, currentText: String) -> [ChangeHunk] {
         let oldLines = TrackedLine.make(from: baselineText)
@@ -530,23 +531,25 @@ private struct ChangeHunk: Identifiable, Equatable {
 
             let inlinePresentation: InlineDiffPresentation?
             let inlineContentRange: NSRange?
+            let focusedRangeInCurrentLine: NSRange?
             if segment.oldRange.count == 1, segment.newRange.count == 1 {
                 let oldLine = oldLines[segment.oldRange.lowerBound]
                 let newLine = newLines[segment.newRange.lowerBound]
                 let maxInlineLength = 280
+                inlineContentRange = NSRange(
+                    location: newLine.fullRange.location,
+                    length: (newLine.text as NSString).length
+                )
+                focusedRangeInCurrentLine = Self.focusedCurrentRange(old: oldLine.text, new: newLine.text)
                 if max(oldLine.text.utf16.count, newLine.text.utf16.count) <= maxInlineLength {
                     inlinePresentation = DiffEngine.inlinePresentation(old: oldLine.text, new: newLine.text)
-                    inlineContentRange = NSRange(
-                        location: newLine.fullRange.location,
-                        length: (newLine.text as NSString).length
-                    )
                 } else {
                     inlinePresentation = nil
-                    inlineContentRange = nil
                 }
             } else {
                 inlinePresentation = nil
                 inlineContentRange = nil
+                focusedRangeInCurrentLine = nil
             }
 
             return ChangeHunk(
@@ -557,9 +560,36 @@ private struct ChangeHunk: Identifiable, Equatable {
                 lineRange: lineRange,
                 anchorLocation: anchorLocation,
                 inlinePresentation: inlinePresentation,
-                inlineContentRange: inlineContentRange
+                inlineContentRange: inlineContentRange,
+                focusedCurrentRange: focusedRangeInCurrentLine
             )
         }
+    }
+
+    private static func focusedCurrentRange(old: String, new: String) -> NSRange? {
+        guard old != new else { return nil }
+
+        let oldNSString = old as NSString
+        let newNSString = new as NSString
+        let oldLength = oldNSString.length
+        let newLength = newNSString.length
+
+        let sharedPrefixLimit = min(oldLength, newLength)
+        var prefixLength = 0
+        while prefixLength < sharedPrefixLimit,
+              oldNSString.character(at: prefixLength) == newNSString.character(at: prefixLength) {
+            prefixLength += 1
+        }
+
+        var suffixLength = 0
+        while suffixLength < (oldLength - prefixLength),
+              suffixLength < (newLength - prefixLength),
+              oldNSString.character(at: oldLength - suffixLength - 1) == newNSString.character(at: newLength - suffixLength - 1) {
+            suffixLength += 1
+        }
+
+        let changedLength = max(0, newLength - prefixLength - suffixLength)
+        return NSRange(location: prefixLength, length: changedLength)
     }
 }
 
@@ -1149,6 +1179,14 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
             return []
         }
 
+        if let inlineContentRange = hunk.inlineContentRange,
+           let focusedCurrentRange = hunk.focusedCurrentRange {
+            return [NSRange(
+                location: inlineContentRange.location + focusedCurrentRange.location,
+                length: focusedCurrentRange.length
+            )]
+        }
+
         guard hunk.currentRange.length > 0 else { return [] }
         let currentNSString = string as NSString
         let safeRange = NSIntersectionRange(hunk.currentRange, NSRange(location: 0, length: currentNSString.length))
@@ -1266,6 +1304,16 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         let textOrigin = textContainerOrigin
         let textLength = (string as NSString).length
 
+        if let focusedRect = focusedMarkerRect(
+            for: hunk,
+            using: layoutManager,
+            textContainer: textContainer,
+            textOrigin: textOrigin,
+            textLength: textLength
+        ) {
+            return focusedRect
+        }
+
         if hunk.currentRange.length > 0, textLength > 0 {
             let safeRange = NSIntersectionRange(
                 hunk.currentRange,
@@ -1300,6 +1348,109 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         }
 
         return NSRect(x: 0, y: yPosition - 1, width: gutterWidth, height: 3)
+    }
+
+    private func focusedMarkerRect(
+        for hunk: ChangeHunk,
+        using layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer,
+        textOrigin: NSPoint,
+        textLength: Int
+    ) -> NSRect? {
+        guard hunk.kind == .modifiedOrAdded else { return nil }
+
+        if let inlineContentRange = hunk.inlineContentRange,
+           let focusedCurrentRange = hunk.focusedCurrentRange {
+            let absoluteLocation = min(
+                max(inlineContentRange.location + focusedCurrentRange.location, 0),
+                textLength
+            )
+
+            if focusedCurrentRange.length > 0 {
+                let safeRange = NSIntersectionRange(
+                    NSRange(location: absoluteLocation, length: focusedCurrentRange.length),
+                    NSRange(location: 0, length: textLength)
+                )
+                guard safeRange.length > 0 else { return nil }
+                let glyphRange = layoutManager.glyphRange(forCharacterRange: safeRange, actualCharacterRange: nil)
+                guard glyphRange.length > 0 else { return nil }
+                let usedRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                return NSRect(
+                    x: 0,
+                    y: usedRect.minY + textOrigin.y,
+                    width: gutterWidth,
+                    height: max(3, usedRect.height)
+                )
+            }
+
+            guard textLength > 0, layoutManager.numberOfGlyphs > 0 else {
+                return NSRect(x: 0, y: textOrigin.y, width: gutterWidth, height: 3)
+            }
+            let glyphIndex: Int
+            if absoluteLocation >= textLength {
+                glyphIndex = max(0, layoutManager.numberOfGlyphs - 1)
+            } else {
+                glyphIndex = layoutManager.glyphIndexForCharacter(at: absoluteLocation)
+            }
+            let lineRect = layoutManager.lineFragmentUsedRect(
+                forGlyphAt: glyphIndex,
+                effectiveRange: nil,
+                withoutAdditionalLayout: false
+            )
+            return NSRect(
+                x: 0,
+                y: lineRect.minY + textOrigin.y,
+                width: gutterWidth,
+                height: max(3, lineRect.height)
+            )
+        }
+
+        let changedRanges = changedCharacterRanges(for: hunk)
+        if let changedRange = changedRanges.first {
+            let safeRange = NSIntersectionRange(
+                changedRange,
+                NSRange(location: 0, length: textLength)
+            )
+            guard safeRange.length > 0 else { return nil }
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: safeRange, actualCharacterRange: nil)
+            guard glyphRange.length > 0 else { return nil }
+            let usedRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            return NSRect(
+                x: 0,
+                y: usedRect.minY + textOrigin.y,
+                width: gutterWidth,
+                height: max(3, usedRect.height)
+            )
+        }
+
+        guard let inlineContentRange = hunk.inlineContentRange,
+              let deletedAnchorOffset = hunk.inlinePresentation?.deletedWidgets.first?.anchorOffset else {
+            return nil
+        }
+
+        let anchorLocation = min(max(inlineContentRange.location + deletedAnchorOffset, 0), textLength)
+        guard textLength > 0, layoutManager.numberOfGlyphs > 0 else {
+            return NSRect(x: 0, y: textOrigin.y, width: gutterWidth, height: 3)
+        }
+
+        let glyphIndex: Int
+        if anchorLocation >= textLength {
+            glyphIndex = max(0, layoutManager.numberOfGlyphs - 1)
+        } else {
+            glyphIndex = layoutManager.glyphIndexForCharacter(at: anchorLocation)
+        }
+
+        let lineRect = layoutManager.lineFragmentUsedRect(
+            forGlyphAt: glyphIndex,
+            effectiveRange: nil,
+            withoutAdditionalLayout: false
+        )
+        return NSRect(
+            x: 0,
+            y: lineRect.minY + textOrigin.y,
+            width: gutterWidth,
+            height: max(3, lineRect.height)
+        )
     }
 
     private func highlightRect(for hunk: ChangeHunk, using layoutManager: NSLayoutManager, textOrigin: NSPoint) -> NSRect? {

@@ -40,6 +40,53 @@ struct InlineDiffPresentation: Equatable {
     let deletedWidgets: [DeletedWidget]
 }
 
+enum ReviewInlineSpanKind: Equatable {
+    case equal
+    case insert
+    case delete
+}
+
+struct ReviewInlineSpan: Equatable {
+    let kind: ReviewInlineSpanKind
+    let text: String
+}
+
+struct ReviewDiffRow: Equatable {
+    enum Kind: Equatable {
+        case added
+        case removed
+        case modified
+    }
+
+    let kind: Kind
+    let oldLineOffset: Int?
+    let newLineOffset: Int?
+    let oldSpans: [ReviewInlineSpan]
+    let newSpans: [ReviewInlineSpan]
+    let revealColumn: Int
+    let revealLength: Int
+}
+
+struct ReviewDiffBlock: Identifiable, Equatable {
+    let block: TextDiffBlock
+    let rows: [ReviewDiffRow]
+    let preferredRevealLine: Int
+    let preferredRevealColumn: Int
+    let preferredRevealLength: Int
+
+    var id: String {
+        [
+            String(block.startLine),
+            String(block.endLine),
+            String(block.oldLineRange.lowerBound),
+            String(block.oldLineRange.upperBound),
+            String(block.newLineRange.lowerBound),
+            String(block.newLineRange.upperBound),
+            String(describing: block.kind),
+        ].joined(separator: ":")
+    }
+}
+
 struct LineDiff: Identifiable, Equatable {
     let id = UUID()
     let lineNumber: Int
@@ -191,16 +238,112 @@ struct DiffEngine {
         LineDocument.parse(currentText).replacingLines(in: block.newLineRange, with: block.oldLines)
     }
 
+    static func reviewBlocks(old: String, new: String) -> [ReviewDiffBlock] {
+        blocks(old: old, new: new).map(reviewBlock(for:))
+    }
+
+    static func reviewBlock(for block: TextDiffBlock) -> ReviewDiffBlock {
+        let rows: [ReviewDiffRow]
+        switch block.kind {
+        case .added:
+            rows = block.newLines.enumerated().map { offset, line in
+                ReviewDiffRow(
+                    kind: .added,
+                    oldLineOffset: nil,
+                    newLineOffset: offset,
+                    oldSpans: [],
+                    newSpans: [.init(kind: .insert, text: line)],
+                    revealColumn: 0,
+                    revealLength: max(1, min((line as NSString).length, 24))
+                )
+            }
+        case .removed:
+            rows = block.oldLines.enumerated().map { offset, line in
+                ReviewDiffRow(
+                    kind: .removed,
+                    oldLineOffset: offset,
+                    newLineOffset: nil,
+                    oldSpans: [.init(kind: .delete, text: line)],
+                    newSpans: [],
+                    revealColumn: 0,
+                    revealLength: 1
+                )
+            }
+        case .modified:
+            if block.oldLines.count == block.newLines.count {
+                rows = zip(block.oldLines.enumerated(), block.newLines.enumerated()).map { oldEntry, newEntry in
+                    let oldLine = oldEntry.element
+                    let newLine = newEntry.element
+                    let spans = reviewInlineSpans(old: oldLine, new: newLine)
+                    let presentation = inlinePresentation(old: oldLine, new: newLine)
+                    let revealColumn = presentation.insertedRanges.first?.location
+                        ?? presentation.deletedWidgets.first?.anchorOffset
+                        ?? 0
+                    let revealLength = max(
+                        1,
+                        min(presentation.insertedRanges.first?.length ?? 1, 24)
+                    )
+
+                    return ReviewDiffRow(
+                        kind: .modified,
+                        oldLineOffset: oldEntry.offset,
+                        newLineOffset: newEntry.offset,
+                        oldSpans: spans.old,
+                        newSpans: spans.new,
+                        revealColumn: revealColumn,
+                        revealLength: revealLength
+                    )
+                }
+            } else {
+                let removedRows = block.oldLines.enumerated().map { offset, line in
+                    ReviewDiffRow(
+                        kind: .removed,
+                        oldLineOffset: offset,
+                        newLineOffset: nil,
+                        oldSpans: [.init(kind: .delete, text: line)],
+                        newSpans: [],
+                        revealColumn: 0,
+                        revealLength: 1
+                    )
+                }
+                let addedRows = block.newLines.enumerated().map { offset, line in
+                    ReviewDiffRow(
+                        kind: .added,
+                        oldLineOffset: nil,
+                        newLineOffset: offset,
+                        oldSpans: [],
+                        newSpans: [.init(kind: .insert, text: line)],
+                        revealColumn: 0,
+                        revealLength: max(1, min((line as NSString).length, 24))
+                    )
+                }
+                rows = removedRows + addedRows
+            }
+        }
+
+        let preferredRow = rows.first(where: { $0.newLineOffset != nil }) ?? rows.first
+        let preferredRevealLine: Int
+        if let newLineOffset = preferredRow?.newLineOffset {
+            preferredRevealLine = block.newLineRange.lowerBound + newLineOffset + 1
+        } else {
+            preferredRevealLine = max(block.startLine, 1)
+        }
+
+        return ReviewDiffBlock(
+            block: block,
+            rows: rows,
+            preferredRevealLine: preferredRevealLine,
+            preferredRevealColumn: preferredRow?.revealColumn ?? 0,
+            preferredRevealLength: preferredRow?.revealLength ?? 1
+        )
+    }
+
     static func inlinePresentation(old: String, new: String) -> InlineDiffPresentation {
         guard old != new else {
             return InlineDiffPresentation(insertedRanges: [], deletedWidgets: [])
         }
 
-        let dmp = DiffMatchPatch()
-        let mutableDiffs = dmp.diff_main(ofOldString: old, andNewString: new)
-        dmp.diff_cleanupSemantic(mutableDiffs)
-
-        guard let diffs = mutableDiffs as? [Diff] else {
+        guard let diffs = semanticDiffs(old: old, new: new) else {
             return InlineDiffPresentation(insertedRanges: [], deletedWidgets: [])
         }
 
@@ -243,6 +386,38 @@ struct DiffEngine {
             insertedRanges: insertedRanges,
             deletedWidgets: deletedWidgets
         )
+    }
+
+    static func reviewInlineSpans(old: String, new: String) -> (old: [ReviewInlineSpan], new: [ReviewInlineSpan]) {
+        guard let diffs = semanticDiffs(old: old, new: new) else {
+            return (
+                old: old.isEmpty ? [] : [.init(kind: .equal, text: old)],
+                new: new.isEmpty ? [] : [.init(kind: .equal, text: new)]
+            )
+        }
+
+        var oldSpans: [ReviewInlineSpan] = []
+        var newSpans: [ReviewInlineSpan] = []
+
+        for diff in diffs {
+            let text = diff.text ?? ""
+            guard !text.isEmpty else { continue }
+
+            switch diff.operation {
+            case DIFF_EQUAL:
+                appendReviewSpan(.init(kind: .equal, text: text), to: &oldSpans)
+                appendReviewSpan(.init(kind: .equal, text: text), to: &newSpans)
+            case DIFF_INSERT:
+                appendReviewSpan(.init(kind: .insert, text: text), to: &newSpans)
+            case DIFF_DELETE:
+                appendReviewSpan(.init(kind: .delete, text: text), to: &oldSpans)
+            default:
+                appendReviewSpan(.init(kind: .equal, text: text), to: &oldSpans)
+                appendReviewSpan(.init(kind: .equal, text: text), to: &newSpans)
+            }
+        }
+
+        return (oldSpans, newSpans)
     }
 
     /// Compare old and new text, return diffs indexed by new line numbers.
@@ -358,5 +533,21 @@ struct DiffEngine {
         }
 
         return dp
+    }
+
+    private static func semanticDiffs(old: String, new: String) -> [Diff]? {
+        let dmp = DiffMatchPatch()
+        let mutableDiffs = dmp.diff_main(ofOldString: old, andNewString: new)
+        dmp.diff_cleanupSemantic(mutableDiffs)
+        return mutableDiffs as? [Diff]
+    }
+
+    private static func appendReviewSpan(_ span: ReviewInlineSpan, to spans: inout [ReviewInlineSpan]) {
+        guard !span.text.isEmpty else { return }
+        if let lastIndex = spans.indices.last, spans[lastIndex].kind == span.kind {
+            spans[lastIndex] = .init(kind: span.kind, text: spans[lastIndex].text + span.text)
+        } else {
+            spans.append(span)
+        }
     }
 }

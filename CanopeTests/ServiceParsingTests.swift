@@ -44,6 +44,9 @@ final class ServiceParsingTests: XCTestCase {
         SyncTeX result begin
         Input:/tmp/project/main.tex
         Line:87
+        Column:14
+        Offset:6
+        Context:contributions scientifiques
         SyncTeX result end
         """
 
@@ -51,6 +54,9 @@ final class ServiceParsingTests: XCTestCase {
 
         XCTAssertEqual(result?.file, "/tmp/project/main.tex")
         XCTAssertEqual(result?.line, 87)
+        XCTAssertEqual(result?.column, 14)
+        XCTAssertEqual(result?.offset, 6)
+        XCTAssertEqual(result?.context, "contributions scientifiques")
     }
 
     func testParseInverseSyncOutputKeepsFirstMatchWhenMultipleRecordsAreReturned() {
@@ -73,6 +79,7 @@ final class ServiceParsingTests: XCTestCase {
 
         XCTAssertEqual(result?.file, "/tmp/project/main.tex")
         XCTAssertEqual(result?.line, 87)
+        XCTAssertEqual(result?.column, -1)
     }
 
     func testParseForwardSyncOutputKeepsFirstMatchWhenMultipleRecordsAreReturned() {
@@ -250,6 +257,59 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(presentation.deletedWidgets, [
             .init(anchorOffset: 10, text: " vivants")
         ])
+    }
+
+    func testDiffEngineReviewBlocksCreateModifiedRowsForSingleLineChanges() {
+        let reviewBlocks = DiffEngine.reviewBlocks(
+            old: "alpha beta\n",
+            new: "alpha gamma\n"
+        )
+
+        XCTAssertEqual(reviewBlocks.count, 1)
+        XCTAssertEqual(reviewBlocks[0].block.kind, .modified)
+        XCTAssertEqual(reviewBlocks[0].rows.count, 1)
+        XCTAssertEqual(reviewBlocks[0].rows[0].kind, .modified)
+        XCTAssertTrue(reviewBlocks[0].rows[0].oldSpans.contains { $0.kind == .delete && $0.text.contains("bet") })
+        XCTAssertTrue(reviewBlocks[0].rows[0].newSpans.contains { $0.kind == .insert && $0.text.contains("gamm") })
+        XCTAssertEqual(reviewBlocks[0].preferredRevealLine, 1)
+    }
+
+    func testDiffEngineReviewBlocksSplitRemovedAndAddedRowsWhenLineCountsDiffer() {
+        let reviewBlocks = DiffEngine.reviewBlocks(
+            old: "alpha\nbeta\ngamma\n",
+            new: "alpha\nbeta modifiee\nnouvelle ligne\ngamma\n"
+        )
+
+        XCTAssertEqual(reviewBlocks.count, 1)
+        XCTAssertEqual(reviewBlocks[0].block.kind, .modified)
+        XCTAssertEqual(reviewBlocks[0].rows.map(\.kind), [.removed, .added, .added])
+        XCTAssertEqual(reviewBlocks[0].rows.first?.oldSpans.first?.text, "beta")
+        XCTAssertEqual(reviewBlocks[0].rows.dropFirst().first?.newSpans.first?.text, "beta modifiee")
+        XCTAssertEqual(reviewBlocks[0].preferredRevealLine, 2)
+    }
+
+    func testDiffEngineReviewBlocksSplitPureAdditionsPerLine() {
+        let reviewBlocks = DiffEngine.reviewBlocks(
+            old: "alpha\n",
+            new: "alpha\nbeta\ngamma\n"
+        )
+
+        XCTAssertEqual(reviewBlocks.count, 1)
+        XCTAssertEqual(reviewBlocks[0].block.kind, .added)
+        XCTAssertEqual(reviewBlocks[0].rows.map(\.kind), [.added, .added])
+        XCTAssertEqual(reviewBlocks[0].rows.map(\.newLineOffset), [0, 1])
+    }
+
+    func testDiffEngineReviewBlocksSplitPureRemovalsPerLine() {
+        let reviewBlocks = DiffEngine.reviewBlocks(
+            old: "alpha\nbeta\ngamma\n",
+            new: "alpha\n"
+        )
+
+        XCTAssertEqual(reviewBlocks.count, 1)
+        XCTAssertEqual(reviewBlocks[0].block.kind, .removed)
+        XCTAssertEqual(reviewBlocks[0].rows.map(\.kind), [.removed, .removed])
+        XCTAssertEqual(reviewBlocks[0].rows.map(\.oldLineOffset), [0, 1])
     }
 
     func testClaudeCLIWrapperServicePrependsWrapperDirectoryToPATHOnce() {

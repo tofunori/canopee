@@ -29,29 +29,20 @@ struct LaTeXEditorView: View {
     }
 
     private struct DiffGroup: Identifiable, Equatable {
-        enum Kind {
-            case added
-            case removed
-            case modified
-        }
+        let review: ReviewDiffBlock
 
-        let id = UUID()
-        let startLine: Int
-        let endLine: Int
-        let oldLineRange: Range<Int>
-        let newLineRange: Range<Int>
-        let oldLines: [String]
-        let newLines: [String]
-        let kind: Kind
+        var id: String { review.id }
+        var block: TextDiffBlock { review.block }
+        var rows: [ReviewDiffRow] { review.rows }
+        var startLine: Int { review.block.startLine }
+        var endLine: Int { review.block.endLine }
+        var preferredRevealLine: Int { review.preferredRevealLine }
+        var preferredRevealColumn: Int { review.preferredRevealColumn }
+        var preferredRevealLength: Int { review.preferredRevealLength }
+        var kind: TextDiffBlockKind { review.block.kind }
 
         static func == (lhs: DiffGroup, rhs: DiffGroup) -> Bool {
-            lhs.startLine == rhs.startLine &&
-            lhs.endLine == rhs.endLine &&
-            lhs.oldLineRange == rhs.oldLineRange &&
-            lhs.newLineRange == rhs.newLineRange &&
-            lhs.oldLines == rhs.oldLines &&
-            lhs.newLines == rhs.newLines &&
-            lhs.kind == rhs.kind
+            lhs.review == rhs.review
         }
     }
 
@@ -77,7 +68,7 @@ struct LaTeXEditorView: View {
     @State private var compileOutput: String = ""
     @State private var isCompiling = false
     @State private var syncTarget: SyncTeXForwardResult?
-    @State private var syncToLine: Int?
+    @State private var inverseSyncResult: SyncTeXInverseResult?
     @State private var lastModified: Date?
     @State private var latexAnnotations: [LaTeXAnnotation] = []
     @State private var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] = []
@@ -172,23 +163,7 @@ struct LaTeXEditorView: View {
     }
 
     private var diffGroups: [DiffGroup] {
-        DiffEngine.blocks(old: savedText, new: text).map { block in
-            DiffGroup(
-                startLine: block.startLine,
-                endLine: block.endLine,
-                oldLineRange: block.oldLineRange,
-                newLineRange: block.newLineRange,
-                oldLines: block.oldLines,
-                newLines: block.newLines,
-                kind: {
-                    switch block.kind {
-                    case .added: return .added
-                    case .removed: return .removed
-                    case .modified: return .modified
-                    }
-                }()
-            )
-        }
+        DiffEngine.reviewBlocks(old: savedText, new: text).map { DiffGroup(review: $0) }
     }
 
     private var showSidebar: Bool {
@@ -302,10 +277,10 @@ struct LaTeXEditorView: View {
                 }
             )
         }
-        .onChange(of: syncToLine) {
-            if let line = syncToLine {
-                scrollEditorToLine(line)
-                syncToLine = nil
+        .onChange(of: inverseSyncResult) {
+            if let result = inverseSyncResult {
+                scrollEditorToInverseSyncResult(result)
+                inverseSyncResult = nil
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .syncTeXForwardSync)) { notification in
@@ -769,46 +744,9 @@ struct LaTeXEditorView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            switch group.kind {
-            case .added:
-                compactDiffSnippet(
-                    prefix: "+",
-                    text: compactPreviewText(group.newLines.joined(separator: "\n")),
-                    accent: .green
-                )
-            case .removed:
-                compactDiffSnippet(
-                    prefix: "-",
-                    text: compactPreviewText(group.oldLines.joined(separator: "\n")),
-                    accent: .red,
-                    strikeText: true
-                )
-            case .modified:
-                VStack(alignment: .leading, spacing: 6) {
-                    let oldText = group.oldLines.joined(separator: "\n")
-                    let newText = group.newLines.joined(separator: "\n")
-                    let coreRanges = diffCoreRanges(old: oldText, new: newText)
-                    compactDiffSnippet(
-                        prefix: "-",
-                        text: focusedDiffText(
-                            line: oldText,
-                            changeStart: coreRanges.oldStart,
-                            changeLength: coreRanges.oldLength,
-                            accent: .red,
-                            strikeChanged: true
-                        ),
-                        accent: .red
-                    )
-                    compactDiffSnippet(
-                        prefix: "+",
-                        text: focusedDiffText(
-                            line: newText,
-                            changeStart: coreRanges.newStart,
-                            changeLength: coreRanges.newLength,
-                            accent: .green
-                        ),
-                        accent: .green
-                    )
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(group.rows.enumerated()), id: \.offset) { _, row in
+                    reviewRow(row)
                 }
             }
         }
@@ -822,11 +760,41 @@ struct LaTeXEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private func reviewRow(_ row: ReviewDiffRow) -> some View {
+        switch row.kind {
+        case .added:
+            compactDiffSnippet(
+                prefix: "+",
+                text: reviewText(from: row.newSpans, accent: .green),
+                accent: .green
+            )
+        case .removed:
+            compactDiffSnippet(
+                prefix: "-",
+                text: reviewText(from: row.oldSpans, accent: .red),
+                accent: .red
+            )
+        case .modified:
+            VStack(alignment: .leading, spacing: 6) {
+                compactDiffSnippet(
+                    prefix: "-",
+                    text: reviewText(from: row.oldSpans, accent: .red),
+                    accent: .red
+                )
+                compactDiffSnippet(
+                    prefix: "+",
+                    text: reviewText(from: row.newSpans, accent: .green),
+                    accent: .green
+                )
+            }
+        }
+    }
+
     private func compactDiffSnippet(
         prefix: String,
         text: Text,
-        accent: Color,
-        strikeText: Bool = false
+        accent: Color
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(prefix)
@@ -836,15 +804,36 @@ struct LaTeXEditorView: View {
             text
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.primary)
-                .strikethrough(strikeText, color: accent)
-                .underline(strikeText, color: accent)
-                .lineLimit(2)
+                .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private func reviewText(from spans: [ReviewInlineSpan], accent: Color) -> Text {
+        guard !spans.isEmpty else { return Text(" ") }
+
+        return spans.reduce(Text("")) { partial, span in
+            partial + reviewSpanText(span, accent: accent)
+        }
+    }
+
+    private func reviewSpanText(_ span: ReviewInlineSpan, accent: Color) -> Text {
+        let text = Text(verbatim: span.text.isEmpty ? " " : span.text)
+        switch span.kind {
+        case .equal:
+            return text.foregroundStyle(.secondary)
+        case .insert:
+            return text.foregroundStyle(.primary).bold()
+        case .delete:
+            return text
+                .foregroundStyle(accent)
+                .strikethrough(true, color: accent)
+                .underline(true, color: accent)
+        }
     }
 
     private func diffLabel(for group: DiffGroup) -> String {
@@ -876,123 +865,12 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func previewText(_ value: String, limit: Int = 180) -> String {
-        let compact = value.replacingOccurrences(of: "\t", with: "    ")
-        if compact.count <= limit {
-            return compact.isEmpty ? " " : compact
-        }
-        return String(compact.prefix(limit)) + "…"
-    }
-
-    private func compactPreviewText(_ value: String, context: Int = 56) -> Text {
-        Text(previewText(value, limit: context))
-    }
-
-    private func focusedDiffText(
-        line: String,
-        changeStart: Int,
-        changeLength: Int,
-        accent: Color,
-        strikeChanged: Bool = false,
-        context: Int = 18
-    ) -> Text {
-        let nsLine = line as NSString
-        let totalLength = nsLine.length
-        let safeStart = min(max(changeStart, 0), totalLength)
-        let safeLength = min(max(changeLength, 0), max(0, totalLength - safeStart))
-
-        let prefixStart = max(0, safeStart - context)
-        let prefixLength = max(0, safeStart - prefixStart)
-        let suffixStart = min(totalLength, safeStart + safeLength)
-        let suffixLength = min(context, max(0, totalLength - suffixStart))
-
-        let prefixText = nsLine.substring(with: NSRange(location: prefixStart, length: prefixLength))
-        let changedText = safeLength > 0
-            ? nsLine.substring(with: NSRange(location: safeStart, length: safeLength))
-            : ""
-        let suffixText = suffixLength > 0
-            ? nsLine.substring(with: NSRange(location: suffixStart, length: suffixLength))
-            : ""
-
-        let leadingEllipsis = prefixStart > 0 ? "…" : ""
-        let trailingEllipsis = suffixStart + suffixLength < totalLength ? "…" : ""
-
-        let basePrefix = Text(leadingEllipsis + prefixText).foregroundStyle(.secondary)
-        let baseSuffix = Text(suffixText + trailingEllipsis).foregroundStyle(.secondary)
-
-        if changedText.isEmpty {
-            return basePrefix + baseSuffix
-        }
-
-        let changed = Text(changedText)
-            .fontWeight(.semibold)
-            .foregroundStyle(strikeChanged ? accent : .primary)
-            .strikethrough(strikeChanged, color: accent)
-            .underline(strikeChanged, color: accent)
-
-        return basePrefix + changed + baseSuffix
-    }
-
-    private func diffCoreRanges(old: String, new: String) -> (oldStart: Int, oldLength: Int, newStart: Int, newLength: Int) {
-        let oldUnits = Array(old.utf16)
-        let newUnits = Array(new.utf16)
-        let sharedCount = min(oldUnits.count, newUnits.count)
-        var prefix = 0
-        while prefix < sharedCount && oldUnits[prefix] == newUnits[prefix] {
-            prefix += 1
-        }
-
-        var oldSuffix = oldUnits.count
-        var newSuffix = newUnits.count
-        while oldSuffix > prefix && newSuffix > prefix && oldUnits[oldSuffix - 1] == newUnits[newSuffix - 1] {
-            oldSuffix -= 1
-            newSuffix -= 1
-        }
-
-        return (
-            oldStart: prefix,
-            oldLength: max(0, oldSuffix - prefix),
-            newStart: prefix,
-            newLength: max(0, newSuffix - prefix)
-        )
-    }
-
     private func acceptDiffGroup(_ group: DiffGroup) {
-        let block = TextDiffBlock(
-            startLine: group.startLine,
-            endLine: group.endLine,
-            oldLineRange: group.oldLineRange,
-            newLineRange: group.newLineRange,
-            oldLines: group.oldLines,
-            newLines: group.newLines,
-            kind: {
-                switch group.kind {
-                case .added: return .added
-                case .removed: return .removed
-                case .modified: return .modified
-                }
-            }()
-        )
-        savedText = DiffEngine.replacingOldBlock(in: savedText, with: block)
+        savedText = DiffEngine.replacingOldBlock(in: savedText, with: group.block)
     }
 
     private func rejectDiffGroup(_ group: DiffGroup) {
-        let block = TextDiffBlock(
-            startLine: group.startLine,
-            endLine: group.endLine,
-            oldLineRange: group.oldLineRange,
-            newLineRange: group.newLineRange,
-            oldLines: group.oldLines,
-            newLines: group.newLines,
-            kind: {
-                switch group.kind {
-                case .added: return .added
-                case .removed: return .removed
-                case .modified: return .modified
-                }
-            }()
-        )
-        text = DiffEngine.replacingNewBlock(in: text, with: block)
+        text = DiffEngine.replacingNewBlock(in: text, with: group.block)
         reconcileAnnotations()
     }
 
@@ -1068,7 +946,7 @@ struct LaTeXEditorView: View {
                         PDFPreviewView(
                             document: pdf,
                             syncTarget: selectedPdfTab == .compiled ? syncTarget : nil,
-                            onInverseSync: { line in syncToLine = line },
+                            onInverseSync: { result in inverseSyncResult = result },
                             fitToWidthTrigger: selectedPdfTab == .compiled ? fitToWidthTrigger : false
                         )
                     } else {
@@ -1771,7 +1649,7 @@ struct LaTeXEditorView: View {
         pendingAnnotation = nil
         selectedEditorRange = nil
         syncTarget = nil
-        syncToLine = nil
+        inverseSyncResult = nil
         errors = []
         compileOutput = ""
         loadFile()
@@ -1812,30 +1690,97 @@ struct LaTeXEditorView: View {
         )
     }
 
-    private func revealEditorLocation(for group: DiffGroup) {
-        let oldText = group.oldLines.first ?? ""
-        let newText = group.newLines.first ?? ""
-        let coreRanges = diffCoreRanges(old: oldText, new: newText)
+    private func scrollEditorToInverseSyncResult(_ result: SyncTeXInverseResult) {
+        let lines = text.components(separatedBy: "\n")
+        guard result.line > 0 && result.line <= lines.count else { return }
 
-        let columnOffset: Int
-        let highlightLength: Int
+        let lineText = lines[result.line - 1]
+        let lineNSString = lineText as NSString
+        let column = resolvedInverseSyncColumn(in: lineText, result: result)
+        let clampedColumn = min(max(column, 0), lineNSString.length)
+        revealEditorLocationForLine(
+            result.line,
+            columnOffset: clampedColumn,
+            highlightLength: inverseSyncHighlightLength(in: lineText, result: result)
+        )
+    }
 
-        switch group.kind {
-        case .added:
-            columnOffset = 0
-            highlightLength = min(max((newText as NSString).length, 1), 24)
-        case .removed:
-            columnOffset = 0
-            highlightLength = 1
-        case .modified:
-            columnOffset = coreRanges.newStart
-            highlightLength = max(1, min(coreRanges.newLength, 24))
+    private func resolvedInverseSyncColumn(in lineText: String, result: SyncTeXInverseResult) -> Int {
+        let lineNSString = lineText as NSString
+        if let column = result.column, column >= 0 {
+            return min(column, lineNSString.length)
         }
 
+        guard let context = result.context?
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              context.isEmpty == false,
+              let offset = result.offset,
+              offset >= 0 else {
+            return 0
+        }
+
+        if let fullContextRange = lineText.range(of: context, options: [.caseInsensitive]) {
+            let utf16Range = NSRange(fullContextRange, in: lineText)
+            return min(utf16Range.location + offset, lineNSString.length)
+        }
+
+        let anchor = syncHintAnchor(in: context, offset: offset)
+        if anchor.isEmpty == false,
+           let anchorRange = lineText.range(of: anchor, options: [.caseInsensitive]) {
+            return NSRange(anchorRange, in: lineText).location
+        }
+
+        return 0
+    }
+
+    private func syncHintAnchor(in context: String, offset: Int) -> String {
+        let nsContext = context as NSString
+        let length = nsContext.length
+        guard length > 0 else { return "" }
+        let clampedOffset = min(max(offset, 0), max(length - 1, 0))
+        let wordSeparators = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
+        var start = clampedOffset
+        var end = clampedOffset
+
+        while start > 0 {
+            let scalar = UnicodeScalar(nsContext.character(at: start - 1))
+            if let scalar, wordSeparators.contains(scalar) { break }
+            start -= 1
+        }
+        while end < length {
+            let scalar = UnicodeScalar(nsContext.character(at: end))
+            if let scalar, wordSeparators.contains(scalar) { break }
+            end += 1
+        }
+
+        return nsContext.substring(with: NSRange(location: start, length: max(0, end - start)))
+    }
+
+    private func inverseSyncHighlightLength(in lineText: String, result: SyncTeXInverseResult) -> Int {
+        guard let context = result.context?
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              context.isEmpty == false,
+              let offset = result.offset,
+              offset >= 0 else {
+            return 1
+        }
+
+        let anchor = syncHintAnchor(in: context, offset: offset)
+        guard anchor.isEmpty == false,
+              let anchorRange = lineText.range(of: anchor, options: [.caseInsensitive]) else {
+            return 1
+        }
+
+        return max(1, NSRange(anchorRange, in: lineText).length)
+    }
+
+    private func revealEditorLocation(for group: DiffGroup) {
         revealEditorLocationForLine(
-            max(group.startLine, 1),
-            columnOffset: columnOffset,
-            highlightLength: highlightLength
+            max(group.preferredRevealLine, 1),
+            columnOffset: group.preferredRevealColumn,
+            highlightLength: group.preferredRevealLength
         )
     }
 
@@ -1990,7 +1935,7 @@ struct LaTeXEditorView: View {
 struct PDFPreviewView: NSViewRepresentable {
     let document: PDFDocument
     var syncTarget: SyncTeXForwardResult?
-    var onInverseSync: ((Int) -> Void)?
+    var onInverseSync: ((SyncTeXInverseResult) -> Void)?
     var fitToWidthTrigger: Bool = false
 
     func makeNSView(context: Context) -> PDFView {
@@ -2057,7 +2002,7 @@ struct PDFPreviewView: NSViewRepresentable {
     @MainActor
     class Coordinator: NSObject {
         weak var pdfView: PDFView?
-        var onInverseSync: ((Int) -> Void)?
+        var onInverseSync: ((SyncTeXInverseResult) -> Void)?
         var lastFitTrigger: Bool = false
 
         @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
@@ -2079,9 +2024,41 @@ struct PDFPreviewView: NSViewRepresentable {
             guard !pdfPath.isEmpty else { return }
             let pg = pageIndex + 1
 
-            if let result = SyncTeXService.inverseSync(page: pg, x: synctexX, y: synctexY, pdfPath: pdfPath) {
-                onInverseSync?(result.line)
+            let hint = syncTeXHint(for: page, point: pagePoint)
+            if let result = SyncTeXService.inverseSync(page: pg, x: synctexX, y: synctexY, pdfPath: pdfPath, hint: hint) {
+                onInverseSync?(result)
             }
+        }
+
+        private func syncTeXHint(for page: PDFPage, point: CGPoint) -> SyncTeXHint? {
+            func normalized(_ string: String?) -> String {
+                (string ?? "")
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            let lineText = normalized(page.selectionForLine(at: point)?.string)
+            guard lineText.isEmpty == false else { return nil }
+
+            let wordText = normalized(page.selectionForWord(at: point)?.string)
+            guard wordText.isEmpty == false else {
+                return SyncTeXHint(offset: 0, context: lineText)
+            }
+
+            let nsLine = lineText as NSString
+            let wordRange = nsLine.range(of: wordText)
+            guard wordRange.location != NSNotFound else {
+                return SyncTeXHint(offset: 0, context: lineText)
+            }
+
+            let contextPadding = 24
+            let contextStart = max(0, wordRange.location - contextPadding)
+            let contextEnd = min(nsLine.length, wordRange.location + wordRange.length + contextPadding)
+            let contextRange = NSRange(location: contextStart, length: contextEnd - contextStart)
+            let context = nsLine.substring(with: contextRange)
+            let offset = wordRange.location - contextStart
+
+            return SyncTeXHint(offset: offset, context: context)
         }
     }
 }

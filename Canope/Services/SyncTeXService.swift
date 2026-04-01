@@ -9,9 +9,17 @@ struct SyncTeXForwardResult {
     let height: CGFloat
 }
 
-struct SyncTeXInverseResult {
+struct SyncTeXInverseResult: Equatable {
     let file: String
     let line: Int
+    let column: Int?
+    let offset: Int?
+    let context: String?
+}
+
+struct SyncTeXHint {
+    let offset: Int
+    let context: String
 }
 
 struct SyncTeXService {
@@ -38,16 +46,20 @@ struct SyncTeXService {
     }
 
     /// Inverse sync: PDF click position → source file + line
-    static func inverseSync(page: Int, x: CGFloat, y: CGFloat, pdfPath: String) -> SyncTeXInverseResult? {
+    static func inverseSync(page: Int, x: CGFloat, y: CGFloat, pdfPath: String, hint: SyncTeXHint? = nil) -> SyncTeXInverseResult? {
         guard let synctexPath = ExecutableLocator.find("synctex", preferredPaths: ["/Library/TeX/texbin/synctex"]) else {
             return nil
         }
 
         let result: ProcessExecutionResult
         do {
+            var args = ["edit", "-o", "\(page):\(x):\(y):\(pdfPath)"]
+            if let hint, hint.context.isEmpty == false {
+                args.append(contentsOf: ["-h", "\(max(hint.offset, 0)):\(hint.context)"])
+            }
             result = try ProcessRunner.run(
                 executable: synctexPath,
-                args: ["edit", "-o", "\(page):\(x):\(y):\(pdfPath)"],
+                args: args,
                 currentDirectory: URL(fileURLWithPath: pdfPath).deletingLastPathComponent(),
                 timeout: 10
             )
@@ -96,6 +108,9 @@ struct SyncTeXService {
     static func parseInverseOutput(_ output: String) -> SyncTeXInverseResult? {
         var inputFile: String?
         var line: Int?
+        var column: Int?
+        var offset: Int?
+        var context: String?
 
         for outputLine in output.components(separatedBy: "\n") {
             let trimmed = outputLine.trimmingCharacters(in: .whitespaces)
@@ -105,13 +120,18 @@ struct SyncTeXService {
             if line == nil, trimmed.hasPrefix("Line:") {
                 line = Int(trimmed.dropFirst(5))
             }
-
-            if let inputFile, let line, !inputFile.isEmpty, line > 0 {
-                return SyncTeXInverseResult(file: inputFile, line: line)
+            if column == nil, trimmed.hasPrefix("Column:") {
+                column = Int(trimmed.dropFirst(7))
+            }
+            if offset == nil, trimmed.hasPrefix("Offset:") {
+                offset = Int(trimmed.dropFirst(7))
+            }
+            if context == nil, trimmed.hasPrefix("Context:") {
+                context = String(trimmed.dropFirst(8))
             }
         }
 
         guard let inputFile, let line, !inputFile.isEmpty, line > 0 else { return nil }
-        return SyncTeXInverseResult(file: inputFile, line: line)
+        return SyncTeXInverseResult(file: inputFile, line: line, column: column, offset: offset, context: context)
     }
 }
