@@ -48,6 +48,7 @@ struct MainWindow: View {
     @State private var splitPaperID: UUID? = nil
     @State private var showTerminal = false
     @State private var isOpeningTeX = false
+    @State private var isImportingPDF = false
     @State private var didRestoreWorkspace = false
     @StateObject private var latexWorkspaceState = LaTeXWorkspaceUIState()
     @StateObject private var terminalWorkspaceState = TerminalWorkspaceState()
@@ -72,7 +73,10 @@ struct MainWindow: View {
     @ViewBuilder
     private var mainContentPane: some View {
         ZStack {
-            LibraryView(paperToOpen: $paperToOpen)
+            LibraryView(
+                paperToOpen: $paperToOpen,
+                isImportingPDF: $isImportingPDF
+            )
                 .opacity(selectedTab == .library ? 1 : 0)
                 .allowsHitTesting(selectedTab == .library)
 
@@ -320,31 +324,43 @@ struct MainWindow: View {
 
                 // Action buttons (right side, aligned with section row)
                 HStack(spacing: 1) {
-                    // Open .tex file (with recent files)
-                    Menu {
-                        let recents = Self.recentTeXFiles
-                        if !recents.isEmpty {
-                            ForEach(recents, id: \.self) { path in
-                                Button {
-                                    openTeXFile(URL(fileURLWithPath: path))
-                                } label: {
-                                    Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "doc.plaintext")
-                                }
-                            }
-                            Divider()
-                        }
+                    if selectedTab == .library {
                         Button {
-                            isOpeningTeX = true
+                            isImportingPDF = true
                         } label: {
-                            Label("Parcourir…", systemImage: "folder")
+                            Image(systemName: "doc.badge.plus")
+                                .font(.system(size: 11))
+                                .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
                         }
-                    } label: {
-                        Image(systemName: "doc.badge.plus")
-                            .font(.system(size: 11))
-                            .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
+                        .buttonStyle(.plain)
+                        .help("Importer un PDF")
+                    } else {
+                        // Open .tex file (with recent files)
+                        Menu {
+                            let recents = Self.recentTeXFiles
+                            if !recents.isEmpty {
+                                ForEach(recents, id: \.self) { path in
+                                    Button {
+                                        openTeXFile(URL(fileURLWithPath: path))
+                                    } label: {
+                                        Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "doc.plaintext")
+                                    }
+                                }
+                                Divider()
+                            }
+                            Button {
+                                isOpeningTeX = true
+                            } label: {
+                                Label("Parcourir…", systemImage: "folder")
+                            }
+                        } label: {
+                            Image(systemName: "doc.badge.plus")
+                                .font(.system(size: 11))
+                                .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Ouvrir un fichier .tex (⌘O)")
                     }
-                    .buttonStyle(.plain)
-                    .help("Ouvrir un fichier .tex (⌘O)")
 
                     // Split toggle
                     if case .paper = selectedTab {
@@ -438,6 +454,11 @@ struct MainWindow: View {
         ) { result in
             if let urls = try? result.get(), let url = urls.first {
                 openTeXFile(url)
+            }
+        }
+        .onChange(of: selectedTab) {
+            if selectedTab != .library {
+                isImportingPDF = false
             }
         }
         .keyboardShortcut("o", modifiers: .command)
@@ -625,6 +646,7 @@ struct TabButton: View {
 
 struct LibraryView: View {
     @Binding var paperToOpen: UUID?
+    @Binding var isImportingPDF: Bool
     @State private var sidebarSelection: SidebarSelection? = .allPapers
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showInspector = false
@@ -644,6 +666,7 @@ struct LibraryView: View {
             PaperTableView(
                 sidebarSelection: sidebarSelection ?? .allPapers,
                 inspectedPaperID: $inspectedPaperID,
+                isImporting: $isImportingPDF,
                 onOpenPaper: { paper in
                     paperToOpen = paper.id
                 }

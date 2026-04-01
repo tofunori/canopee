@@ -5,13 +5,13 @@ import UniformTypeIdentifiers
 struct PaperTableView: View {
     let sidebarSelection: SidebarSelection
     @Binding var inspectedPaperID: UUID?
+    @Binding var isImporting: Bool
     var onOpenPaper: (Paper) -> Void
     @Query(sort: \Paper.dateAdded, order: .reverse) private var allPapers: [Paper]
     @Query(sort: \PaperCollection.sortOrder) private var allCollections: [PaperCollection]
     @Environment(\.modelContext) private var modelContext
     @State private var selection = Set<UUID>()
     @State private var sortOrder = [KeyPathComparator(\Paper.dateAdded, order: .reverse)]
-    @State private var isImporting = false
     @State private var searchText = ""
 
     private var filteredPapers: [Paper] {
