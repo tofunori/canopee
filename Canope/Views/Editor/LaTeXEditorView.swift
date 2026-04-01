@@ -38,6 +38,8 @@ struct LaTeXEditorView: View {
         let id = UUID()
         let startLine: Int
         let endLine: Int
+        let oldLineRange: Range<Int>
+        let newLineRange: Range<Int>
         let oldLines: [String]
         let newLines: [String]
         let kind: Kind
@@ -45,6 +47,8 @@ struct LaTeXEditorView: View {
         static func == (lhs: DiffGroup, rhs: DiffGroup) -> Bool {
             lhs.startLine == rhs.startLine &&
             lhs.endLine == rhs.endLine &&
+            lhs.oldLineRange == rhs.oldLineRange &&
+            lhs.newLineRange == rhs.newLineRange &&
             lhs.oldLines == rhs.oldLines &&
             lhs.newLines == rhs.newLines &&
             lhs.kind == rhs.kind
@@ -172,6 +176,8 @@ struct LaTeXEditorView: View {
             DiffGroup(
                 startLine: block.startLine,
                 endLine: block.endLine,
+                oldLineRange: block.oldLineRange,
+                newLineRange: block.newLineRange,
                 oldLines: block.oldLines,
                 newLines: block.newLines,
                 kind: {
@@ -952,21 +958,41 @@ struct LaTeXEditorView: View {
     }
 
     private func acceptDiffGroup(_ group: DiffGroup) {
-        var baselineLines = savedText.components(separatedBy: "\n")
-        let targetIndex = min(max(0, group.startLine - 1), baselineLines.count)
-        let replaceCount = min(group.oldLines.count, max(0, baselineLines.count - targetIndex))
-        baselineLines.replaceSubrange(targetIndex..<(targetIndex + replaceCount), with: group.newLines)
-
-        savedText = baselineLines.joined(separator: "\n")
+        let block = TextDiffBlock(
+            startLine: group.startLine,
+            endLine: group.endLine,
+            oldLineRange: group.oldLineRange,
+            newLineRange: group.newLineRange,
+            oldLines: group.oldLines,
+            newLines: group.newLines,
+            kind: {
+                switch group.kind {
+                case .added: return .added
+                case .removed: return .removed
+                case .modified: return .modified
+                }
+            }()
+        )
+        savedText = DiffEngine.replacingOldBlock(in: savedText, with: block)
     }
 
     private func rejectDiffGroup(_ group: DiffGroup) {
-        var currentLines = text.components(separatedBy: "\n")
-        let targetIndex = min(max(0, group.startLine - 1), currentLines.count)
-        let replaceCount = min(group.newLines.count, max(0, currentLines.count - targetIndex))
-        currentLines.replaceSubrange(targetIndex..<(targetIndex + replaceCount), with: group.oldLines)
-
-        text = currentLines.joined(separator: "\n")
+        let block = TextDiffBlock(
+            startLine: group.startLine,
+            endLine: group.endLine,
+            oldLineRange: group.oldLineRange,
+            newLineRange: group.newLineRange,
+            oldLines: group.oldLines,
+            newLines: group.newLines,
+            kind: {
+                switch group.kind {
+                case .added: return .added
+                case .removed: return .removed
+                case .modified: return .modified
+                }
+            }()
+        )
+        text = DiffEngine.replacingNewBlock(in: text, with: block)
         reconcileAnnotations()
     }
 
@@ -1772,9 +1798,9 @@ struct LaTeXEditorView: View {
         guard lineNumber > 0 && lineNumber <= lines.count else { return }
         var charOffset = 0
         for i in 0..<(lineNumber - 1) {
-            charOffset += lines[i].count + 1
+            charOffset += (lines[i] as NSString).length + 1
         }
-        let lineLength = lines[lineNumber - 1].count
+        let lineLength = (lines[lineNumber - 1] as NSString).length
         let range = NSRange(location: charOffset, length: lineLength)
         NotificationCenter.default.post(
             name: .syncTeXScrollToLine,
@@ -2012,9 +2038,16 @@ struct PDFPreviewView: NSViewRepresentable {
         // Forward sync: scroll to target
         if let target = syncTarget,
            let page = document.page(at: target.page - 1) {
-            let pageBounds = page.bounds(for: .mediaBox)
-            let pdfKitY = pageBounds.height - target.v
-            let rect = CGRect(x: target.h, y: pdfKitY, width: max(target.width, 100), height: max(target.height, 14))
+            let displayBox = pdfView.displayBox
+            let pageBounds = page.bounds(for: displayBox)
+            let pdfKitX = pageBounds.minX + target.h
+            let pdfKitY = pageBounds.maxY - target.v
+            let rect = CGRect(
+                x: pdfKitX,
+                y: pdfKitY,
+                width: max(target.width, 100),
+                height: max(target.height, 14)
+            )
             pdfView.go(to: rect, on: page)
         }
     }
@@ -2036,10 +2069,11 @@ struct PDFPreviewView: NSViewRepresentable {
                   let pageIndex = pdfView.document?.index(for: page) else { return }
 
             let pagePoint = pdfView.convert(locationInView, to: page)
-            let pageBounds = page.bounds(for: .mediaBox)
+            let displayBox = pdfView.displayBox
+            let pageBounds = page.bounds(for: displayBox)
 
-            let synctexX = pagePoint.x
-            let synctexY = pageBounds.height - pagePoint.y
+            let synctexX = pagePoint.x - pageBounds.minX
+            let synctexY = pageBounds.maxY - pagePoint.y
 
             let pdfPath = pdfView.document?.documentURL?.path ?? ""
             guard !pdfPath.isEmpty else { return }

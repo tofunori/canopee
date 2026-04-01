@@ -60,36 +60,58 @@ struct SyncTeXService {
     }
 
     static func parseForwardOutput(_ output: String) -> SyncTeXForwardResult? {
-        var page = 0
-        var h: CGFloat = 0
-        var v: CGFloat = 0
-        var width: CGFloat = 0
-        var height: CGFloat = 0
+        var page: Int?
+        var h: CGFloat?
+        var v: CGFloat?
+        var width: CGFloat?
+        var height: CGFloat?
 
         for outputLine in output.components(separatedBy: "\n") {
             let trimmed = outputLine.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("Page:") { page = Int(trimmed.dropFirst(5)) ?? 0 }
-            if trimmed.hasPrefix("h:") { h = CGFloat(Double(trimmed.dropFirst(2)) ?? 0) }
-            if trimmed.hasPrefix("v:") { v = CGFloat(Double(trimmed.dropFirst(2)) ?? 0) }
-            if trimmed.hasPrefix("W:") { width = CGFloat(Double(trimmed.dropFirst(2)) ?? 0) }
-            if trimmed.hasPrefix("H:") { height = CGFloat(Double(trimmed.dropFirst(2)) ?? 0) }
+            if page == nil, trimmed.hasPrefix("Page:") {
+                page = Int(trimmed.dropFirst(5))
+            }
+            if h == nil, trimmed.hasPrefix("h:") {
+                h = CGFloat(Double(trimmed.dropFirst(2)) ?? 0)
+            }
+            if v == nil, trimmed.hasPrefix("v:") {
+                v = CGFloat(Double(trimmed.dropFirst(2)) ?? 0)
+            }
+            if width == nil, trimmed.hasPrefix("W:") {
+                width = CGFloat(Double(trimmed.dropFirst(2)) ?? 0)
+            }
+            if height == nil, trimmed.hasPrefix("H:") {
+                height = CGFloat(Double(trimmed.dropFirst(2)) ?? 0)
+            }
+
+            if let page, let h, let v, let width, let height {
+                return SyncTeXForwardResult(page: page, h: h, v: v, width: width, height: height)
+            }
         }
 
-        guard page > 0 else { return nil }
+        guard let page, let h, let v, let width, let height, page > 0 else { return nil }
         return SyncTeXForwardResult(page: page, h: h, v: v, width: width, height: height)
     }
 
     static func parseInverseOutput(_ output: String) -> SyncTeXInverseResult? {
-        var inputFile = ""
-        var line = 0
+        var inputFile: String?
+        var line: Int?
 
         for outputLine in output.components(separatedBy: "\n") {
             let trimmed = outputLine.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("Input:") { inputFile = String(trimmed.dropFirst(6)) }
-            if trimmed.hasPrefix("Line:") { line = Int(trimmed.dropFirst(5)) ?? 0 }
+            if inputFile == nil, trimmed.hasPrefix("Input:") {
+                inputFile = String(trimmed.dropFirst(6))
+            }
+            if line == nil, trimmed.hasPrefix("Line:") {
+                line = Int(trimmed.dropFirst(5))
+            }
+
+            if let inputFile, let line, !inputFile.isEmpty, line > 0 {
+                return SyncTeXInverseResult(file: inputFile, line: line)
+            }
         }
 
-        guard !inputFile.isEmpty, line > 0 else { return nil }
+        guard let inputFile, let line, !inputFile.isEmpty, line > 0 else { return nil }
         return SyncTeXInverseResult(file: inputFile, line: line)
     }
 }

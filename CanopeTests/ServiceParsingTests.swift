@@ -53,6 +53,55 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(result?.line, 87)
     }
 
+    func testParseInverseSyncOutputKeepsFirstMatchWhenMultipleRecordsAreReturned() {
+        let output = """
+        SyncTeX result begin
+        Output:/tmp/project/main.pdf
+        Input:/tmp/project/main.tex
+        Line:87
+        Column:-1
+        SyncTeX result end
+        SyncTeX result begin
+        Output:/tmp/project/main.pdf
+        Input:/tmp/project/other.tex
+        Line:144
+        Column:-1
+        SyncTeX result end
+        """
+
+        let result = SyncTeXService.parseInverseOutput(output)
+
+        XCTAssertEqual(result?.file, "/tmp/project/main.tex")
+        XCTAssertEqual(result?.line, 87)
+    }
+
+    func testParseForwardSyncOutputKeepsFirstMatchWhenMultipleRecordsAreReturned() {
+        let output = """
+        SyncTeX result begin
+        Page:2
+        h:120.5
+        v:480.25
+        W:40
+        H:12
+        SyncTeX result end
+        SyncTeX result begin
+        Page:5
+        h:42
+        v:84
+        W:20
+        H:10
+        SyncTeX result end
+        """
+
+        let result = SyncTeXService.parseForwardOutput(output)
+
+        XCTAssertEqual(result?.page, 2)
+        XCTAssertEqual(Double(result?.h ?? 0), 120.5, accuracy: 0.001)
+        XCTAssertEqual(Double(result?.v ?? 0), 480.25, accuracy: 0.001)
+        XCTAssertEqual(Double(result?.width ?? 0), 40, accuracy: 0.001)
+        XCTAssertEqual(Double(result?.height ?? 0), 12, accuracy: 0.001)
+    }
+
     func testProcessRunnerCapturesStdoutAndStderr() throws {
         let result = try ProcessRunner.run(
             executable: "/bin/sh",
@@ -136,6 +185,71 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(state.selection.start.character, 0)
         XCTAssertEqual(state.selection.end.line, 1)
         XCTAssertEqual(state.selection.end.character, 4)
+    }
+
+    func testDiffEngineBlocksPreserveRemovedLineSpan() {
+        let blocks = DiffEngine.blocks(
+            old: "alpha\nbeta\ngamma\ndelta",
+            new: "alpha\ndelta"
+        )
+
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(blocks.first?.kind, .removed)
+        XCTAssertEqual(blocks.first?.oldLines, ["beta", "gamma"])
+        XCTAssertEqual(blocks.first?.newLines, [])
+        XCTAssertEqual(blocks.first?.startLine, 2)
+        XCTAssertEqual(blocks.first?.endLine, 3)
+        XCTAssertEqual(blocks.first?.oldLineRange, 1..<3)
+        XCTAssertEqual(blocks.first?.newLineRange, 1..<1)
+    }
+
+    func testDiffEngineReplaceBlockPreservesTrailingNewline() {
+        let blocks = DiffEngine.blocks(
+            old: "alpha\nbeta\n",
+            new: "alpha\ngamma\n"
+        )
+        guard let block = blocks.first else {
+            return XCTFail("Expected a diff block")
+        }
+
+        let accepted = DiffEngine.replacingOldBlock(in: "alpha\nbeta\n", with: block)
+        let rejected = DiffEngine.replacingNewBlock(in: "alpha\ngamma\n", with: block)
+
+        XCTAssertEqual(accepted, "alpha\ngamma\n")
+        XCTAssertEqual(rejected, "alpha\nbeta\n")
+    }
+
+    func testDiffEngineBlocksIgnorePhantomTrailingEmptyLine() {
+        let blocks = DiffEngine.blocks(
+            old: "alpha\n",
+            new: "alpha\n"
+        )
+
+        XCTAssertTrue(blocks.isEmpty)
+    }
+
+    func testDiffEngineInlinePresentationTracksInsertionsAndDeletions() {
+        let presentation = DiffEngine.inlinePresentation(
+            old: "sexualite humaine",
+            new: "sexualite tres humaine"
+        )
+
+        XCTAssertEqual(presentation.insertedRanges, [
+            NSRange(location: 10, length: 5)
+        ])
+        XCTAssertTrue(presentation.deletedWidgets.isEmpty)
+    }
+
+    func testDiffEngineInlinePresentationKeepsDeletedWidgetAnchor() {
+        let presentation = DiffEngine.inlinePresentation(
+            old: "organismes vivants",
+            new: "organismes"
+        )
+
+        XCTAssertTrue(presentation.insertedRanges.isEmpty)
+        XCTAssertEqual(presentation.deletedWidgets, [
+            .init(anchorOffset: 10, text: " vivants")
+        ])
     }
 
     func testClaudeCLIWrapperServicePrependsWrapperDirectoryToPATHOnce() {

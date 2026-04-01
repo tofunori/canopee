@@ -9,6 +9,9 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     from: "1.2.0"
+  DiffMatchPatch:
+    url: https://github.com/PasiSalenius/DiffMatchPatch
+    branch: main
 
 targets:
   Canope:
@@ -20,6 +23,8 @@ targets:
         buildPhase: resources
     dependencies:
       - package: SwiftTerm
+      - product: diff-match-patch
+        package: DiffMatchPatch
     scheme:
       testTargets:
         - CanopeTests

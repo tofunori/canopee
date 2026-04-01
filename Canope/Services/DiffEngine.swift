@@ -1,4 +1,5 @@
 import Foundation
+import diff_match_patch
 
 enum LineDiffType: Equatable {
     case unchanged
@@ -22,9 +23,21 @@ struct TextDiffBlock: Identifiable, Equatable {
     let id = UUID()
     let startLine: Int
     let endLine: Int
+    let oldLineRange: Range<Int>
+    let newLineRange: Range<Int>
     let oldLines: [String]
     let newLines: [String]
     let kind: TextDiffBlockKind
+}
+
+struct InlineDiffPresentation: Equatable {
+    struct DeletedWidget: Equatable {
+        let anchorOffset: Int
+        let text: String
+    }
+
+    let insertedRanges: [NSRange]
+    let deletedWidgets: [DeletedWidget]
 }
 
 struct LineDiff: Identifiable, Equatable {
@@ -39,6 +52,47 @@ struct LineDiff: Identifiable, Equatable {
 }
 
 struct DiffEngine {
+    struct LineDocument: Equatable {
+        let lines: [String]
+        let endsWithNewline: Bool
+
+        static func parse(_ text: String) -> LineDocument {
+            let nsText = text as NSString
+            guard nsText.length > 0 else {
+                return LineDocument(lines: [], endsWithNewline: false)
+            }
+
+            var lines: [String] = []
+            var index = 0
+
+            while index < nsText.length {
+                var lineStart = 0
+                var lineEnd = 0
+                var contentsEnd = 0
+                nsText.getLineStart(&lineStart, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: index, length: 0))
+                let contentRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
+                lines.append(nsText.substring(with: contentRange))
+                index = lineEnd
+            }
+
+            let endsWithNewline = nsText.character(at: nsText.length - 1) == 0x0A
+            return LineDocument(lines: lines, endsWithNewline: endsWithNewline)
+        }
+
+        func replacingLines(in range: Range<Int>, with replacement: [String]) -> String {
+            var updatedLines = lines
+            let lowerBound = min(max(range.lowerBound, 0), updatedLines.count)
+            let upperBound = min(max(range.upperBound, lowerBound), updatedLines.count)
+            updatedLines.replaceSubrange(lowerBound..<upperBound, with: replacement)
+            return LineDocument(lines: updatedLines, endsWithNewline: endsWithNewline).string
+        }
+
+        var string: String {
+            let joined = lines.joined(separator: "\n")
+            guard endsWithNewline else { return joined }
+            return joined + "\n"
+        }
+    }
 
     static func lineSegments(old: [String], new: [String]) -> [TextDiffSegment] {
         let dp = lcsMatrix(old: old, new: new)
@@ -94,8 +148,10 @@ struct DiffEngine {
     }
 
     static func blocks(old: String, new: String) -> [TextDiffBlock] {
-        let oldLines = old.components(separatedBy: "\n")
-        let newLines = new.components(separatedBy: "\n")
+        let oldDocument = LineDocument.parse(old)
+        let newDocument = LineDocument.parse(new)
+        let oldLines = oldDocument.lines
+        let newLines = newDocument.lines
 
         return lineSegments(old: oldLines, new: newLines).compactMap { segment in
             let removedLines = Array(oldLines[segment.oldRange])
@@ -113,16 +169,80 @@ struct DiffEngine {
 
             let fallbackLineCount = max(newLines.count, 1)
             let anchorLine = max(1, min(segment.newRange.lowerBound + 1, fallbackLineCount))
-            let span = max(addedLines.count, 1)
+            let span = max(removedLines.count, addedLines.count, 1)
 
             return TextDiffBlock(
                 startLine: anchorLine,
                 endLine: max(anchorLine, anchorLine + span - 1),
+                oldLineRange: segment.oldRange,
+                newLineRange: segment.newRange,
                 oldLines: removedLines,
                 newLines: addedLines,
                 kind: kind
             )
         }
+    }
+
+    static func replacingOldBlock(in baselineText: String, with block: TextDiffBlock) -> String {
+        LineDocument.parse(baselineText).replacingLines(in: block.oldLineRange, with: block.newLines)
+    }
+
+    static func replacingNewBlock(in currentText: String, with block: TextDiffBlock) -> String {
+        LineDocument.parse(currentText).replacingLines(in: block.newLineRange, with: block.oldLines)
+    }
+
+    static func inlinePresentation(old: String, new: String) -> InlineDiffPresentation {
+        guard old != new else {
+            return InlineDiffPresentation(insertedRanges: [], deletedWidgets: [])
+        }
+
+        let dmp = DiffMatchPatch()
+        let mutableDiffs = dmp.diff_main(ofOldString: old, andNewString: new)
+        dmp.diff_cleanupSemantic(mutableDiffs)
+
+        guard let diffs = mutableDiffs as? [Diff] else {
+            return InlineDiffPresentation(insertedRanges: [], deletedWidgets: [])
+        }
+
+        var insertedRanges: [NSRange] = []
+        var deletedWidgets: [InlineDiffPresentation.DeletedWidget] = []
+        var oldOffset = 0
+        var newOffset = 0
+
+        for diff in diffs {
+            let text = diff.text ?? ""
+            let utf16Length = (text as NSString).length
+            guard utf16Length > 0 else { continue }
+
+            switch diff.operation {
+            case DIFF_EQUAL:
+                oldOffset += utf16Length
+                newOffset += utf16Length
+            case DIFF_INSERT:
+                insertedRanges.append(NSRange(location: newOffset, length: utf16Length))
+                newOffset += utf16Length
+            case DIFF_DELETE:
+                if let lastIndex = deletedWidgets.indices.last,
+                   deletedWidgets[lastIndex].anchorOffset == newOffset {
+                    let last = deletedWidgets[lastIndex]
+                    deletedWidgets[lastIndex] = .init(
+                        anchorOffset: last.anchorOffset,
+                        text: last.text + text
+                    )
+                } else {
+                    deletedWidgets.append(.init(anchorOffset: newOffset, text: text))
+                }
+                oldOffset += utf16Length
+            default:
+                oldOffset += utf16Length
+                newOffset += utf16Length
+            }
+        }
+
+        return InlineDiffPresentation(
+            insertedRanges: insertedRanges,
+            deletedWidgets: deletedWidgets
+        )
     }
 
     /// Compare old and new text, return diffs indexed by new line numbers.
