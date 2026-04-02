@@ -24,6 +24,7 @@ DEFAULT_STATE_FILE = os.environ.get(
 DEFAULT_COMMAND_FILE = Path("/tmp/canope_bridge_commands.json")
 DEFAULT_RESULT_FILE = Path("/tmp/canope_bridge_command_result.json")
 DEFAULT_LOG_FILE = Path(os.environ.get("CANOPE_IDE_BRIDGE_LOG", "/tmp/canope-ide-bridge.log"))
+DEFAULT_PAPER_FILE = Path(os.environ.get("CANOPE_PAPER", "/tmp/canope_paper.txt"))
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {
     "name": "canope-claude-ide-bridge",
@@ -44,6 +45,11 @@ TOOLS = [
     {
         "name": "getLatestSelection",
         "description": "Get the most recent text selection, even if the editor focus changed.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "getCurrentPaper",
+        "description": "Get the currently open PDF or paper context from Canope, including metadata and extracted text when available.",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
@@ -324,6 +330,28 @@ class BridgeState:
         }
         return normalized
 
+    def current_paper_payload(self) -> dict:
+        selection_payload = self.current_selection_payload()
+        try:
+            content = DEFAULT_PAPER_FILE.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            content = ""
+        except OSError:
+            content = ""
+
+        preview = "\n".join(content.splitlines()[:24]).strip()
+        selected_file_path = selection_payload.get("filePath", "")
+        selected_file_url = selection_payload.get("fileUrl", "")
+        is_pdf_selection = selected_file_path.lower().endswith(".pdf")
+        return {
+            "success": bool(content) or is_pdf_selection,
+            "filePath": selected_file_path if is_pdf_selection else str(DEFAULT_PAPER_FILE),
+            "fileUrl": selected_file_url if is_pdf_selection else "",
+            "content": content,
+            "preview": preview,
+            "hasExtractedText": bool(content),
+        }
+
     def _load_notification(self) -> Optional[str]:
         payload = self.current_selection_payload()
         selection = payload.get("selection") or {}
@@ -551,6 +579,7 @@ class CanopeBridgeHandler(BaseHTTPRequestHandler):
 
     def _handle_tool_call(self, name: Optional[str], arguments: dict) -> dict:
         selection_payload = self.server.bridge_state.current_selection_payload()
+        paper_payload = self.server.bridge_state.current_paper_payload()
         file_path = selection_payload["filePath"]
         file_url = selection_payload["fileUrl"]
         workspace_path = str(Path(file_path).parent) if file_path else ""
@@ -576,6 +605,16 @@ class CanopeBridgeHandler(BaseHTTPRequestHandler):
                 )
             return {"content": [{"type": "text", "text": text}]}
 
+        if name == "getCurrentPaper":
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(paper_payload, separators=(",", ":")),
+                    }
+                ]
+            }
+
         if name == "getOpenEditors":
             tabs = []
             if file_path:
@@ -585,6 +624,16 @@ class CanopeBridgeHandler(BaseHTTPRequestHandler):
                         "isActive": True,
                         "label": Path(file_path).name,
                         "languageId": "latex",
+                        "isDirty": False,
+                    }
+                )
+            if paper_payload["success"]:
+                tabs.append(
+                    {
+                        "uri": f"file://{DEFAULT_PAPER_FILE}",
+                        "isActive": not bool(file_path),
+                        "label": "Current PDF",
+                        "languageId": "pdf",
                         "isDirty": False,
                     }
                 )

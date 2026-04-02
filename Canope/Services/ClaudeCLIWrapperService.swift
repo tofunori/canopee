@@ -191,6 +191,15 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
         """
     }
 
+    static func canopeCodexDeveloperInstructions() -> String {
+        """
+        When the user asks about the current selection in Canope, first use the Canope MCP tools getCurrentSelection or getLatestSelection before asking the user to paste text.
+        When the user asks which PDF, paper, article, or document is currently open in Canope, first use the Canope MCP tool getCurrentPaper before answering.
+        If getCurrentPaper reports success, do not say that no PDF is attached or open.
+        Only fall back to reading /tmp/canopee_paper.txt directly if the getCurrentPaper tool is unavailable.
+        """
+    }
+
     static func wrapperScript(realClaudePath: String) -> String {
         let escapedRealClaudePath = shellSingleQuoted(realClaudePath)
         let escapedSystemPrompt = shellSingleQuoted(canopeSessionSystemPrompt())
@@ -232,11 +241,13 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
     static func codexWrapperScript(realCodexPath: String) -> String {
         let escapedRealCodexPath = shellSingleQuoted(realCodexPath)
         let escapedBridgeURL = shellSingleQuoted(CanopeContextFiles.claudeIDEBridgeURL)
+        let escapedDeveloperInstructions = shellSingleQuoted(canopeCodexDeveloperInstructions())
 
         return """
         #!/bin/sh
         REAL_CODEX=\(escapedRealCodexPath)
         BRIDGE_URL="${CANOPE_IDE_BRIDGE_URL:-${CANOPE_CLAUDE_IDE_BRIDGE_URL:-\(escapedBridgeURL)}}"
+        DEVELOPER_INSTRUCTIONS=\(escapedDeveloperInstructions)
 
         if [ -z "$BRIDGE_URL" ]; then
           exec "$REAL_CODEX" "$@"
@@ -257,6 +268,8 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
         esac
 
         exec "$REAL_CODEX" \
+          -c "instructions=\\"$DEVELOPER_INSTRUCTIONS\\"" \
+          -c "developer_instructions=\\"$DEVELOPER_INSTRUCTIONS\\"" \
           -c "mcp_servers.canope.type=\\"stdio\\"" \
           -c "mcp_servers.canope.command=\\"npx\\"" \
           -c "mcp_servers.canope.args=[\\"-y\\",\\"mcp-remote\\",\\"$BRIDGE_URL\\",\\"--transport\\",\\"sse-only\\"]" \

@@ -6,6 +6,7 @@ final class ClaudeIDEBridgeService: @unchecked Sendable {
 
     private let lock = NSLock()
     private var bridgeProcess: Process?
+    private var didRefreshExternalBridge = false
 
     private init() {}
 
@@ -13,11 +14,20 @@ final class ClaudeIDEBridgeService: @unchecked Sendable {
         CanopeContextFiles.writeClaudeIDEMcpConfig()
         BridgeCommandWatcher.shared.start()
 
-        if isBridgeHealthy() {
-            return
-        }
-
         lock.withLock {
+            if let bridgeProcess, bridgeProcess.isRunning {
+                return
+            }
+
+            if !didRefreshExternalBridge, isBridgeHealthy() {
+                terminateExternalBridgeProcesses()
+                didRefreshExternalBridge = true
+            }
+
+            if isBridgeHealthy() {
+                return
+            }
+
             if let bridgeProcess, bridgeProcess.isRunning {
                 return
             }
@@ -65,6 +75,7 @@ final class ClaudeIDEBridgeService: @unchecked Sendable {
             do {
                 try process.run()
                 bridgeProcess = process
+                didRefreshExternalBridge = true
                 ChildProcessRegistry.shared.track(process: process)
             } catch {
                 bridgeProcess = nil
@@ -114,6 +125,18 @@ final class ClaudeIDEBridgeService: @unchecked Sendable {
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
                 connect(socketFD, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.stride)) == 0
             }
+        }
+    }
+
+    private func terminateExternalBridgeProcesses() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        process.arguments = ["-f", "canope_claude_ide_bridge.py"]
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            print("[Canope] Unable to refresh old bridge processes: \(error.localizedDescription)")
         }
     }
 }

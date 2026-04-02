@@ -367,6 +367,8 @@ final class ServiceParsingTests: XCTestCase {
         let script = ClaudeCLIWrapperService.codexWrapperScript(realCodexPath: "/opt/homebrew/bin/codex")
 
         XCTAssertTrue(script.contains("REAL_CODEX='/opt/homebrew/bin/codex'"))
+        XCTAssertTrue(script.contains("instructions=\\\"$DEVELOPER_INSTRUCTIONS\\\""))
+        XCTAssertTrue(script.contains("developer_instructions=\\\"$DEVELOPER_INSTRUCTIONS\\\""))
         XCTAssertTrue(script.contains("mcp_servers.canope.type=\\\"stdio\\\""))
         XCTAssertTrue(script.contains("mcp_servers.canope.command=\\\"npx\\\""))
         XCTAssertTrue(script.contains("mcp_servers.canope.args=[\\\"-y\\\",\\\"mcp-remote\\\",\\\"$BRIDGE_URL\\\",\\\"--transport\\\",\\\"sse-only\\\"]"))
@@ -374,6 +376,14 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertTrue(script.contains("mcp-remote"))
         XCTAssertTrue(script.contains("--transport"))
         XCTAssertTrue(script.contains("sse-only"))
+    }
+
+    func testCodexDeveloperInstructionsReferenceCurrentPaperTool() {
+        let prompt = ClaudeCLIWrapperService.canopeCodexDeveloperInstructions()
+
+        XCTAssertTrue(prompt.contains("getCurrentSelection"))
+        XCTAssertTrue(prompt.contains("getCurrentPaper"))
+        XCTAssertTrue(prompt.contains("no PDF is attached"))
     }
 
     func testClaudeCLIWrapperApplyKeepsWrapperVisibleInsideLoginZsh() throws {
@@ -424,5 +434,42 @@ final class ServiceParsingTests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("/tmp/canope-cli-bin/codex"))
+    }
+
+    func testBridgeCommandWatcherNormalizedBridgeTextCollapsesPDFFormattingNoise() {
+        let normalized = BridgeCommandWatcher.normalizedBridgeText("L’e\u{0301}volution-\nhumaine\u{00A0} \n")
+
+        XCTAssertEqual(normalized, "l'evolutionhumaine")
+    }
+
+    func testBridgeCommandWatcherSearchVariantsIncludeWhitespaceAndPunctuationFallbacks() {
+        let variants = BridgeCommandWatcher.searchVariants(for: "L’evolution-\n humaine")
+
+        XCTAssertTrue(variants.contains("L’evolution-\n humaine"))
+        XCTAssertTrue(variants.contains("L'evolution- humaine") || variants.contains("L'evolution-\n humaine"))
+        XCTAssertTrue(variants.contains("L'evolution humaine") || variants.contains("L'evolution- humaine"))
+        XCTAssertFalse(variants.isEmpty)
+    }
+
+    func testBridgeCommandWatcherMatchScorePrefersExactPageAndExactText() {
+        let target = BridgeCommandWatcher.normalizedBridgeText("Les resultats principaux")
+        let exactScore = BridgeCommandWatcher.bridgeMatchScore(
+            originalText: "Les resultats principaux",
+            candidateText: "Les resultats principaux",
+            normalizedTarget: target,
+            pageHint: 5,
+            candidatePages: [5],
+            variantIndex: 0
+        )
+        let weakerScore = BridgeCommandWatcher.bridgeMatchScore(
+            originalText: "Les resultats principaux",
+            candidateText: "Les resultats principaux",
+            normalizedTarget: target,
+            pageHint: 5,
+            candidatePages: [2],
+            variantIndex: 2
+        )
+
+        XCTAssertGreaterThan(exactScore, weakerScore)
     }
 }
