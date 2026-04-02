@@ -797,6 +797,7 @@ struct LaTeXEditorContainer: View {
         workspaceState.referencePaperIDs = referenceIDs
         workspaceState.selectedReferencePaperID = snapshot.selectedReferencePaperID
         workspaceState.referencePDFs = loadReferencePDFs(for: referenceIDs)
+        workspaceState.referencePDFUIStates = Dictionary(uniqueKeysWithValues: referenceIDs.map { ($0, ReferencePDFUIState()) })
 
         if let selectedID = workspaceState.selectedReferencePaperID,
            !referenceIDs.contains(selectedID) {

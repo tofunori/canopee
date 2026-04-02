@@ -682,6 +682,18 @@ struct LaTeXEditorView: View {
     }
 
     private var annotationSidebar: some View {
+        Group {
+            if let referenceID = activeReferencePDFID,
+               let document = activeReferencePDFDocument,
+               let state = activeReferencePDFState {
+                referenceAnnotationSidebar(referenceID: referenceID, document: document, state: state)
+            } else {
+                latexAnnotationSidebar
+            }
+        }
+    }
+
+    private var latexAnnotationSidebar: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Label("Annotations", systemImage: "note.text")
@@ -736,6 +748,52 @@ struct LaTeXEditorView: View {
                     .padding(.vertical, 8)
                 }
             }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func referenceAnnotationSidebar(
+        referenceID: UUID,
+        document: PDFDocument,
+        state: ReferencePDFUIState
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Label("Annotations", systemImage: "note.text")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Spacer()
+                if activeReferenceAnnotationCount > 0 {
+                    Text("\(activeReferenceAnnotationCount)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            Divider()
+
+            AnnotationSidebarView(
+                document: document,
+                selectedAnnotation: Binding(
+                    get: { state.selectedAnnotation },
+                    set: { state.selectedAnnotation = $0 }
+                ),
+                onNavigate: { annotation in
+                    state.selectedAnnotation = annotation
+                },
+                onDelete: { annotation in
+                    deleteReferenceAnnotation(annotation, in: referenceID)
+                },
+                onEditNote: { annotation in
+                    beginEditingReferenceAnnotationNote(annotation, in: referenceID)
+                }
+            )
+            .id(state.annotationRefreshToken)
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -1096,9 +1154,34 @@ struct LaTeXEditorView: View {
         }
     }
 
+    private var activeReferencePDFID: UUID? {
+        if case .reference(let id) = selectedPdfTab { return id }
+        return nil
+    }
+
+    private var activeReferencePDFDocument: PDFDocument? {
+        guard let id = activeReferencePDFID else { return nil }
+        return workspaceState.referencePDFs[id]
+    }
+
+    private var activeReferencePDFState: ReferencePDFUIState? {
+        guard let id = activeReferencePDFID else { return nil }
+        return workspaceState.referencePDFUIStates[id]
+    }
+
     private var isShowingReference: Bool {
         if case .reference = selectedPdfTab { return true }
         return false
+    }
+
+    private var activeReferenceAnnotationCount: Int {
+        guard let document = activeReferencePDFDocument else { return 0 }
+        return (0..<document.pageCount).reduce(0) { count, pageIndex in
+            guard let page = document.page(at: pageIndex) else { return count }
+            return count + page.annotations.filter { annotation in
+                annotation.type != "Link" && annotation.type != "Widget"
+            }.count
+        }
     }
 
     private func paperFor(_ id: UUID) -> Paper? {
@@ -1119,27 +1202,6 @@ struct LaTeXEditorView: View {
                 .frame(height: EditorChromeMetrics.tabBarHeight)
                 .background(.bar)
                 Divider()
-            }
-
-            // Toolbar for reference tabs
-            if isShowingReference {
-                HStack(spacing: 6) {
-                    Spacer()
-                    Button { fitToWidth() } label: {
-                        Image(systemName: "arrow.left.and.right.square")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Ajuster à la largeur")
-                    Button { refreshCurrentReference() } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Actualiser (annotations)")
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
             }
 
             // PDF content — each tab keeps its own PDFView to preserve scroll position
@@ -1169,12 +1231,29 @@ struct LaTeXEditorView: View {
                     if case .reference(let id) = tab { return id } else { return nil }
                 }, id: \.self) { id in
                     Group {
-                        if let pdf = workspaceState.referencePDFs[id] {
-                            PDFPreviewView(
+                        if let pdf = workspaceState.referencePDFs[id],
+                           let state = workspaceState.referencePDFUIStates[id],
+                           let paper = paperFor(id) {
+                            ReferencePDFAnnotationPane(
                                 document: pdf,
-                                syncTarget: nil,
-                                onInverseSync: nil,
-                                fitToWidthTrigger: selectedPdfTab == .reference(id) ? fitToWidthTrigger : false
+                                fileURL: paper.fileURL,
+                                fitToWidthTrigger: selectedPdfTab == .reference(id) ? fitToWidthTrigger : false,
+                                state: state,
+                                onDocumentChanged: {
+                                    referencePDFDocumentDidChange(id: id)
+                                },
+                                onMarkupAppearanceNeedsRefresh: {
+                                    reloadReferencePDFDocument(id: id)
+                                },
+                                onSaveNote: {
+                                    saveReferenceAnnotationNote(for: id)
+                                },
+                                onCancelNote: {
+                                    cancelReferenceAnnotationNoteEdit(for: id)
+                                },
+                                onAutoSave: {
+                                    saveReferencePDF(id: id)
+                                }
                             )
                         } else {
                             ContentUnavailableView(
@@ -1374,6 +1453,30 @@ struct LaTeXEditorView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Ordre des panneaux")
+            }
+
+            if let referenceState = activeReferencePDFState {
+                ReferencePDFToolCluster(state: referenceState)
+
+                ReferencePDFActionsCluster(
+                    state: referenceState,
+                    annotationCount: activeReferenceAnnotationCount,
+                    isAnnotationSidebarVisible: showSidebar && selectedSidebarSection == .annotations,
+                    onChangeSelectedColor: changeSelectedReferenceAnnotationColor,
+                    onFitToWidth: fitToWidth,
+                    onRefresh: refreshCurrentReference,
+                    onSave: saveCurrentReferencePDF,
+                    onDeleteSelected: deleteSelectedReferenceAnnotation,
+                    onDeleteAll: deleteAllReferenceAnnotations,
+                    onToggleAnnotations: {
+                        if showSidebar && selectedSidebarSection == .annotations {
+                            showSidebar = false
+                        } else {
+                            selectedSidebarSection = .annotations
+                            showSidebar = true
+                        }
+                    }
+                )
             }
 
             Spacer(minLength: 8)
@@ -2042,6 +2145,9 @@ struct LaTeXEditorView: View {
         guard let pdf = PDFDocument(url: paper.fileURL) else { return }
         AnnotationService.normalizeDocumentAnnotations(in: pdf)
         workspaceState.referencePDFs[paper.id] = pdf
+        if workspaceState.referencePDFUIStates[paper.id] == nil {
+            workspaceState.referencePDFUIStates[paper.id] = ReferencePDFUIState()
+        }
         workspaceState.referencePaperIDs.append(paper.id)
         workspaceState.selectedReferencePaperID = paper.id
         if splitLayout == .editorOnly {
@@ -2053,8 +2159,11 @@ struct LaTeXEditorView: View {
 
     private func closePdfTab(_ tab: PdfPaneTab) {
         guard case .reference(let id) = tab else { return }
+        saveReferencePDF(id: id)
         workspaceState.referencePaperIDs.removeAll { $0 == id }
         workspaceState.referencePDFs.removeValue(forKey: id)
+        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
+        workspaceState.referencePDFUIStates.removeValue(forKey: id)
         if selectedPdfTab == tab {
             workspaceState.selectedReferencePaperID = nil
         }
@@ -2073,11 +2182,192 @@ struct LaTeXEditorView: View {
     }
 
     private func refreshCurrentReference() {
-        guard case .reference(let id) = selectedPdfTab,
-              let paper = paperFor(id),
-              let pdf = PDFDocument(url: paper.fileURL) else { return }
-        AnnotationService.normalizeDocumentAnnotations(in: pdf)
-        workspaceState.referencePDFs[id] = pdf
+        guard let id = activeReferencePDFID else { return }
+        reloadReferencePDFDocument(id: id)
+    }
+
+    private func referencePDFDocumentDidChange(id: UUID) {
+        guard let state = workspaceState.referencePDFUIStates[id] else { return }
+        state.hasUnsavedChanges = true
+        state.annotationRefreshToken = UUID()
+        scheduleReferencePDFAutoSave(for: id, delay: preferredReferencePDFAutoSaveDelay(for: state))
+    }
+
+    private func preferredReferencePDFAutoSaveDelay(for state: ReferencePDFUIState) -> TimeInterval {
+        if state.selectedAnnotation?.isTextBoxAnnotation == true || state.currentTool == .textBox {
+            return 0.9
+        }
+        return 0.25
+    }
+
+    private func scheduleReferencePDFAutoSave(for id: UUID, delay: TimeInterval) {
+        guard let state = workspaceState.referencePDFUIStates[id] else { return }
+        state.pendingSaveWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak state] in
+            state?.pendingSaveWorkItem = nil
+            saveReferencePDF(id: id)
+        }
+
+        state.pendingSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func saveCurrentReferencePDF() {
+        guard let id = activeReferencePDFID else { return }
+        saveReferencePDF(id: id)
+    }
+
+    private func saveReferencePDF(id: UUID) {
+        guard let document = workspaceState.referencePDFs[id],
+              let paper = paperFor(id) else { return }
+
+        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
+        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem = nil
+
+        if AnnotationService.save(document: document, to: paper.fileURL) {
+            workspaceState.referencePDFUIStates[id]?.hasUnsavedChanges = false
+        }
+    }
+
+    private func reloadReferencePDFDocument(id: UUID) {
+        guard let paper = paperFor(id) else { return }
+        let state = workspaceState.referencePDFUIStates[id]
+        state?.selectedAnnotation = nil
+        state?.requestedRestorePageIndex = state?.lastKnownPageIndex
+
+        guard let data = try? Data(contentsOf: paper.fileURL),
+              let refreshedDocument = PDFDocument(data: data) else {
+            if let loadedDocument = PDFDocument(url: paper.fileURL) {
+                AnnotationService.normalizeDocumentAnnotations(in: loadedDocument)
+                workspaceState.referencePDFs[id] = loadedDocument
+            }
+            state?.annotationRefreshToken = UUID()
+            state?.pdfViewRefreshToken = UUID()
+            return
+        }
+
+        AnnotationService.normalizeDocumentAnnotations(in: refreshedDocument)
+        workspaceState.referencePDFs[id] = refreshedDocument
+        state?.annotationRefreshToken = UUID()
+        state?.pdfViewRefreshToken = UUID()
+    }
+
+    private func deleteSelectedReferenceAnnotation() {
+        guard let id = activeReferencePDFID,
+              let annotation = activeReferencePDFState?.selectedAnnotation else { return }
+        deleteReferenceAnnotation(annotation, in: id)
+    }
+
+    private func deleteReferenceAnnotation(_ annotation: PDFAnnotation, in id: UUID) {
+        guard let page = annotation.page else { return }
+        let state = workspaceState.referencePDFUIStates[id]
+        let wasSelected = state?.selectedAnnotation === annotation
+
+        state?.pushUndoAction { [weak state] in
+            page.addAnnotation(annotation)
+            if wasSelected {
+                state?.selectedAnnotation = annotation
+            }
+            state?.annotationRefreshToken = UUID()
+            referencePDFDocumentDidChange(id: id)
+        }
+
+        if wasSelected {
+            state?.selectedAnnotation = nil
+        }
+        page.removeAnnotation(annotation)
+        state?.annotationRefreshToken = UUID()
+        referencePDFDocumentDidChange(id: id)
+    }
+
+    private func deleteAllReferenceAnnotations() {
+        guard let id = activeReferencePDFID,
+              let document = activeReferencePDFDocument else { return }
+
+        var removedAnnotations: [(page: PDFPage, annotation: PDFAnnotation)] = []
+
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+            for annotation in page.annotations where annotation.type != "Link" && annotation.type != "Widget" {
+                removedAnnotations.append((page: page, annotation: annotation))
+                page.removeAnnotation(annotation)
+            }
+        }
+
+        workspaceState.referencePDFUIStates[id]?.pushUndoAction {
+            for (page, annotation) in removedAnnotations {
+                page.addAnnotation(annotation)
+            }
+            workspaceState.referencePDFUIStates[id]?.annotationRefreshToken = UUID()
+            referencePDFDocumentDidChange(id: id)
+        }
+
+        activeReferencePDFState?.selectedAnnotation = nil
+        workspaceState.referencePDFUIStates[id]?.annotationRefreshToken = UUID()
+        referencePDFDocumentDidChange(id: id)
+    }
+
+    private func changeSelectedReferenceAnnotationColor(_ color: NSColor) {
+        guard let id = activeReferencePDFID,
+              let state = activeReferencePDFState else { return }
+
+        guard let annotation = state.selectedAnnotation else { return }
+        let previousCurrentColor = state.currentColor
+        let previousAnnotationColor = annotation.color
+
+        state.pushUndoAction { [weak state] in
+            guard let state else { return }
+            state.currentColor = previousCurrentColor
+            if annotation.isTextBoxAnnotation {
+                annotation.setTextBoxFillColor(previousAnnotationColor)
+            } else {
+                annotation.color = previousAnnotationColor
+            }
+            state.annotationRefreshToken = UUID()
+            referencePDFDocumentDidChange(id: id)
+        }
+
+        state.currentColor = color
+        if annotation.isTextBoxAnnotation {
+            annotation.setTextBoxFillColor(AnnotationColor.annotationColor(color, for: "FreeText"))
+        } else {
+            annotation.color = AnnotationColor.annotationColor(color, for: annotation.type ?? "")
+        }
+
+        workspaceState.referencePDFUIStates[id]?.annotationRefreshToken = UUID()
+        referencePDFDocumentDidChange(id: id)
+    }
+
+    private func beginEditingReferenceAnnotationNote(_ annotation: PDFAnnotation, in id: UUID) {
+        guard let state = workspaceState.referencePDFUIStates[id] else { return }
+        state.selectedAnnotation = annotation
+        state.editingNoteText = annotation.contents ?? ""
+        state.isEditingNote = true
+    }
+
+    private func saveReferenceAnnotationNote(for id: UUID) {
+        guard let state = workspaceState.referencePDFUIStates[id],
+              let annotation = state.selectedAnnotation else { return }
+        let previousContents = annotation.contents ?? ""
+        let newContents = state.editingNoteText
+
+        state.pushUndoAction { [weak state] in
+            guard let state else { return }
+            annotation.contents = previousContents
+            state.selectedAnnotation = annotation
+            state.annotationRefreshToken = UUID()
+            referencePDFDocumentDidChange(id: id)
+        }
+
+        annotation.contents = newContents
+        state.isEditingNote = false
+        state.annotationRefreshToken = UUID()
+        referencePDFDocumentDidChange(id: id)
+    }
+
+    private func cancelReferenceAnnotationNoteEdit(for id: UUID) {
+        workspaceState.referencePDFUIStates[id]?.isEditingNote = false
     }
 
     // MARK: - Compilation
@@ -2142,11 +2432,21 @@ struct PDFPreviewView: NSViewRepresentable {
     var onInverseSync: ((SyncTeXInverseResult) -> Void)?
     var fitToWidthTrigger: Bool = false
 
-    func makeNSView(context: Context) -> PDFView {
-        let pdfView = PDFView()
+    func makeNSView(context: Context) -> NSView {
+        let container = PDFPreviewContainerView()
+        let pdfView = container.pdfView
         pdfView.document = document
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
+        let deselectionOverlay = container.deselectionOverlay
+        deselectionOverlay.shouldConsumeClick = { [weak coordinator = context.coordinator, weak pdfView] point, event in
+            guard let coordinator, let pdfView else { return false }
+            return coordinator.shouldConsumeDeselectionClick(at: point, event: event, in: pdfView)
+        }
+        deselectionOverlay.onConsumeClick = { [weak coordinator = context.coordinator, weak pdfView] point, event in
+            guard let coordinator, let pdfView else { return }
+            coordinator.consumeDeselectionClick(at: point, event: event, in: pdfView)
+        }
 
         // Enable pinch-to-zoom: auto-scale sets the initial fit,
         // then we disable it so manual zoom gestures work.
@@ -2160,10 +2460,12 @@ struct PDFPreviewView: NSViewRepresentable {
         pdfView.addGestureRecognizer(clickGesture)
         context.coordinator.configureSelectionObservation(for: pdfView)
 
-        return pdfView
+        return container
     }
 
-    func updateNSView(_ pdfView: PDFView, context: Context) {
+    func updateNSView(_ container: NSView, context: Context) {
+        guard let container = container as? PDFPreviewContainerView else { return }
+        let pdfView = container.pdfView
         if pdfView.document !== document {
             pdfView.document = document
             // Fit to view first, then allow manual zoom
@@ -2211,6 +2513,25 @@ struct PDFPreviewView: NSViewRepresentable {
         weak var observedSelectionPDFView: PDFView?
         var onInverseSync: ((SyncTeXInverseResult) -> Void)?
         var lastFitTrigger: Bool = false
+        private var hadSelectionAtMouseDown = false
+        private var clickedInsideSelectionAtMouseDown = false
+
+        func shouldConsumeDeselectionClick(at locationInView: NSPoint, event: NSEvent, in pdfView: PDFView) -> Bool {
+            guard event.type == .leftMouseDown,
+                  event.modifierFlags.contains(.command) == false,
+                  pdfView.currentSelection != nil else {
+                return false
+            }
+
+            return isPointInsideCurrentSelection(locationInView, in: pdfView) == false
+        }
+
+        func consumeDeselectionClick(at locationInView: NSPoint, event: NSEvent, in pdfView: PDFView) {
+            guard shouldConsumeDeselectionClick(at: locationInView, event: event, in: pdfView) else { return }
+            clearSelection(in: pdfView)
+            hadSelectionAtMouseDown = false
+            clickedInsideSelectionAtMouseDown = false
+        }
 
         func configureSelectionObservation(for pdfView: PDFView) {
             self.pdfView = pdfView
@@ -2304,6 +2625,479 @@ struct PDFPreviewView: NSViewRepresentable {
                 CanopeContextFiles.clearLegacySelectionMirror()
             }
         }
+
+        func handlePreMouseDown(event: NSEvent, at locationInView: NSPoint, in pdfView: SelectablePDFPreviewView) -> Bool {
+            let canHandleDeselection = event.modifierFlags.contains(.command) == false && pdfView.currentSelection != nil
+            let clickedInsideSelection = canHandleDeselection && isPointInsideCurrentSelection(locationInView, in: pdfView)
+
+            hadSelectionAtMouseDown = canHandleDeselection
+            clickedInsideSelectionAtMouseDown = clickedInsideSelection
+
+            guard canHandleDeselection, clickedInsideSelection == false else {
+                return false
+            }
+
+            clearSelection(in: pdfView)
+            hadSelectionAtMouseDown = false
+            clickedInsideSelectionAtMouseDown = false
+            return true
+        }
+
+        func handlePostMouseUp(
+            event: NSEvent,
+            at locationInView: NSPoint,
+            didDrag: Bool,
+            in pdfView: SelectablePDFPreviewView
+        ) {
+            defer {
+                hadSelectionAtMouseDown = false
+                clickedInsideSelectionAtMouseDown = false
+            }
+
+            guard event.modifierFlags.contains(.command) == false,
+                  event.clickCount == 1,
+                  hadSelectionAtMouseDown,
+                  clickedInsideSelectionAtMouseDown == false,
+                  didDrag == false else {
+                return
+            }
+            let clickedPoint = locationInView
+            DispatchQueue.main.async { [weak self, weak pdfView] in
+                guard let self, let pdfView else { return }
+                if self.isPointInsideCurrentSelection(clickedPoint, in: pdfView) {
+                    return
+                }
+                self.clearSelection(in: pdfView)
+            }
+        }
+
+        private func isPointInsideCurrentSelection(_ locationInView: NSPoint, in pdfView: PDFView) -> Bool {
+            guard let selection = pdfView.currentSelection else { return false }
+
+            for lineSelection in selection.selectionsByLine() {
+                for page in lineSelection.pages {
+                    let pageBounds = lineSelection.bounds(for: page)
+                    guard pageBounds.isNull == false, pageBounds.isEmpty == false else { continue }
+                    let selectionRect = pdfView.convert(pageBounds, from: page).insetBy(dx: -4, dy: -4)
+                    if selectionRect.contains(locationInView) {
+                        return true
+                    }
+                }
+            }
+
+            return false
+        }
+
+        private func clearSelection(in pdfView: PDFView) {
+            if let selection = pdfView.currentSelection?.copy() as? PDFSelection {
+                selection.color = .clear
+                pdfView.setCurrentSelection(selection, animate: false)
+                pdfView.documentView?.displayIfNeeded()
+                pdfView.displayIfNeeded()
+            }
+
+            pdfView.clearSelection()
+            pdfView.setCurrentSelection(nil, animate: false)
+            pdfView.documentView?.needsDisplay = true
+            pdfView.needsDisplay = true
+
+            guard let fileURL = pdfView.document?.documentURL else { return }
+            let state = ClaudeIDESelectionState.makeSnapshot(selectedText: "", fileURL: fileURL)
+            Self.selectionFileQueue.async {
+                CanopeContextFiles.writeIDESelectionState(state)
+                CanopeContextFiles.clearLegacySelectionMirror()
+            }
+        }
+    }
+}
+
+final class PDFPreviewContainerView: NSView {
+    let pdfView = SelectablePDFPreviewView()
+    let deselectionOverlay = PDFPreviewDeselectionOverlayView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+
+        pdfView.translatesAutoresizingMaskIntoConstraints = false
+        deselectionOverlay.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(pdfView)
+        addSubview(deselectionOverlay)
+
+        NSLayoutConstraint.activate([
+            pdfView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pdfView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pdfView.topAnchor.constraint(equalTo: topAnchor),
+            pdfView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            deselectionOverlay.leadingAnchor.constraint(equalTo: leadingAnchor),
+            deselectionOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
+            deselectionOverlay.topAnchor.constraint(equalTo: topAnchor),
+            deselectionOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+final class SelectablePDFPreviewView: PDFView {
+    var onPreMouseDown: ((NSEvent, NSPoint, SelectablePDFPreviewView) -> Bool)?
+    var onPostMouseUp: ((NSEvent, NSPoint, Bool, SelectablePDFPreviewView) -> Void)?
+    private var didDragDuringMouseSession = false
+
+    override func mouseDown(with event: NSEvent) {
+        didDragDuringMouseSession = false
+        let location = convert(event.locationInWindow, from: nil)
+        if onPreMouseDown?(event, location, self) == true {
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        didDragDuringMouseSession = true
+        super.mouseDragged(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        let location = convert(event.locationInWindow, from: nil)
+        onPostMouseUp?(event, location, didDragDuringMouseSession, self)
+        didDragDuringMouseSession = false
+    }
+}
+
+final class PDFPreviewDeselectionOverlayView: NSView {
+    var shouldConsumeClick: ((NSPoint, NSEvent) -> Bool)?
+    var onConsumeClick: ((NSPoint, NSEvent) -> Void)?
+
+    override var isOpaque: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = window?.currentEvent ?? NSApp.currentEvent,
+              shouldConsumeClick?(point, event) == true else {
+            return nil
+        }
+
+        return self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        onConsumeClick?(location, event)
+    }
+}
+
+private struct ReferencePDFAnnotationPane: View {
+    let document: PDFDocument
+    let fileURL: URL
+    let fitToWidthTrigger: Bool
+    @ObservedObject var state: ReferencePDFUIState
+    let onDocumentChanged: () -> Void
+    let onMarkupAppearanceNeedsRefresh: () -> Void
+    let onSaveNote: () -> Void
+    let onCancelNote: () -> Void
+    let onAutoSave: () -> Void
+
+    var body: some View {
+        PDFKitView(
+            document: document,
+            currentTool: $state.currentTool,
+            currentColor: $state.currentColor,
+            selectedAnnotation: $state.selectedAnnotation,
+            selectedText: $state.selectedText,
+            restoredPageIndex: state.requestedRestorePageIndex,
+            onDocumentChanged: {
+                onDocumentChanged()
+            },
+            onCurrentPageChanged: { pageIndex in
+                state.lastKnownPageIndex = pageIndex
+            },
+            onMarkupAppearanceNeedsRefresh: {
+                onMarkupAppearanceNeedsRefresh()
+            },
+            clearSelectionAction: $state.clearSelectionAction,
+            undoAction: Binding(
+                get: { state.undoAction },
+                set: { state.setPDFViewUndoAction($0) }
+            )
+        )
+        .id(state.pdfViewRefreshToken)
+        .onKeyPress(phases: .down) { press in
+            handleKeyPress(press)
+        }
+        .onChange(of: state.selectedAnnotation) {
+            guard let annotation = state.selectedAnnotation, annotation.type == "Text" else { return }
+            state.editingNoteText = annotation.contents ?? ""
+            state.isEditingNote = true
+        }
+        .onChange(of: fitToWidthTrigger) {
+            state.requestedRestorePageIndex = state.lastKnownPageIndex
+            state.pdfViewRefreshToken = UUID()
+        }
+        .onDisappear {
+            if state.hasUnsavedChanges {
+                onAutoSave()
+            }
+        }
+        .sheet(isPresented: $state.isEditingNote) {
+            NoteEditorSheet(
+                text: $state.editingNoteText,
+                onSave: onSaveNote,
+                onCancel: onCancelNote
+            )
+        }
+    }
+
+    private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        if press.key == KeyEquivalent("z") && press.modifiers.contains(.command) {
+            state.undoAction?()
+            return .handled
+        }
+
+        if press.key == .escape {
+            if !state.selectedText.isEmpty {
+                state.clearSelectionAction?()
+            } else if state.selectedAnnotation != nil {
+                state.selectedAnnotation = nil
+            } else {
+                state.currentTool = .pointer
+            }
+            return .handled
+        }
+
+        return .ignored
+    }
+}
+
+private struct ReferencePDFToolCluster: View {
+    @ObservedObject var state: ReferencePDFUIState
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
+                ReferencePDFToolbarIconButton(
+                    systemName: tool.icon,
+                    isActive: state.currentTool == tool,
+                    help: tool.displayName,
+                    action: {
+                        state.currentTool = tool
+                    }
+                )
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+        )
+    }
+}
+
+private struct ReferencePDFActionsCluster: View {
+    @ObservedObject var state: ReferencePDFUIState
+    let annotationCount: Int
+    let isAnnotationSidebarVisible: Bool
+    let onChangeSelectedColor: (NSColor) -> Void
+    let onFitToWidth: () -> Void
+    let onRefresh: () -> Void
+    let onSave: () -> Void
+    let onDeleteSelected: () -> Void
+    let onDeleteAll: () -> Void
+    let onToggleAnnotations: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Menu {
+                ForEach(AnnotationColor.all, id: \.name) { item in
+                    Button {
+                        onChangeSelectedColor(item.color)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(nsImage: annotationColorSwatchImage(item.color))
+                                .renderingMode(.original)
+
+                            Text(item.name)
+
+                            if colorsMatch(item.color, state.currentColor) {
+                                Spacer(minLength: 8)
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                ReferencePDFToolbarIconLabel(systemName: "paintpalette", isActive: false)
+            }
+            .buttonStyle(.plain)
+            .help("Couleur d’annotation")
+
+            Divider()
+                .frame(height: 12)
+
+            ReferencePDFToolbarIconButton(
+                systemName: "arrow.left.and.right.square",
+                isActive: false,
+                help: "Ajuster à la largeur",
+                action: onFitToWidth
+            )
+
+            ReferencePDFToolbarIconButton(
+                systemName: "arrow.clockwise",
+                isActive: false,
+                help: "Actualiser le PDF de référence",
+                action: onRefresh
+            )
+
+            ReferencePDFToolbarIconButton(
+                systemName: "square.and.arrow.down",
+                isActive: state.hasUnsavedChanges,
+                help: "Enregistrer les annotations du PDF",
+                action: onSave
+            )
+
+            ReferencePDFToolbarIconButton(
+                systemName: "trash",
+                isActive: state.selectedAnnotation != nil,
+                activeTint: .red,
+                help: "Supprimer l’annotation sélectionnée",
+                action: onDeleteSelected
+            )
+            .disabled(state.selectedAnnotation == nil)
+
+            ReferencePDFToolbarIconButton(
+                systemName: "trash.slash",
+                isActive: false,
+                help: "Effacer toutes les annotations du PDF",
+                action: onDeleteAll
+            )
+            .disabled(annotationCount == 0)
+
+            ReferencePDFToolbarIconButton(
+                systemName: "sidebar.right",
+                symbolVariant: isAnnotationSidebarVisible ? .none : .slash,
+                isActive: isAnnotationSidebarVisible,
+                help: "Afficher les annotations PDF",
+                action: onToggleAnnotations
+            )
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+        )
+    }
+}
+
+private func colorsMatch(_ a: NSColor, _ b: NSColor) -> Bool {
+    let ac = AnnotationColor.normalized(a)
+    let bc = AnnotationColor.normalized(b)
+    return abs(ac.redComponent - bc.redComponent) < 0.01 &&
+           abs(ac.greenComponent - bc.greenComponent) < 0.01 &&
+           abs(ac.blueComponent - bc.blueComponent) < 0.01 &&
+           abs(ac.alphaComponent - bc.alphaComponent) < 0.01
+}
+
+private func annotationColorSwatchImage(_ color: NSColor) -> NSImage {
+    let image = NSImage(size: NSSize(width: 12, height: 12))
+    image.lockFocus()
+    AnnotationColor.normalized(color).setFill()
+    NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: 12, height: 12)).fill()
+    image.unlockFocus()
+    return image
+}
+
+private struct ReferencePDFToolbarIconButton: View {
+    let systemName: String
+    var symbolVariant: SymbolVariants = .none
+    let isActive: Bool
+    var activeTint: Color = .accentColor
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .symbolVariant(symbolVariant)
+                .foregroundStyle(iconTint)
+                .frame(width: 16, height: 16)
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(backgroundTint)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(borderTint, lineWidth: borderTint == .clear ? 0 : 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isActive)
+    }
+
+    private var iconTint: Color {
+        if isActive { return activeTint }
+        if isHovered { return .primary }
+        return .secondary
+    }
+
+    private var backgroundTint: Color {
+        if isActive { return activeTint.opacity(0.18) }
+        if isHovered { return Color.white.opacity(0.08) }
+        return .clear
+    }
+
+    private var borderTint: Color {
+        if isActive { return activeTint.opacity(0.32) }
+        if isHovered { return Color.white.opacity(0.10) }
+        return .clear
+    }
+}
+
+private struct ReferencePDFToolbarIconLabel: View {
+    let systemName: String
+    let isActive: Bool
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Image(systemName: systemName)
+            .foregroundStyle(isActive ? Color.accentColor : (isHovered ? Color.primary : Color.secondary))
+            .frame(width: 16, height: 16)
+            .padding(4)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(isActive ? Color.accentColor.opacity(0.18) : (isHovered ? Color.white.opacity(0.08) : .clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(isActive ? Color.accentColor.opacity(0.32) : (isHovered ? Color.white.opacity(0.10) : .clear), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .animation(.easeOut(duration: 0.12), value: isActive)
     }
 }
 

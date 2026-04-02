@@ -80,7 +80,6 @@ struct AnnotationSidebarView: View {
             }
             .listStyle(.sidebar)
         }
-        .frame(minWidth: 200, idealWidth: 250, maxWidth: 300)
         .onAppear { refreshAnnotations() }
         .onChange(of: document.pageCount) { refreshAnnotations() }
     }

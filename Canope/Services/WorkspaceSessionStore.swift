@@ -197,6 +197,57 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
 }
 
 @MainActor
+final class ReferencePDFUIState: ObservableObject {
+    @Published var currentTool: AnnotationTool = .pointer
+    @Published var currentColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
+    @Published var selectedAnnotation: PDFAnnotation?
+    @Published var selectedText: String = ""
+    @Published var hasUnsavedChanges = false
+    @Published var annotationRefreshToken = UUID()
+    @Published var pdfViewRefreshToken = UUID()
+    @Published var lastKnownPageIndex = 0
+    @Published var requestedRestorePageIndex: Int?
+    @Published var clearSelectionAction: (() -> Void)?
+    @Published var undoAction: (() -> Void)?
+    @Published var isEditingNote = false
+    @Published var editingNoteText = ""
+
+    var pendingSaveWorkItem: DispatchWorkItem?
+    private var pdfViewUndoAction: (() -> Void)?
+    private var localUndoStack: [() -> Void] = []
+
+    func setPDFViewUndoAction(_ action: (() -> Void)?) {
+        pdfViewUndoAction = action
+        refreshUndoAction()
+    }
+
+    func pushUndoAction(_ action: @escaping () -> Void) {
+        localUndoStack.append(action)
+        refreshUndoAction()
+    }
+
+    func performUndo() {
+        if let action = localUndoStack.popLast() {
+            action()
+        } else {
+            pdfViewUndoAction?()
+        }
+        refreshUndoAction()
+    }
+
+    private func refreshUndoAction() {
+        guard !localUndoStack.isEmpty || pdfViewUndoAction != nil else {
+            undoAction = nil
+            return
+        }
+
+        undoAction = { [weak self] in
+            self?.performUndo()
+        }
+    }
+}
+
+@MainActor
 final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var showSidebar = true
     @Published var selectedSidebarSection = "files"
@@ -211,6 +262,7 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var selectedReferencePaperID: UUID?
     @Published var layoutBeforeReference: String?
     @Published var referencePDFs: [UUID: PDFDocument] = [:]
+    @Published var referencePDFUIStates: [UUID: ReferencePDFUIState] = [:]
 }
 
 @MainActor
