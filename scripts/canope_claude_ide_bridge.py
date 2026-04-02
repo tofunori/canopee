@@ -21,6 +21,8 @@ DEFAULT_STATE_FILE = os.environ.get(
     "CANOPE_IDE_SELECTION_STATE",
     "/tmp/canope_ide_selection.json",
 )
+DEFAULT_COMMAND_FILE = Path("/tmp/canope_bridge_commands.json")
+DEFAULT_RESULT_FILE = Path("/tmp/canope_bridge_command_result.json")
 DEFAULT_LOG_FILE = Path(os.environ.get("CANOPE_IDE_BRIDGE_LOG", "/tmp/canope-ide-bridge.log"))
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {
@@ -123,6 +125,72 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {"uri": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "highlightText",
+        "description": (
+            "Highlight a text passage in the currently open PDF in Canopée. "
+            "The text must appear verbatim in the document (copy it exactly from the paper context)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Exact text to highlight (verbatim from the PDF)"},
+                "page": {"type": "integer", "description": "1-based page number (optional, searches all pages if omitted)"},
+                "color": {
+                    "type": "string",
+                    "enum": ["yellow", "green", "blue", "pink", "orange", "red"],
+                    "default": "yellow",
+                    "description": "Highlight color",
+                },
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "underlineText",
+        "description": (
+            "Underline a text passage in the currently open PDF in Canopée. "
+            "The text must appear verbatim in the document."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Exact text to underline (verbatim from the PDF)"},
+                "page": {"type": "integer", "description": "1-based page number (optional)"},
+                "color": {
+                    "type": "string",
+                    "enum": ["yellow", "green", "blue", "pink", "orange", "red"],
+                    "default": "red",
+                    "description": "Underline color",
+                },
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "strikethroughText",
+        "description": (
+            "Apply strikethrough to a text passage in the currently open PDF in Canopée. "
+            "The text must appear verbatim in the document."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Exact text to strike through (verbatim from the PDF)"},
+                "page": {"type": "integer", "description": "1-based page number (optional)"},
+                "color": {
+                    "type": "string",
+                    "enum": ["yellow", "green", "blue", "pink", "orange", "red"],
+                    "default": "red",
+                    "description": "Strikethrough color",
+                },
+            },
+            "required": ["text"],
             "additionalProperties": False,
         },
     },
@@ -556,6 +624,9 @@ class CanopeBridgeHandler(BaseHTTPRequestHandler):
         if name == "close_tab":
             return {"content": [{"type": "text", "text": "TAB_CLOSED"}]}
 
+        if name in {"highlightText", "underlineText", "strikethroughText"}:
+            return self._dispatch_annotation_command(name, arguments)
+
         return {
             "content": [
                 {
@@ -566,6 +637,65 @@ class CanopeBridgeHandler(BaseHTTPRequestHandler):
                     ),
                 }
             ],
+            "isError": True,
+        }
+
+    def _dispatch_annotation_command(self, name: str, arguments: dict) -> dict:
+        """Write an annotation command for the Swift app and poll for its result."""
+        command_id = str(uuid.uuid4())
+        command = {
+            "id": command_id,
+            "command": name,
+            "arguments": arguments,
+            "status": "pending",
+        }
+
+        # Clear any stale result
+        try:
+            DEFAULT_RESULT_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+        # Write command atomically
+        tmp_path = DEFAULT_COMMAND_FILE.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(json.dumps(command, indent=2), encoding="utf-8")
+            os.replace(str(tmp_path), str(DEFAULT_COMMAND_FILE))
+        except OSError as exc:
+            return {
+                "content": [{"type": "text", "text": f"Failed to write command: {exc}"}],
+                "isError": True,
+            }
+
+        log_debug(f"annotation command dispatched id={command_id} name={name}")
+
+        # Poll for result (up to 5 seconds)
+        for _ in range(20):
+            time.sleep(0.25)
+            try:
+                result_text = DEFAULT_RESULT_FILE.read_text(encoding="utf-8")
+                result = json.loads(result_text)
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                continue
+
+            if result.get("id") != command_id:
+                continue
+
+            status = result.get("status", "unknown")
+            message = result.get("message", "")
+            log_debug(f"annotation result id={command_id} status={status} message={message}")
+
+            if status == "completed":
+                return {"content": [{"type": "text", "text": message}]}
+            else:
+                return {
+                    "content": [{"type": "text", "text": f"Error: {message}"}],
+                    "isError": True,
+                }
+
+        log_debug(f"annotation command timed out id={command_id}")
+        return {
+            "content": [{"type": "text", "text": "Timeout: the app did not process the command within 5 seconds."}],
             "isError": True,
         }
 

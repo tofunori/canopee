@@ -2845,7 +2845,8 @@ private struct ReferencePDFAnnotationPane: View {
             undoAction: Binding(
                 get: { state.undoAction },
                 set: { state.setPDFViewUndoAction($0) }
-            )
+            ),
+            applyBridgeAnnotation: .constant(nil)
         )
         .id(state.pdfViewRefreshToken)
         .onKeyPress(phases: .down) { press in

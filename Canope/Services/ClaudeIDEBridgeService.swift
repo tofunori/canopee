@@ -11,6 +11,7 @@ final class ClaudeIDEBridgeService: @unchecked Sendable {
 
     func startIfNeeded() {
         CanopeContextFiles.writeClaudeIDEMcpConfig()
+        BridgeCommandWatcher.shared.start()
 
         if isBridgeHealthy() {
             return

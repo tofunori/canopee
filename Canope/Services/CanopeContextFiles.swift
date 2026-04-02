@@ -26,6 +26,16 @@ enum CanopeContextFiles {
         "/tmp/canopee_claude_ide_mcp.json",
     ]
 
+    static let bridgeCommandPaths = [
+        "/tmp/canope_bridge_commands.json",
+        "/tmp/canopee_bridge_commands.json",
+    ]
+
+    static let bridgeCommandResultPaths = [
+        "/tmp/canope_bridge_command_result.json",
+        "/tmp/canopee_bridge_command_result.json",
+    ]
+
     static let claudeIDEBridgeURL = "http://127.0.0.1:8765/sse"
 
     static var terminalEnvironment: [String] {
@@ -87,7 +97,7 @@ enum CanopeContextFiles {
     }
 
     static func clearAll() {
-        for path in legacySelectionMirrorPaths + ideSelectionStatePaths + paperPaths + annotationPromptPaths + claudeIDEMcpConfigPaths {
+        for path in legacySelectionMirrorPaths + ideSelectionStatePaths + paperPaths + annotationPromptPaths + claudeIDEMcpConfigPaths + bridgeCommandPaths + bridgeCommandResultPaths {
             try? FileManager.default.removeItem(atPath: path)
         }
     }

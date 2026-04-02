@@ -892,6 +892,7 @@ struct PDFKitView: NSViewRepresentable {
     let onMarkupAppearanceNeedsRefresh: @MainActor () -> Void
     @Binding var clearSelectionAction: (() -> Void)?
     @Binding var undoAction: (() -> Void)?
+    @Binding var applyBridgeAnnotation: ((_ selection: PDFSelection, _ type: PDFAnnotationSubtype, _ color: NSColor) -> Void)?
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -968,6 +969,9 @@ struct PDFKitView: NSViewRepresentable {
             }
             self.clearSelectionAction = { [weak coordinator = context.coordinator] in
                 coordinator?.clearCurrentTextSelection()
+            }
+            self.applyBridgeAnnotation = { [weak coordinator = context.coordinator] selection, type, color in
+                coordinator?.applyBridgeAnnotation(selection: selection, type: type, color: color)
             }
         }
 
@@ -1208,6 +1212,27 @@ struct PDFKitView: NSViewRepresentable {
                 parent.selectedAnnotation = nil
             }
             updateAnnotationBorder()
+            parent.onDocumentChanged()
+        }
+
+        // MARK: - Bridge Annotation
+
+        func applyBridgeAnnotation(selection: PDFSelection, type: PDFAnnotationSubtype, color: NSColor) {
+            guard let pdfView = pdfView else { return }
+
+            let annotations = AnnotationService.createMarkupAnnotation(
+                selection: selection,
+                type: type,
+                color: color,
+                on: pdfView
+            )
+
+            for (page, annotation) in annotations {
+                recordForUndo(page: page, annotation: annotation)
+            }
+
+            pdfView.documentView?.needsDisplay = true
+            pdfView.needsDisplay = true
             parent.onDocumentChanged()
         }
 
