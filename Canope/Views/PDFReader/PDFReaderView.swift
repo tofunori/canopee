@@ -49,11 +49,12 @@ struct PDFReaderView: View {
             )
             Divider()
 
-            if let document {
+            if let document, let paper {
                 HStack(spacing: 0) {
                     // PDF viewer — takes all available space
                     PDFKitView(
                         document: document,
+                        fileURL: paper.fileURL,
                         currentTool: $currentTool,
                         currentColor: $currentColor,
                         selectedAnnotation: $selectedAnnotation,
@@ -111,14 +112,19 @@ struct PDFReaderView: View {
         .onAppear {
             loadDocument()
             if isSplitMode { showAnnotationSidebar = false }
+            refreshBridgeCommandTarget()
         }
-        .onReceive(NotificationCenter.default.publisher(for: BridgeCommandWatcher.commandNotification)) { notification in
-            handleBridgeCommand(notification)
+        .onChange(of: paperID) {
+            loadDocument()
+            refreshBridgeCommandTarget()
         }
-        .onChange(of: paperID) { loadDocument() }
         .onChange(of: isActive) {
             if isActive { writePaperContext() }
+            refreshBridgeCommandTarget()
         }
+        .onChange(of: document?.documentURL) { refreshBridgeCommandTarget() }
+        .onChange(of: applyBridgeAnnotation != nil) { refreshBridgeCommandTarget() }
+        .onDisappear { BridgeCommandRouter.shared.removeActiveHandler(id: bridgeCommandTargetID) }
         .onDisappear { autoSave() }
         .onChange(of: selectedAnnotation) {
             if let annotation = selectedAnnotation, annotation.type == "Text" {
@@ -232,7 +238,7 @@ struct PDFReaderView: View {
 
             let shouldWrite = DispatchQueue.main.sync { contextWriteID == writeID }
             guard shouldWrite else { return }
-            try? fullText.write(toFile: "/tmp/canope_paper.txt", atomically: true, encoding: .utf8)
+            CanopeContextFiles.writePaper(fullText)
         }
     }
 
@@ -323,97 +329,6 @@ struct PDFReaderView: View {
         scheduleAutoSave()
     }
 
-    // MARK: - Bridge Command Handling
-
-    private func handleBridgeCommand(_ notification: Notification) {
-        guard let info = notification.userInfo as? [String: Any],
-              let commandID = info["id"] as? String,
-              let commandName = info["command"] as? String,
-              let args = info["arguments"] as? [String: Any],
-              let text = args["text"] as? String,
-              let document
-        else {
-            if let commandID = (notification.userInfo as? [String: Any])?["id"] as? String {
-                BridgeCommandWatcher.writeResult(id: commandID, status: "error", message: "Invalid command or no PDF open")
-            }
-            return
-        }
-
-        guard applyBridgeAnnotation != nil else {
-            BridgeCommandWatcher.writeResult(id: commandID, status: "error", message: "PDF view not ready")
-            return
-        }
-
-        let annotationType: PDFAnnotationSubtype = switch commandName {
-            case "underlineText": .underline
-            case "strikethroughText": .strikeOut
-            default: .highlight
-        }
-
-        let colorName = args["color"] as? String ?? "yellow"
-        let color = bridgeColorFromName(colorName)
-
-        // Search for text in document
-        var selections = document.findString(text, withOptions: [.caseInsensitive])
-
-        // If page specified, filter to that page
-        if let pageNum = args["page"] as? Int, pageNum >= 1, pageNum <= document.pageCount {
-            selections = selections.filter { sel in
-                sel.pages.contains { document.index(for: $0) == pageNum - 1 }
-            }
-        }
-
-        guard let match = selections.first else {
-            // Retry with normalized whitespace
-            let normalized = text.components(separatedBy: .whitespacesAndNewlines)
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-            if normalized != text {
-                var retrySelections = document.findString(normalized, withOptions: [.caseInsensitive])
-                if let pageNum = args["page"] as? Int, pageNum >= 1, pageNum <= document.pageCount {
-                    retrySelections = retrySelections.filter { sel in
-                        sel.pages.contains { document.index(for: $0) == pageNum - 1 }
-                    }
-                }
-                if let retryMatch = retrySelections.first {
-                    applyBridgeAnnotation?(retryMatch, annotationType, color)
-                    let pages = retryMatch.pages.map { document.index(for: $0) + 1 }
-                    BridgeCommandWatcher.writeResult(
-                        id: commandID, status: "completed",
-                        message: "Applied \(commandName) on page(s) \(pages)",
-                        matchedPages: pages
-                    )
-                    return
-                }
-            }
-
-            BridgeCommandWatcher.writeResult(
-                id: commandID, status: "error",
-                message: "Text not found: '\(String(text.prefix(80)))'"
-            )
-            return
-        }
-
-        applyBridgeAnnotation?(match, annotationType, color)
-        let matchedPages = match.pages.map { document.index(for: $0) + 1 }
-        BridgeCommandWatcher.writeResult(
-            id: commandID, status: "completed",
-            message: "Applied \(commandName) on page(s) \(matchedPages)",
-            matchedPages: matchedPages
-        )
-    }
-
-    private func bridgeColorFromName(_ name: String) -> NSColor {
-        switch name {
-        case "green": return AnnotationColor.green
-        case "red": return AnnotationColor.red
-        case "blue": return AnnotationColor.blue
-        case "orange": return NSColor.orange
-        case "pink": return NSColor(red: 0.95, green: 0.5, blue: 0.7, alpha: 1.0)
-        default: return AnnotationColor.yellow
-        }
-    }
-
     private func changeSelectedAnnotationColor(_ color: NSColor) {
         guard let annotation = selectedAnnotation else { return }
         if annotation.isTextBoxAnnotation {
@@ -424,6 +339,25 @@ struct PDFReaderView: View {
         hasUnsavedChanges = true
         annotationRefreshToken = UUID()
         scheduleAutoSave()
+    }
+
+    private var bridgeCommandTargetID: String {
+        "library-pdf:\(String(describing: paperID))"
+    }
+
+    private func refreshBridgeCommandTarget() {
+        guard isActive else {
+            BridgeCommandRouter.shared.removeActiveHandler(id: bridgeCommandTargetID)
+            return
+        }
+
+        BridgeCommandRouter.shared.setActiveHandler(id: bridgeCommandTargetID) { command in
+            _ = BridgeCommandWatcher.handleCommand(
+                command,
+                document: document,
+                applyBridgeAnnotation: applyBridgeAnnotation
+            )
+        }
     }
 }
 

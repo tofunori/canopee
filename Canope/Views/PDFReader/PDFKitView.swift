@@ -882,6 +882,7 @@ final class InteractivePDFView: PDFView {
 
 struct PDFKitView: NSViewRepresentable {
     let document: PDFDocument
+    let fileURL: URL
     @Binding var currentTool: AnnotationTool
     @Binding var currentColor: NSColor
     @Binding var selectedAnnotation: PDFAnnotation?
@@ -1895,7 +1896,7 @@ struct PDFKitView: NSViewRepresentable {
         }
 
         private func writeSelectionSnapshot(_ text: String) {
-            guard let fileURL = parent.document.documentURL else { return }
+            let fileURL = parent.fileURL
             Self.selectionFileQueue.async {
                 let state = ClaudeIDESelectionState.makeSnapshot(
                     selectedText: text,

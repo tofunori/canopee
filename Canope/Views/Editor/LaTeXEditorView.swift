@@ -1256,6 +1256,7 @@ struct LaTeXEditorView: View {
                                 document: pdf,
                                 fileURL: paper.fileURL,
                                 fitToWidthTrigger: selectedPdfTab == .reference(id) ? fitToWidthTrigger : false,
+                                isBridgeCommandTargetActive: selectedPdfTab == .reference(id),
                                 state: state,
                                 onDocumentChanged: {
                                     referencePDFDocumentDidChange(id: id)
@@ -2172,6 +2173,7 @@ struct LaTeXEditorView: View {
         let tab = PdfPaneTab.reference(paper.id)
         if pdfPaneTabs.contains(tab) {
             workspaceState.selectedReferencePaperID = paper.id
+            writeReferencePaperContext(for: paper.id)
             return
         }
         guard let pdf = PDFDocument(url: paper.fileURL) else { return }
@@ -2182,6 +2184,7 @@ struct LaTeXEditorView: View {
         }
         workspaceState.referencePaperIDs.append(paper.id)
         workspaceState.selectedReferencePaperID = paper.id
+        writeReferencePaperContext(for: paper.id)
         if splitLayout == .editorOnly {
             layoutBeforeReference = .editorOnly
             splitLayout = .horizontal
@@ -2195,6 +2198,7 @@ struct LaTeXEditorView: View {
             workspaceState.selectedReferencePaperID = nil
         case .reference(let id):
             workspaceState.selectedReferencePaperID = id
+            writeReferencePaperContext(for: id)
         }
     }
 
@@ -2211,6 +2215,9 @@ struct LaTeXEditorView: View {
         workspaceState.referencePDFUIStates.removeValue(forKey: id)
         if selectedPdfTab == tab || workspaceState.selectedReferencePaperID == id {
             workspaceState.selectedReferencePaperID = remainingReferenceIDs.first
+            if let nextID = remainingReferenceIDs.first {
+                writeReferencePaperContext(for: nextID)
+            }
         }
         // Restore layout only if no more references AND user hasn't changed layout since
         if pdfPaneTabs == [.compiled],
@@ -2304,6 +2311,49 @@ struct LaTeXEditorView: View {
         workspaceState.referencePDFs[id] = refreshedDocument
         state?.annotationRefreshToken = UUID()
         state?.pdfViewRefreshToken = UUID()
+        if activeReferencePDFID == id {
+            writeReferencePaperContext(for: id)
+        }
+    }
+
+    private func writeReferencePaperContext(for id: UUID) {
+        guard let paper = paperFor(id) else { return }
+        let title = paper.title
+        let authors = paper.authors
+        let year = paper.year.map(String.init) ?? "unknown"
+        let journal = paper.journal ?? "unknown"
+        let doi = paper.doi ?? "unknown"
+        let fileURL = paper.fileURL
+
+        DispatchQueue.global(qos: .utility).async {
+            guard let snapshotDocument = PDFDocument(url: fileURL) else { return }
+
+            var fullText = """
+            ========================================
+            CURRENTLY OPEN PAPER IN CANOPÉE
+            ========================================
+            Title: \(title)
+            Authors: \(authors)
+            Year: \(year)
+            Journal: \(journal)
+            DOI: \(doi)
+            Pages: \(snapshotDocument.pageCount)
+            ========================================
+
+            """
+
+            for index in 0..<snapshotDocument.pageCount {
+                if let page = snapshotDocument.page(at: index), let text = page.string {
+                    fullText += "--- Page \(index + 1) ---\n\(text)\n\n"
+                }
+            }
+
+            CanopeContextFiles.writePaper(fullText)
+            CanopeContextFiles.writeIDESelectionState(
+                ClaudeIDESelectionState.makeSnapshot(selectedText: "", fileURL: fileURL)
+            )
+            CanopeContextFiles.clearLegacySelectionMirror()
+        }
     }
 
     private func deleteSelectedReferenceAnnotation() {
@@ -2850,6 +2900,7 @@ private struct ReferencePDFAnnotationPane: View {
     let document: PDFDocument
     let fileURL: URL
     let fitToWidthTrigger: Bool
+    let isBridgeCommandTargetActive: Bool
     @ObservedObject var state: ReferencePDFUIState
     let onDocumentChanged: () -> Void
     let onMarkupAppearanceNeedsRefresh: () -> Void
@@ -2860,6 +2911,7 @@ private struct ReferencePDFAnnotationPane: View {
     var body: some View {
         PDFKitView(
             document: document,
+            fileURL: fileURL,
             currentTool: $state.currentTool,
             currentColor: $state.currentColor,
             selectedAnnotation: $state.selectedAnnotation,
@@ -2879,11 +2931,17 @@ private struct ReferencePDFAnnotationPane: View {
                 get: { state.undoAction },
                 set: { state.setPDFViewUndoAction($0) }
             ),
-            applyBridgeAnnotation: .constant(nil)
+            applyBridgeAnnotation: Binding(
+                get: { state.applyBridgeAnnotationAction },
+                set: { state.setPDFViewApplyBridgeAnnotation($0) }
+            )
         )
         .id(state.pdfViewRefreshToken)
         .onKeyPress(phases: .down) { press in
             handleKeyPress(press)
+        }
+        .onAppear {
+            refreshBridgeCommandTarget()
         }
         .onChange(of: state.selectedAnnotation) {
             guard let annotation = state.selectedAnnotation, annotation.type == "Text" else { return }
@@ -2894,7 +2952,14 @@ private struct ReferencePDFAnnotationPane: View {
             state.requestedRestorePageIndex = state.lastKnownPageIndex
             state.pdfViewRefreshToken = UUID()
         }
+        .onChange(of: isBridgeCommandTargetActive) {
+            refreshBridgeCommandTarget()
+        }
+        .onChange(of: state.bridgeCommandRegistrationToken) {
+            refreshBridgeCommandTarget()
+        }
         .onDisappear {
+            BridgeCommandRouter.shared.removeActiveHandler(id: bridgeCommandTargetID)
             if state.hasUnsavedChanges {
                 onAutoSave()
             }
@@ -2904,6 +2969,25 @@ private struct ReferencePDFAnnotationPane: View {
                 text: $state.editingNoteText,
                 onSave: onSaveNote,
                 onCancel: onCancelNote
+            )
+        }
+    }
+
+    private var bridgeCommandTargetID: String {
+        "reference-pdf:\(fileURL.path)"
+    }
+
+    private func refreshBridgeCommandTarget() {
+        guard isBridgeCommandTargetActive else {
+            BridgeCommandRouter.shared.removeActiveHandler(id: bridgeCommandTargetID)
+            return
+        }
+
+        BridgeCommandRouter.shared.setActiveHandler(id: bridgeCommandTargetID) { command in
+            _ = BridgeCommandWatcher.handleCommand(
+                command,
+                document: document,
+                applyBridgeAnnotation: state.applyBridgeAnnotationAction
             )
         }
     }

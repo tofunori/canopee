@@ -217,14 +217,21 @@ final class ReferencePDFUIState: ObservableObject {
     @Published var undoAction: (() -> Void)?
     @Published var isEditingNote = false
     @Published var editingNoteText = ""
+    @Published var bridgeCommandRegistrationToken = UUID()
 
     var pendingSaveWorkItem: DispatchWorkItem?
     private var pdfViewUndoAction: (() -> Void)?
+    private(set) var applyBridgeAnnotationAction: ((_ selection: PDFSelection, _ type: PDFAnnotationSubtype, _ color: NSColor) -> Void)?
     private var localUndoStack: [() -> Void] = []
 
     func setPDFViewUndoAction(_ action: (() -> Void)?) {
         pdfViewUndoAction = action
         refreshUndoAction()
+    }
+
+    func setPDFViewApplyBridgeAnnotation(_ action: ((_ selection: PDFSelection, _ type: PDFAnnotationSubtype, _ color: NSColor) -> Void)?) {
+        applyBridgeAnnotationAction = action
+        bridgeCommandRegistrationToken = UUID()
     }
 
     func pushUndoAction(_ action: @escaping () -> Void) {
