@@ -19,7 +19,6 @@ enum TabItem: Hashable {
     case library
     case paper(UUID)
     case editor(String) // file path as string (URL isn't Hashable)
-    case pdfFile(String) // standalone PDF file path
 }
 
 @MainActor
@@ -59,10 +58,6 @@ struct MainWindow: View {
 
     private var openEditorPaths: [String] {
         openTabs.compactMap { if case .editor(let path) = $0 { return path } else { return nil } }
-    }
-
-    private var openPDFPaths: [String] {
-        openTabs.compactMap { if case .pdfFile(let path) = $0 { return path } else { return nil } }
     }
 
     private var isEditorSelected: Bool {
@@ -110,7 +105,6 @@ struct MainWindow: View {
                 workspaceState: latexWorkspaceState,
                 terminalWorkspaceState: terminalWorkspaceState,
                 onOpenTeX: { url in openTeXFile(url) },
-                onOpenPDF: { url in openPDFFile(url) },
                 onCloseEditor: { path in
                     let tab = TabItem.editor(path)
                     if let index = openTabs.firstIndex(of: tab) {
@@ -121,12 +115,7 @@ struct MainWindow: View {
             .opacity(isEditorSelected ? 1 : 0)
             .allowsHitTesting(isEditorSelected)
 
-            ForEach(openPDFPaths, id: \.self) { path in
-                StandalonePDFView(url: URL(fileURLWithPath: path))
-                    .opacity(selectedTab == .pdfFile(path) ? 1 : 0)
-                    .allowsHitTesting(selectedTab == .pdfFile(path))
-            }
-        }
+}
     }
 
     private var terminalPane: some View {
@@ -150,16 +139,7 @@ struct MainWindow: View {
         case .library: return "Bibliothèque"
         case .paper(let id): return allPapers.first(where: { $0.id == id })?.title ?? "Article"
         case .editor(let path): return URL(fileURLWithPath: path).lastPathComponent
-        case .pdfFile(let path): return URL(fileURLWithPath: path).lastPathComponent
         }
-    }
-
-    func openPDFFile(_ url: URL) {
-        let tab = TabItem.pdfFile(url.path)
-        if !openTabs.contains(tab) {
-            openTabs.append(tab)
-        }
-        selectedTab = tab
     }
 
     /// Find all NSSplitViews and make dividers thick + easy to grab
@@ -388,10 +368,9 @@ struct MainWindow: View {
             .frame(height: AppChromeMetrics.topBarHeight)
             .background(.bar)
 
-            // Document tabs row (papers/PDFs from library)
+            // Document tabs row (papers from library)
             let docTabs = openTabs.filter {
                 if case .paper = $0 { return true }
-                if case .pdfFile = $0 { return true }
                 return false
             }
             if !docTabs.isEmpty {
@@ -490,11 +469,10 @@ struct TabBar: View {
         tabs.filter { if case .editor(let p) = $0 { return !p.isEmpty } else { return false } }
     }
 
-    /// Document tabs: papers + standalone PDFs (scrollable, bottom row)
+    /// Document tabs: papers (scrollable, bottom row)
     private var documentTabs: [TabItem] {
         tabs.filter {
             if case .paper = $0 { return true }
-            if case .pdfFile = $0 { return true }
             return false
         }
     }
@@ -531,8 +509,6 @@ struct TabBar: View {
         case .paper(let id):
             return allPapers.first(where: { $0.id == id })?.title ?? "Article"
         case .editor(let path):
-            return URL(fileURLWithPath: path).lastPathComponent
-        case .pdfFile(let path):
             return URL(fileURLWithPath: path).lastPathComponent
         }
     }
@@ -601,7 +577,6 @@ struct TabButton: View {
         case .library: return "books.vertical"
         case .paper: return "doc.text"
         case .editor: return "chevron.left.forwardslash.chevron.right"
-        case .pdfFile: return "doc.richtext"
         }
     }
 
@@ -691,30 +666,6 @@ struct LibraryView: View {
     }
 }
 
-// MARK: - Standalone PDF Viewer (for files opened from file browser)
-
-import PDFKit
-
-struct StandalonePDFView: NSViewRepresentable {
-    let url: URL
-
-    func makeNSView(context: Context) -> PDFView {
-        let pdfView = PDFView()
-        pdfView.document = PDFDocument(url: url)
-        pdfView.autoScales = true
-        pdfView.displayMode = .singlePageContinuous
-        return pdfView
-    }
-
-    func updateNSView(_ pdfView: PDFView, context: Context) {
-        if pdfView.document?.documentURL != url {
-            pdfView.document = PDFDocument(url: url)
-        }
-    }
-}
-
-// MARK: - LaTeX Landing View (empty editor state)
-
 // MARK: - LaTeX Editor Container (manages multiple .tex files with sub-tabs)
 
 struct LaTeXEditorContainer: View {
@@ -726,7 +677,6 @@ struct LaTeXEditorContainer: View {
     @ObservedObject var workspaceState: LaTeXWorkspaceUIState
     @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
     var onOpenTeX: (URL) -> Void
-    var onOpenPDF: (URL) -> Void
     var onCloseEditor: (String) -> Void
     @State private var didRestoreWorkspaceState = false
 
@@ -867,7 +817,7 @@ struct LaTeXEditorContainer: View {
     var body: some View {
         ZStack {
             if openPaths.isEmpty {
-                LaTeXLandingView(onOpenTeX: onOpenTeX, onOpenPDF: onOpenPDF)
+                LaTeXLandingView(onOpenTeX: onOpenTeX)
             }
 
             if let activePath, !activePath.isEmpty {
@@ -877,8 +827,7 @@ struct LaTeXEditorContainer: View {
                     showTerminal: $showTerminal,
                     workspaceState: workspaceState,
                     terminalWorkspaceState: terminalWorkspaceState,
-                    onOpenPDF: onOpenPDF,
-                    onOpenInNewTab: onOpenTeX,
+                        onOpenInNewTab: onOpenTeX,
                     openPaperIDs: openPaperIDs,
                     editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil
                 )
@@ -895,7 +844,6 @@ struct LaTeXEditorContainer: View {
 
 struct LaTeXLandingView: View {
     var onOpenTeX: (URL) -> Void
-    var onOpenPDF: (URL) -> Void
 
     /// Root directory: parent of last opened .tex, or home as fallback
     private var rootURL: URL {
@@ -911,8 +859,6 @@ struct LaTeXLandingView: View {
                 let ext = url.pathExtension.lowercased()
                 if ext == "tex" || ext == "bib" || ext == "txt" || ext == "md" {
                     onOpenTeX(url)
-                } else if ext == "pdf" {
-                    onOpenPDF(url)
                 }
             }
             .frame(minWidth: 200, idealWidth: 280, maxWidth: 400)

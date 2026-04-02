@@ -23,7 +23,6 @@ struct MainWindowWorkspaceState: Codable, Equatable {
         case library
         case paper(UUID)
         case editor(String)
-        case pdfFile(String)
 
         private enum CodingKeys: String, CodingKey {
             case kind
@@ -35,7 +34,7 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             case library
             case paper
             case editor
-            case pdfFile
+            case pdfFile // kept for backwards compatibility when decoding
         }
 
         init(from decoder: Decoder) throws {
@@ -49,7 +48,8 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             case .editor:
                 self = .editor(try container.decode(String.self, forKey: .path))
             case .pdfFile:
-                self = .pdfFile(try container.decode(String.self, forKey: .path))
+                // Legacy: pdfFile tabs no longer supported, fall back to library
+                self = .library
             }
         }
 
@@ -64,9 +64,6 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             case .editor(let path):
                 try container.encode(Kind.editor, forKey: .kind)
                 try container.encode(path, forKey: .path)
-            case .pdfFile(let path):
-                try container.encode(Kind.pdfFile, forKey: .kind)
-                try container.encode(path, forKey: .path)
             }
         }
 
@@ -79,8 +76,6 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             case .editor(let path):
                 guard !path.isEmpty else { return nil }
                 self = .editor(path)
-            case .pdfFile(let path):
-                self = .pdfFile(path)
             }
         }
 
@@ -93,9 +88,6 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             case .editor(let path):
                 guard FileManager.default.fileExists(atPath: path) else { return nil }
                 return .editor(path)
-            case .pdfFile(let path):
-                guard FileManager.default.fileExists(atPath: path) else { return nil }
-                return .pdfFile(path)
             }
         }
     }

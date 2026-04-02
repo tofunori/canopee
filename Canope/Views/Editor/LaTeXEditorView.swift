@@ -69,7 +69,6 @@ struct LaTeXEditorView: View {
     @Binding var showTerminal: Bool
     @ObservedObject var workspaceState: LaTeXWorkspaceUIState
     @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
-    var onOpenPDF: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
     var openPaperIDs: [UUID] = []
     var editorTabBar: AnyView? = nil

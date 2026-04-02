@@ -86,9 +86,7 @@ extension LaTeXEditorView {
     var fileBrowserSidebar: some View {
         FileBrowserView(rootURL: projectRoot) { url in
             let ext = url.pathExtension.lowercased()
-            if ext == "pdf" {
-                onOpenPDF?(url)
-            } else if ext == "md" || ext == "tex" || ext == "bib" || ext == "txt" {
+            if ext == "md" || ext == "tex" || ext == "bib" || ext == "txt" {
                 onOpenInNewTab?(url)
             } else {
                 openFile(url)
