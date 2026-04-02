@@ -110,6 +110,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var showSidebar: Bool
     var selectedSidebarSection: String
     var sidebarWidth: Double
+    var showEditorPane: Bool
     var showPDFPreview: Bool
     var showErrors: Bool
     var splitLayout: String
@@ -124,6 +125,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         case showSidebar
         case selectedSidebarSection
         case sidebarWidth
+        case showEditorPane
         case showPDFPreview
         case showErrors
         case splitLayout
@@ -139,6 +141,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         showSidebar: Bool,
         selectedSidebarSection: String,
         sidebarWidth: Double,
+        showEditorPane: Bool,
         showPDFPreview: Bool,
         showErrors: Bool,
         splitLayout: String,
@@ -152,6 +155,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         self.showSidebar = showSidebar
         self.selectedSidebarSection = selectedSidebarSection
         self.sidebarWidth = sidebarWidth
+        self.showEditorPane = showEditorPane
         self.showPDFPreview = showPDFPreview
         self.showErrors = showErrors
         self.splitLayout = splitLayout
@@ -168,6 +172,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         showSidebar = try container.decode(Bool.self, forKey: .showSidebar)
         selectedSidebarSection = try container.decode(String.self, forKey: .selectedSidebarSection)
         sidebarWidth = try container.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 220
+        showEditorPane = try container.decodeIfPresent(Bool.self, forKey: .showEditorPane) ?? true
         showPDFPreview = try container.decode(Bool.self, forKey: .showPDFPreview)
         showErrors = try container.decode(Bool.self, forKey: .showErrors)
         splitLayout = try container.decode(String.self, forKey: .splitLayout)
@@ -184,6 +189,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         try container.encode(showSidebar, forKey: .showSidebar)
         try container.encode(selectedSidebarSection, forKey: .selectedSidebarSection)
         try container.encode(sidebarWidth, forKey: .sidebarWidth)
+        try container.encode(showEditorPane, forKey: .showEditorPane)
         try container.encode(showPDFPreview, forKey: .showPDFPreview)
         try container.encode(showErrors, forKey: .showErrors)
         try container.encode(splitLayout, forKey: .splitLayout)
@@ -252,6 +258,7 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var showSidebar = true
     @Published var selectedSidebarSection = "files"
     @Published var sidebarWidth: Double = 220
+    @Published var showEditorPane = true
     @Published var showPDFPreview = false
     @Published var showErrors = false
     @Published var splitLayout = "editorOnly"

@@ -132,7 +132,12 @@ TOOLS = [
         "name": "highlightText",
         "description": (
             "Highlight a text passage in the currently open PDF in Canopée. "
-            "The text must appear verbatim in the document (copy it exactly from the paper context)."
+            "The text must appear verbatim in the document (copy it exactly from the paper context). "
+            "Use thematic color coding: "
+            "red = risks/problems/disconnection, "
+            "green = calls to action/solutions/recommendations, "
+            "yellow = empirical data/statistics/measurements, "
+            "blue = central thesis/key arguments/core claims."
         ),
         "inputSchema": {
             "type": "object",
@@ -143,7 +148,13 @@ TOOLS = [
                     "type": "string",
                     "enum": ["yellow", "green", "blue", "pink", "orange", "red"],
                     "default": "yellow",
-                    "description": "Highlight color",
+                    "description": (
+                        "Thematic color: "
+                        "red=risks/problems, "
+                        "green=solutions/actions, "
+                        "yellow=data/statistics, "
+                        "blue=thesis/key arguments"
+                    ),
                 },
             },
             "required": ["text"],

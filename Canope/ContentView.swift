@@ -784,6 +784,7 @@ struct LaTeXEditorContainer: View {
             showSidebar: workspaceState.showSidebar,
             selectedSidebarSection: workspaceState.selectedSidebarSection,
             sidebarWidth: workspaceState.sidebarWidth,
+            showEditorPane: workspaceState.showEditorPane,
             showPDFPreview: workspaceState.showPDFPreview,
             showErrors: workspaceState.showErrors,
             splitLayout: workspaceState.splitLayout,
@@ -810,9 +811,10 @@ struct LaTeXEditorContainer: View {
         workspaceState.showSidebar = snapshot.showSidebar
         workspaceState.selectedSidebarSection = snapshot.selectedSidebarSection
         workspaceState.sidebarWidth = snapshot.sidebarWidth
+        workspaceState.showEditorPane = snapshot.showEditorPane
         workspaceState.showErrors = snapshot.showErrors
         workspaceState.splitLayout = snapshot.splitLayout
-        workspaceState.showPDFPreview = snapshot.splitLayout != "editorOnly"
+        workspaceState.showPDFPreview = snapshot.showPDFPreview
         workspaceState.panelArrangement = snapshot.panelArrangement
         workspaceState.editorFontSize = snapshot.editorFontSize
         workspaceState.editorTheme = snapshot.editorTheme

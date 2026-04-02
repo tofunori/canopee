@@ -213,6 +213,11 @@ struct LaTeXEditorView: View {
         nonmutating set { workspaceState.showPDFPreview = newValue }
     }
 
+    private var showEditorPane: Bool {
+        get { workspaceState.showEditorPane }
+        nonmutating set { workspaceState.showEditorPane = newValue }
+    }
+
     private var showErrors: Bool {
         get { workspaceState.showErrors }
         nonmutating set { workspaceState.showErrors = newValue }
@@ -352,7 +357,7 @@ struct LaTeXEditorView: View {
 
     @ViewBuilder
     private var workAreaPane: some View {
-        if isActive && showTerminal && showPDFPreview && splitLayout == .horizontal {
+        if isActive && showTerminal && showPDFPreview && showEditorPane && splitLayout == .horizontal {
             horizontalThreePaneLayout
         } else if isActive && showTerminal {
             switch panelArrangement {
@@ -559,7 +564,11 @@ struct LaTeXEditorView: View {
 
     @ViewBuilder
     private var editorAndPDFPane: some View {
-        if !showPDFPreview {
+        if !showEditorPane && !showPDFPreview {
+            hiddenEditorPlaceholderPane
+        } else if !showEditorPane {
+            pdfPane
+        } else if !showPDFPreview {
             editorPane
         } else if splitLayout == .horizontal {
             HSplitView {
@@ -576,6 +585,15 @@ struct LaTeXEditorView: View {
         } else {
             editorPane
         }
+    }
+
+    private var hiddenEditorPlaceholderPane: some View {
+        ContentUnavailableView(
+            "Panneau LaTeX fermé",
+            systemImage: "doc.text",
+            description: Text("Rouvre le panneau LaTeX depuis la barre d’outils, ou garde seulement le terminal et/ou le PDF.")
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var embeddedTerminalPane: some View {
@@ -1517,6 +1535,21 @@ struct LaTeXEditorView: View {
             }
 
             toolbarCluster {
+                Button(action: {
+                    if showEditorPane && !showTerminal && !showPDFPreview {
+                        return
+                    }
+                    showEditorPane.toggle()
+                }) {
+                    Image(systemName: showEditorPane ? "doc.text.fill" : "doc.text")
+                        .foregroundStyle(showEditorPane ? .blue : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Panneau LaTeX")
+                .disabled(showEditorPane && !showTerminal && !showPDFPreview)
+
+                toolbarInnerDivider
+
                 Button(action: { showTerminal.toggle() }) {
                     Image(systemName: showTerminal ? "terminal.fill" : "terminal")
                         .foregroundStyle(showTerminal ? .green : .secondary)
