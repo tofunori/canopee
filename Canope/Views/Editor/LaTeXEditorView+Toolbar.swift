@@ -71,11 +71,10 @@ extension LaTeXEditorView {
 
             toolbarCluster {
                 Menu {
-                    let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
-                    if openPapers.isEmpty {
-                        Text("Aucun article ouvert en onglet")
+                    if allPapers.isEmpty {
+                        Text("Aucun article dans la bibliothèque")
                     } else {
-                        ForEach(openPapers) { paper in
+                        ForEach(allPapers) { paper in
                             Button {
                                 openReference(paper)
                             } label: {

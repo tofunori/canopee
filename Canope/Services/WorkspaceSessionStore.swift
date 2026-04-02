@@ -21,7 +21,6 @@ enum LaTeXPanelArrangement: String, Codable, CaseIterable, Equatable {
 struct MainWindowWorkspaceState: Codable, Equatable {
     enum SavedTab: Codable, Hashable {
         case library
-        case paper(UUID)
         case editor(String)
 
         private enum CodingKeys: String, CodingKey {
@@ -32,7 +31,7 @@ struct MainWindowWorkspaceState: Codable, Equatable {
 
         private enum Kind: String, Codable {
             case library
-            case paper
+            case paper   // kept for backwards compatibility when decoding
             case editor
             case pdfFile // kept for backwards compatibility when decoding
         }
@@ -43,12 +42,10 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             switch kind {
             case .library:
                 self = .library
-            case .paper:
-                self = .paper(try container.decode(UUID.self, forKey: .uuid))
             case .editor:
                 self = .editor(try container.decode(String.self, forKey: .path))
-            case .pdfFile:
-                // Legacy: pdfFile tabs no longer supported, fall back to library
+            case .paper, .pdfFile:
+                // Legacy: paper/pdfFile tabs no longer supported, fall back to library
                 self = .library
             }
         }
@@ -58,9 +55,6 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             switch self {
             case .library:
                 try container.encode(Kind.library, forKey: .kind)
-            case .paper(let id):
-                try container.encode(Kind.paper, forKey: .kind)
-                try container.encode(id, forKey: .uuid)
             case .editor(let path):
                 try container.encode(Kind.editor, forKey: .kind)
                 try container.encode(path, forKey: .path)
@@ -71,8 +65,6 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             switch tab {
             case .library:
                 self = .library
-            case .paper(let id):
-                self = .paper(id)
             case .editor(let path):
                 guard !path.isEmpty else { return nil }
                 self = .editor(path)
@@ -83,8 +75,6 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             switch self {
             case .library:
                 return .library
-            case .paper(let id):
-                return .paper(id)
             case .editor(let path):
                 guard FileManager.default.fileExists(atPath: path) else { return nil }
                 return .editor(path)
@@ -95,7 +85,6 @@ struct MainWindowWorkspaceState: Codable, Equatable {
     var openTabs: [SavedTab]
     var selectedTab: SavedTab
     var showTerminal: Bool
-    var splitPaperID: UUID?
 }
 
 struct LaTeXEditorWorkspaceState: Codable, Equatable {

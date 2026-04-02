@@ -70,7 +70,6 @@ struct LaTeXEditorView: View {
     @ObservedObject var workspaceState: LaTeXWorkspaceUIState
     @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
     var onOpenInNewTab: ((URL) -> Void)?
-    var openPaperIDs: [UUID] = []
     var editorTabBar: AnyView? = nil
     @State var text = ""
     @State var savedText = ""

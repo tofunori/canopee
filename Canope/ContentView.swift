@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import ObjectiveC
+import PDFKit
 
 enum AppChromeMetrics {
     static let topBarHeight: CGFloat = 24
@@ -17,7 +18,6 @@ enum SidebarSelection: Hashable {
 
 enum TabItem: Hashable {
     case library
-    case paper(UUID)
     case editor(String) // file path as string (URL isn't Hashable)
 }
 
@@ -44,17 +44,12 @@ struct MainWindow: View {
     @State private var openTabs: [TabItem] = [.library]
     @State private var selectedTab: TabItem = .library
     @State private var paperToOpen: UUID? = nil
-    @State private var splitPaperID: UUID? = nil
     @State private var showTerminal = false
     @State private var isOpeningTeX = false
     @State private var isImportingPDF = false
     @State private var didRestoreWorkspace = false
     @StateObject private var latexWorkspaceState = LaTeXWorkspaceUIState()
     @StateObject private var terminalWorkspaceState = TerminalWorkspaceState()
-
-    private var openPaperIDs: [UUID] {
-        openTabs.compactMap { if case .paper(let id) = $0 { return id } else { return nil } }
-    }
 
     private var openEditorPaths: [String] {
         openTabs.compactMap { if case .editor(let path) = $0 { return path } else { return nil } }
@@ -75,33 +70,10 @@ struct MainWindow: View {
                 .opacity(selectedTab == .library ? 1 : 0)
                 .allowsHitTesting(selectedTab == .library)
 
-            ForEach(openPaperIDs, id: \.self) { paperId in
-                if let paper = allPapers.first(where: { $0.id == paperId }) {
-                    Group {
-                        let isActive = selectedTab == .paper(paperId)
-                        if let splitID = splitPaperID,
-                           splitID != paperId,
-                           isActive {
-                            if let splitPaper = allPapers.first(where: { $0.id == splitID }) {
-                                HSplitView {
-                                    PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
-                                    PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
-                                }
-                            }
-                        } else {
-                            PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal)
-                        }
-                    }
-                    .opacity(selectedTab == .paper(paperId) ? 1 : 0)
-                    .allowsHitTesting(selectedTab == .paper(paperId))
-                }
-            }
-
             LaTeXEditorContainer(
                 openPaths: openEditorPaths.filter { !$0.isEmpty },
                 selectedTab: $selectedTab,
                 showTerminal: $showTerminal,
-                openPaperIDs: openPaperIDs,
                 workspaceState: latexWorkspaceState,
                 terminalWorkspaceState: terminalWorkspaceState,
                 onOpenTeX: { url in openTeXFile(url) },
@@ -118,26 +90,9 @@ struct MainWindow: View {
 }
     }
 
-    private var terminalPane: some View {
-        TerminalPanel(
-            workspaceState: terminalWorkspaceState,
-            document: nil,
-            isVisible: showTerminal && selectedTab != .library && !isEditorSelected,
-            topInset: 0,
-            showsInlineControls: true
-        )
-        .frame(
-            minWidth: showTerminal && selectedTab != .library && !isEditorSelected ? 180 : 0,
-            idealWidth: showTerminal && selectedTab != .library && !isEditorSelected ? 680 : 0,
-            maxWidth: showTerminal && selectedTab != .library && !isEditorSelected ? .infinity : 0
-        )
-        .opacity(showTerminal && selectedTab != .library && !isEditorSelected ? 1 : 0)
-    }
-
     private func tabTitle(_ tab: TabItem) -> String {
         switch tab {
         case .library: return "Bibliothèque"
-        case .paper(let id): return allPapers.first(where: { $0.id == id })?.title ?? "Article"
         case .editor(let path): return URL(fileURLWithPath: path).lastPathComponent
         }
     }
@@ -215,6 +170,42 @@ struct MainWindow: View {
         Self.addRecentTeXFile(url.path)
     }
 
+    private func openPaperAsReference(id: UUID) {
+        guard let paper = allPapers.first(where: { $0.id == id }) else { return }
+        let pdf = PDFDocument(url: paper.fileURL)
+        guard let pdf else { return }
+
+        // Ensure we're on an editor tab
+        if !isEditorSelected {
+            // Switch to editor — create a placeholder if no editor tab exists
+            if let existingEditor = openTabs.first(where: { if case .editor(let p) = $0 { return !p.isEmpty } else { return false } }) {
+                selectedTab = existingEditor
+            } else {
+                // No editor open — just select the empty editor
+                selectedTab = .editor("")
+            }
+        }
+
+        // Open the paper in the LaTeX editor's reference PDF pane
+        let ws = latexWorkspaceState
+        if ws.referencePaperIDs.contains(paper.id) {
+            ws.selectedReferencePaperID = paper.id
+            return
+        }
+        AnnotationService.normalizeDocumentAnnotations(in: pdf)
+        ws.referencePDFs[paper.id] = pdf
+        if ws.referencePDFUIStates[paper.id] == nil {
+            ws.referencePDFUIStates[paper.id] = ReferencePDFUIState()
+        }
+        ws.referencePaperIDs.append(paper.id)
+        ws.selectedReferencePaperID = paper.id
+        if ws.splitLayout == LaTeXEditorView.SplitLayout.editorOnly.rawValue {
+            ws.layoutBeforeReference = LaTeXEditorView.SplitLayout.editorOnly.rawValue
+            ws.splitLayout = LaTeXEditorView.SplitLayout.horizontal.rawValue
+            ws.showPDFPreview = true
+        }
+    }
+
     // MARK: - Recent .tex files
 
     private static let recentTeXKey = "recentTeXFiles"
@@ -246,8 +237,7 @@ struct MainWindow: View {
         let snapshot = MainWindowWorkspaceState(
             openTabs: savedTabs,
             selectedTab: selectedSavedTab,
-            showTerminal: showTerminal,
-            splitPaperID: splitPaperID
+            showTerminal: showTerminal
         )
         WorkspaceSessionStore.shared.saveMainWindowState(snapshot)
     }
@@ -279,11 +269,6 @@ struct MainWindow: View {
         }
 
         showTerminal = snapshot.showTerminal
-        if let splitID = snapshot.splitPaperID, openTabs.contains(.paper(splitID)) {
-            splitPaperID = splitID
-        } else {
-            splitPaperID = nil
-        }
     }
 
     private func deduplicated<T: Hashable>(_ values: [T]) -> [T] {
@@ -341,70 +326,15 @@ struct MainWindow: View {
                         .buttonStyle(.plain)
                         .help("Ouvrir un fichier .tex (⌘O)")
                     }
-
-                    // Split toggle
-                    if case .paper = selectedTab {
-                        Menu {
-                            if splitPaperID != nil {
-                                Button("Fermer le split") { splitPaperID = nil }
-                                Divider()
-                            }
-                            ForEach(openPaperIDs, id: \.self) { id in
-                                if let paper = allPapers.first(where: { $0.id == id }) {
-                                    Button(paper.title) { splitPaperID = id }
-                                }
-                            }
-                        } label: {
-                            Image(systemName: splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
-                                .font(.system(size: 11))
-                                .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Split view")
-                    }
                 }
                 .padding(.trailing, 4)
             }
             .frame(height: AppChromeMetrics.topBarHeight)
             .background(.bar)
 
-            // Document tabs row (papers from library)
-            let docTabs = openTabs.filter {
-                if case .paper = $0 { return true }
-                return false
-            }
-            if !docTabs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        ForEach(docTabs, id: \.self) { tab in
-                            TabButton(
-                                tab: tab,
-                                isSelected: selectedTab == tab,
-                                title: tabTitle(tab),
-                                onSelect: { selectedTab = tab },
-                                onClose: {
-                                    if let i = openTabs.firstIndex(of: tab) {
-                                        openTabs.remove(at: i)
-                                        if selectedTab == tab {
-                                            selectedTab = i > 0 ? openTabs[i-1] : (openTabs.first ?? .library)
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-                .frame(height: EditorChromeMetrics.tabBarHeight)
-                .background(.bar.opacity(0.7))
-            }
-
             Divider()
 
-            // Content + resizable shared terminal
-            HSplitView {
-                mainContentPane
-                terminalPane
-            }
+            mainContentPane
         }
         .onAppear {
             restoreWorkspaceStateIfNeeded()
@@ -416,14 +346,9 @@ struct MainWindow: View {
         }
         .onChange(of: openTabs) { persistWorkspaceState() }
         .onChange(of: showTerminal) { persistWorkspaceState() }
-        .onChange(of: splitPaperID) { persistWorkspaceState() }
         .onChange(of: paperToOpen) {
             guard let id = paperToOpen else { return }
-            let tab = TabItem.paper(id)
-            if !openTabs.contains(tab) {
-                openTabs.append(tab)
-            }
-            selectedTab = tab
+            openPaperAsReference(id: id)
             paperToOpen = nil
         }
         .fileImporter(
@@ -469,14 +394,6 @@ struct TabBar: View {
         tabs.filter { if case .editor(let p) = $0 { return !p.isEmpty } else { return false } }
     }
 
-    /// Document tabs: papers (scrollable, bottom row)
-    private var documentTabs: [TabItem] {
-        tabs.filter {
-            if case .paper = $0 { return true }
-            return false
-        }
-    }
-
     var body: some View {
         // Section tabs only (Bibliothèque + LaTeX)
         HStack(spacing: 0) {
@@ -506,8 +423,6 @@ struct TabBar: View {
     private func title(for tab: TabItem) -> String {
         switch tab {
         case .library: return "Bibliothèque"
-        case .paper(let id):
-            return allPapers.first(where: { $0.id == id })?.title ?? "Article"
         case .editor(let path):
             return URL(fileURLWithPath: path).lastPathComponent
         }
@@ -575,7 +490,6 @@ struct TabButton: View {
     private var tabIcon: String {
         switch tab {
         case .library: return "books.vertical"
-        case .paper: return "doc.text"
         case .editor: return "chevron.left.forwardslash.chevron.right"
         }
     }
@@ -673,7 +587,6 @@ struct LaTeXEditorContainer: View {
     let openPaths: [String]
     @Binding var selectedTab: TabItem
     @Binding var showTerminal: Bool
-    let openPaperIDs: [UUID]
     @ObservedObject var workspaceState: LaTeXWorkspaceUIState
     @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
     var onOpenTeX: (URL) -> Void
@@ -827,8 +740,7 @@ struct LaTeXEditorContainer: View {
                     showTerminal: $showTerminal,
                     workspaceState: workspaceState,
                     terminalWorkspaceState: terminalWorkspaceState,
-                        onOpenInNewTab: onOpenTeX,
-                    openPaperIDs: openPaperIDs,
+                    onOpenInNewTab: onOpenTeX,
                     editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil
                 )
             }
