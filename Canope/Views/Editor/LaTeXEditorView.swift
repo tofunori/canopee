@@ -1275,19 +1275,30 @@ struct LaTeXEditorView: View {
     private func pdfTabButton(_ tab: PdfPaneTab) -> some View {
         let isSelected = tab == selectedPdfTab
         HStack(spacing: 4) {
-            switch tab {
-            case .compiled:
-                Image(systemName: "doc.text")
-                    .font(.system(size: 9))
-                Text("PDF compilé")
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-            case .reference(let id):
-                Image(systemName: "book")
-                    .font(.system(size: 9))
-                Text(paperFor(id)?.authorsShort ?? "Article")
-                    .font(.system(size: 11))
-                    .lineLimit(1)
+            Button {
+                selectPdfTab(tab)
+            } label: {
+                HStack(spacing: 4) {
+                    switch tab {
+                    case .compiled:
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 9))
+                        Text("PDF compilé")
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                    case .reference(let id):
+                        Image(systemName: "book")
+                            .font(.system(size: 9))
+                        Text(paperFor(id)?.authorsShort ?? "Article")
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if case .reference = tab {
                 Button {
                     closePdfTab(tab)
                 } label: {
@@ -1298,22 +1309,10 @@ struct LaTeXEditorView: View {
                 .buttonStyle(.plain)
             }
         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
         .cornerRadius(4)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // Only switch tab if this tab still exists (not just closed by ✕)
-            if pdfPaneTabs.contains(tab) {
-                switch tab {
-                case .compiled:
-                    workspaceState.selectedReferencePaperID = nil
-                case .reference(let id):
-                    workspaceState.selectedReferencePaperID = id
-                }
-            }
-        }
     }
 
     // MARK: - Toolbar
@@ -2157,15 +2156,28 @@ struct LaTeXEditorView: View {
         }
     }
 
+    private func selectPdfTab(_ tab: PdfPaneTab) {
+        switch tab {
+        case .compiled:
+            workspaceState.selectedReferencePaperID = nil
+        case .reference(let id):
+            workspaceState.selectedReferencePaperID = id
+        }
+    }
+
     private func closePdfTab(_ tab: PdfPaneTab) {
         guard case .reference(let id) = tab else { return }
-        saveReferencePDF(id: id)
+        let pendingSave = workspaceState.referencePDFUIStates[id]?.hasUnsavedChanges == true
+        let documentToSave = workspaceState.referencePDFs[id]
+        let fileURLToSave = paperFor(id)?.fileURL
+        let remainingReferenceIDs = workspaceState.referencePaperIDs.filter { $0 != id }
+
         workspaceState.referencePaperIDs.removeAll { $0 == id }
         workspaceState.referencePDFs.removeValue(forKey: id)
         workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
         workspaceState.referencePDFUIStates.removeValue(forKey: id)
-        if selectedPdfTab == tab {
-            workspaceState.selectedReferencePaperID = nil
+        if selectedPdfTab == tab || workspaceState.selectedReferencePaperID == id {
+            workspaceState.selectedReferencePaperID = remainingReferenceIDs.first
         }
         // Restore layout only if no more references AND user hasn't changed layout since
         if pdfPaneTabs == [.compiled],
@@ -2174,6 +2186,14 @@ struct LaTeXEditorView: View {
             splitLayout = previous
             showPDFPreview = previous != .editorOnly
             layoutBeforeReference = nil
+        }
+
+        guard pendingSave,
+              let documentToSave,
+              let fileURLToSave else { return }
+
+        DispatchQueue.main.async {
+            _ = AnnotationService.save(document: documentToSave, to: fileURLToSave)
         }
     }
 
