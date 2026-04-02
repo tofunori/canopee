@@ -348,7 +348,8 @@ final class ServiceParsingTests: XCTestCase {
         let script = ClaudeCLIWrapperService.zshBootstrapRC(
             sourceDirectory: "/Users/tofunori",
             wrapperDirectory: "/tmp/canope-cli-bin",
-            wrapperPath: "/tmp/canope-cli-bin/claude",
+            claudeWrapperPath: "/tmp/canope-cli-bin/claude",
+            codexWrapperPath: "/tmp/canope-cli-bin/codex",
             mcpConfigPath: "/tmp/canope_claude_ide_mcp.json",
             alternateMcpConfigPath: "/tmp/canopee_claude_ide_mcp.json",
             bridgeURL: "http://127.0.0.1:8765/sse"
@@ -357,8 +358,22 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertTrue(script.contains("source '/Users/tofunori/.zshrc'"))
         XCTAssertTrue(script.contains("export PATH='/tmp/canope-cli-bin':$PATH"))
         XCTAssertTrue(script.contains("alias claude='/tmp/canope-cli-bin/claude'"))
+        XCTAssertTrue(script.contains("alias codex='/tmp/canope-cli-bin/codex'"))
         XCTAssertTrue(script.contains("export CANOPE_CLAUDE_IDE_MCP_CONFIG='/tmp/canope_claude_ide_mcp.json'"))
         XCTAssertTrue(script.contains("hash -r 2>/dev/null || rehash 2>/dev/null || true"))
+    }
+
+    func testCodexWrapperScriptInjectsCanopeBridgeForInteractiveSessions() {
+        let script = ClaudeCLIWrapperService.codexWrapperScript(realCodexPath: "/opt/homebrew/bin/codex")
+
+        XCTAssertTrue(script.contains("REAL_CODEX='/opt/homebrew/bin/codex'"))
+        XCTAssertTrue(script.contains("mcp_servers.canope.type=\\\"stdio\\\""))
+        XCTAssertTrue(script.contains("mcp_servers.canope.command=\\\"npx\\\""))
+        XCTAssertTrue(script.contains("mcp_servers.canope.args=[\\\"-y\\\",\\\"mcp-remote\\\",\\\"$BRIDGE_URL\\\",\\\"--transport\\\",\\\"sse-only\\\"]"))
+        XCTAssertTrue(script.contains("login|logout|mcp|completion|debug|app|app-server|help|features"))
+        XCTAssertTrue(script.contains("mcp-remote"))
+        XCTAssertTrue(script.contains("--transport"))
+        XCTAssertTrue(script.contains("sse-only"))
     }
 
     func testClaudeCLIWrapperApplyKeepsWrapperVisibleInsideLoginZsh() throws {
@@ -385,5 +400,29 @@ final class ServiceParsingTests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("/tmp/canope-cli-bin/claude"))
+    }
+
+    func testClaudeCLIWrapperApplyKeepsCodexWrapperVisibleInsideLoginZsh() throws {
+        let environment = ClaudeCLIWrapperService.shared.apply(
+            to: ["PATH=/usr/bin:/bin"],
+            shellPath: "/bin/zsh"
+        )
+        let environmentDictionary = Dictionary(
+            uniqueKeysWithValues: environment.compactMap { entry -> (String, String)? in
+                let parts = entry.split(separator: "=", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { return nil }
+                return (parts[0], parts[1])
+            }
+        )
+
+        let result = try ProcessRunner.run(
+            executable: "/bin/zsh",
+            args: ["-lic", "type codex"],
+            environment: environmentDictionary,
+            timeout: 5
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("/tmp/canope-cli-bin/codex"))
     }
 }

@@ -59,8 +59,25 @@ struct TerminalPanel: View {
     let isVisible: Bool
     let topInset: CGFloat
     let showsInlineControls: Bool
+    let startupWorkingDirectory: URL?
 
     enum PaneID { case top, bottom }
+
+    init(
+        workspaceState: TerminalWorkspaceState,
+        document: PDFDocument?,
+        isVisible: Bool,
+        topInset: CGFloat,
+        showsInlineControls: Bool,
+        startupWorkingDirectory: URL? = nil
+    ) {
+        self.workspaceState = workspaceState
+        self.document = document
+        self.isVisible = isVisible
+        self.topInset = topInset
+        self.showsInlineControls = showsInlineControls
+        self.startupWorkingDirectory = startupWorkingDirectory
+    }
 
     private var currentTabID: UUID {
         workspaceState.selectedTabID ?? workspaceState.tabs.first!.id
@@ -155,7 +172,8 @@ struct TerminalPanel: View {
                                 terminalViews: $workspaceState.terminalViews,
                                 isActive: tab.id == currentTabID,
                                 fontSize: workspaceState.currentFontSize,
-                                theme: Self.themes[workspaceState.currentTheme]
+                                theme: Self.themes[workspaceState.currentTheme],
+                                startupWorkingDirectory: startupWorkingDirectory
                             )
                             .opacity(tab.id == currentTabID ? 1 : 0)
                             .allowsHitTesting(tab.id == currentTabID)
@@ -177,7 +195,8 @@ struct TerminalPanel: View {
                                 terminalViews: $workspaceState.splitTerminalViews,
                                 isActive: workspaceState.isSplit,
                                 fontSize: workspaceState.currentFontSize,
-                                theme: Self.themes[workspaceState.currentTheme]
+                                theme: Self.themes[workspaceState.currentTheme],
+                                startupWorkingDirectory: startupWorkingDirectory
                             )
                         }
                     }
@@ -421,6 +440,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
     let isActive: Bool
     let fontSize: CGFloat
     let theme: (name: String, bg: NSColor, fg: NSColor, cursor: NSColor)
+    let startupWorkingDirectory: URL?
 
     func makeNSView(context: Context) -> FocusAwareLocalProcessTerminalView {
         if let existing = terminalViews[tabID] as? FocusAwareLocalProcessTerminalView {
@@ -450,7 +470,13 @@ struct TerminalViewWrapper: NSViewRepresentable {
         ClaudeIDEBridgeService.shared.startIfNeeded()
         env = ClaudeCLIWrapperService.shared.apply(to: env, shellPath: shell)
         env.append(contentsOf: CanopeContextFiles.terminalEnvironment)
-        tv.startProcess(executable: shell, args: ["-l"], environment: env, execName: shell)
+        tv.startProcess(
+            executable: shell,
+            args: ["-l"],
+            environment: env,
+            execName: shell,
+            currentDirectory: startupWorkingDirectory?.path
+        )
         tv.schedulePreferredCursorWarmup()
         ChildProcessRegistry.shared.track(terminalView: tv)
 

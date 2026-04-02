@@ -5,28 +5,29 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
 
     private let fileManager = FileManager.default
     private let wrapperDirectoryURL: URL
-    private let wrapperURL: URL
+    private let claudeWrapperURL: URL
+    private let codexWrapperURL: URL
     private let zshBootstrapDirectoryURL: URL
 
     private init() {
         wrapperDirectoryURL = URL(fileURLWithPath: "/tmp", isDirectory: true)
             .appendingPathComponent("canope-cli-bin", isDirectory: true)
-        wrapperURL = wrapperDirectoryURL.appendingPathComponent("claude")
+        claudeWrapperURL = wrapperDirectoryURL.appendingPathComponent("claude")
+        codexWrapperURL = wrapperDirectoryURL.appendingPathComponent("codex")
         zshBootstrapDirectoryURL = URL(fileURLWithPath: "/tmp", isDirectory: true)
             .appendingPathComponent("canope-zdotdir", isDirectory: true)
     }
 
     func apply(to environment: [String], shellPath: String? = nil) -> [String] {
-        guard let wrapperURL = prepareWrapperIfNeeded() else {
-            return environment
-        }
-
         var updatedEnvironment = Self.prependingToPATH(wrapperDirectoryURL.path, in: environment)
+        let claudeWrapperPath = prepareClaudeWrapperIfNeeded()?.path
+        let codexWrapperPath = prepareCodexWrapperIfNeeded()?.path
 
         if Self.isZshShell(shellPath),
            let bootstrapURL = prepareZshBootstrapIfNeeded(
                sourceDirectory: Self.sourceZDOTDIR(from: environment),
-               wrapperPath: wrapperURL.path
+               claudeWrapperPath: claudeWrapperPath,
+               codexWrapperPath: codexWrapperPath
            ) {
             updatedEnvironment = Self.settingEnvironmentVariable(
                 "ZDOTDIR",
@@ -40,6 +41,11 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
 
     @discardableResult
     func prepareWrapperIfNeeded() -> URL? {
+        prepareClaudeWrapperIfNeeded()
+    }
+
+    @discardableResult
+    func prepareClaudeWrapperIfNeeded() -> URL? {
         guard let realClaudePath = resolveRealClaudePath() else {
             return nil
         }
@@ -52,15 +58,42 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
             )
 
             let script = Self.wrapperScript(realClaudePath: realClaudePath)
-            let existing = try? String(contentsOf: wrapperURL, encoding: .utf8)
+            let existing = try? String(contentsOf: claudeWrapperURL, encoding: .utf8)
             if existing != script {
-                try script.write(to: wrapperURL, atomically: true, encoding: .utf8)
+                try script.write(to: claudeWrapperURL, atomically: true, encoding: .utf8)
             }
 
-            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapperURL.path)
-            return wrapperURL
+            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claudeWrapperURL.path)
+            return claudeWrapperURL
         } catch {
             print("[Canope] Claude wrapper not prepared: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    @discardableResult
+    func prepareCodexWrapperIfNeeded() -> URL? {
+        guard let realCodexPath = resolveRealCodexPath() else {
+            return nil
+        }
+
+        do {
+            try fileManager.createDirectory(
+                at: wrapperDirectoryURL,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+
+            let script = Self.codexWrapperScript(realCodexPath: realCodexPath)
+            let existing = try? String(contentsOf: codexWrapperURL, encoding: .utf8)
+            if existing != script {
+                try script.write(to: codexWrapperURL, atomically: true, encoding: .utf8)
+            }
+
+            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codexWrapperURL.path)
+            return codexWrapperURL
+        } catch {
+            print("[Canope] Codex wrapper not prepared: \(error.localizedDescription)")
             return nil
         }
     }
@@ -78,8 +111,29 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
             return nil
         }
 
-        guard path != wrapperURL.path else {
+        guard path != claudeWrapperURL.path else {
             print("[Canope] Claude wrapper not prepared: resolved claude path points to wrapper")
+            return nil
+        }
+
+        return path
+    }
+
+    private func resolveRealCodexPath() -> String? {
+        let preferredPaths = [
+            "~/.local/bin/codex",
+            "/Users/tofunori/.local/bin/codex",
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex",
+        ]
+
+        guard let path = ExecutableLocator.find("codex", preferredPaths: preferredPaths) else {
+            print("[Canope] Codex wrapper not prepared: codex executable not found")
+            return nil
+        }
+
+        guard path != codexWrapperURL.path else {
+            print("[Canope] Codex wrapper not prepared: resolved codex path points to wrapper")
             return nil
         }
 
@@ -100,12 +154,15 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
     static func zshBootstrapRC(
         sourceDirectory: String,
         wrapperDirectory: String,
-        wrapperPath: String,
+        claudeWrapperPath: String?,
+        codexWrapperPath: String?,
         mcpConfigPath: String,
         alternateMcpConfigPath: String,
         bridgeURL: String
     ) -> String {
         let sourcePath = (sourceDirectory as NSString).appendingPathComponent(".zshrc")
+        let claudeAlias = claudeWrapperPath.map { "alias claude=\(shellSingleQuoted($0))" } ?? ""
+        let codexAlias = codexWrapperPath.map { "alias codex=\(shellSingleQuoted($0))" } ?? ""
 
         return """
         # Generated by Canope for terminal-local Claude IDE integration.
@@ -116,9 +173,12 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
         export PATH=\(shellSingleQuoted(wrapperDirectory)):$PATH
         export CANOPE_CLAUDE_IDE_MCP_CONFIG=\(shellSingleQuoted(mcpConfigPath))
         export CANOPEE_CLAUDE_IDE_MCP_CONFIG=\(shellSingleQuoted(alternateMcpConfigPath))
+        export CANOPE_IDE_BRIDGE_URL=\(shellSingleQuoted(bridgeURL))
+        export CANOPEE_IDE_BRIDGE_URL=\(shellSingleQuoted(bridgeURL))
         export CANOPE_CLAUDE_IDE_BRIDGE_URL=\(shellSingleQuoted(bridgeURL))
         export CANOPEE_CLAUDE_IDE_BRIDGE_URL=\(shellSingleQuoted(bridgeURL))
-        alias claude=\(shellSingleQuoted(wrapperPath))
+        \(claudeAlias)
+        \(codexAlias)
         hash -r 2>/dev/null || rehash 2>/dev/null || true
         """
     }
@@ -169,11 +229,50 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
         """
     }
 
+    static func codexWrapperScript(realCodexPath: String) -> String {
+        let escapedRealCodexPath = shellSingleQuoted(realCodexPath)
+        let escapedBridgeURL = shellSingleQuoted(CanopeContextFiles.claudeIDEBridgeURL)
+
+        return """
+        #!/bin/sh
+        REAL_CODEX=\(escapedRealCodexPath)
+        BRIDGE_URL="${CANOPE_IDE_BRIDGE_URL:-${CANOPE_CLAUDE_IDE_BRIDGE_URL:-\(escapedBridgeURL)}}"
+
+        if [ -z "$BRIDGE_URL" ]; then
+          exec "$REAL_CODEX" "$@"
+        fi
+
+        for arg in "$@"; do
+          case "$arg" in
+            -c|--config|--help|-h|--version|-V)
+              exec "$REAL_CODEX" "$@"
+              ;;
+          esac
+        done
+
+        case "${1:-}" in
+          login|logout|mcp|completion|debug|app|app-server|help|features)
+            exec "$REAL_CODEX" "$@"
+            ;;
+        esac
+
+        exec "$REAL_CODEX" \
+          -c "mcp_servers.canope.type=\\"stdio\\"" \
+          -c "mcp_servers.canope.command=\\"npx\\"" \
+          -c "mcp_servers.canope.args=[\\"-y\\",\\"mcp-remote\\",\\"$BRIDGE_URL\\",\\"--transport\\",\\"sse-only\\"]" \
+          "$@"
+        """
+    }
+
     private static func shellSingleQuoted(_ string: String) -> String {
         "'\(string.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
-    private func prepareZshBootstrapIfNeeded(sourceDirectory: String, wrapperPath: String) -> URL? {
+    private func prepareZshBootstrapIfNeeded(
+        sourceDirectory: String,
+        claudeWrapperPath: String?,
+        codexWrapperPath: String?
+    ) -> URL? {
         let files = [
             ".zshenv": Self.zshForwarderScript(
                 fileName: ".zshenv",
@@ -186,7 +285,8 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
             ".zshrc": Self.zshBootstrapRC(
                 sourceDirectory: sourceDirectory,
                 wrapperDirectory: wrapperDirectoryURL.path,
-                wrapperPath: wrapperPath,
+                claudeWrapperPath: claudeWrapperPath,
+                codexWrapperPath: codexWrapperPath,
                 mcpConfigPath: CanopeContextFiles.claudeIDEMcpConfigPaths[0],
                 alternateMcpConfigPath: CanopeContextFiles.claudeIDEMcpConfigPaths[1],
                 bridgeURL: CanopeContextFiles.claudeIDEBridgeURL

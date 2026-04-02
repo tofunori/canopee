@@ -602,7 +602,8 @@ struct LaTeXEditorView: View {
             document: nil,
             isVisible: isActive && showTerminal,
             topInset: 0,
-            showsInlineControls: false
+            showsInlineControls: false,
+            startupWorkingDirectory: projectRoot
         )
         .frame(minWidth: 160, idealWidth: 320, maxWidth: .infinity)
     }

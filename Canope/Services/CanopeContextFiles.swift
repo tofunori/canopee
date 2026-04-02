@@ -46,6 +46,8 @@ enum CanopeContextFiles {
             "CANOPEE_PAPER=\(paperPaths[1])",
             "CANOPE_ANNOTATION_PROMPT=\(annotationPromptPaths[0])",
             "CANOPEE_ANNOTATION_PROMPT=\(annotationPromptPaths[1])",
+            "CANOPE_IDE_BRIDGE_URL=\(claudeIDEBridgeURL)",
+            "CANOPEE_IDE_BRIDGE_URL=\(claudeIDEBridgeURL)",
             "CANOPE_CLAUDE_IDE_MCP_CONFIG=\(claudeIDEMcpConfigPaths[0])",
             "CANOPEE_CLAUDE_IDE_MCP_CONFIG=\(claudeIDEMcpConfigPaths[1])",
             "CANOPE_CLAUDE_IDE_BRIDGE_URL=\(claudeIDEBridgeURL)",

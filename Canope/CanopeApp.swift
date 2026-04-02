@@ -22,6 +22,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.register(defaults: ["ApplePressAndHoldEnabled": false])
         ClaudeIDEBridgeService.shared.startIfNeeded()
         _ = ClaudeCLIWrapperService.shared.prepareWrapperIfNeeded()
+        _ = ClaudeCLIWrapperService.shared.prepareCodexWrapperIfNeeded()
 
         NotificationCenter.default.addObserver(
             self,
