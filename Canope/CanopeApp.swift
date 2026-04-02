@@ -30,8 +30,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        DispatchQueue.main.async {
-            NSApp.windows.forEach(self.configureWindow)
+        Task { @MainActor in
+            NSApp.windows.forEach { Self.configureWindow($0) }
         }
     }
 
@@ -46,10 +46,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc
     private func configureWindowFromNotification(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        configureWindow(window)
+        Task { @MainActor in
+            Self.configureWindow(window)
+        }
     }
 
-    private func configureWindow(_ window: NSWindow) {
+    @MainActor
+    private static func configureWindow(_ window: NSWindow) {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
