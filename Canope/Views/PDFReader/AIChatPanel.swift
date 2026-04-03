@@ -23,6 +23,7 @@ private func makeTerminalFont(size: CGFloat) -> NSFont {
 struct TerminalTab: Identifiable {
     let id = UUID()
     var title: String = "Terminal"
+    var optionAsMetaKey: Bool = false
 }
 
 @MainActor
@@ -105,6 +106,19 @@ struct TerminalPanel: View {
                 if showsInlineControls {
                     Spacer()
 
+                    Button(action: toggleOptionAsMetaForFocusedPane) {
+                        Text("⌥")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(focusedPaneUsesOptionAsMeta ? .blue : .secondary)
+                            .frame(width: 24, height: 24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(focusedPaneUsesOptionAsMeta ? Color.accentColor.opacity(0.15) : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Utiliser Option comme Meta pour cet onglet de terminal")
+
                     Button(action: addTab) {
                         Image(systemName: "plus")
                             .font(.caption)
@@ -171,6 +185,7 @@ struct TerminalPanel: View {
                                 tabID: tab.id,
                                 terminalViews: $workspaceState.terminalViews,
                                 isActive: tab.id == currentTabID,
+                                optionAsMetaKey: tab.optionAsMetaKey,
                                 fontSize: workspaceState.currentFontSize,
                                 theme: Self.themes[workspaceState.currentTheme],
                                 startupWorkingDirectory: startupWorkingDirectory
@@ -194,6 +209,7 @@ struct TerminalPanel: View {
                                 tabID: tab.id,
                                 terminalViews: $workspaceState.splitTerminalViews,
                                 isActive: workspaceState.isSplit,
+                                optionAsMetaKey: tab.optionAsMetaKey,
                                 fontSize: workspaceState.currentFontSize,
                                 theme: Self.themes[workspaceState.currentTheme],
                                 startupWorkingDirectory: startupWorkingDirectory
@@ -297,6 +313,19 @@ struct TerminalPanel: View {
     ]
     static let fontSizes = [12, 13, 14, 15, 16, 17, 18, 20, 24]
 
+    private var focusedPaneUsesOptionAsMeta: Bool {
+        switch workspaceState.focusedPane {
+        case .top:
+            guard let selectedID = workspaceState.selectedTabID,
+                  let tab = workspaceState.tabs.first(where: { $0.id == selectedID }) else {
+                return false
+            }
+            return tab.optionAsMetaKey
+        case .bottom:
+            return workspaceState.splitTabs.first?.optionAsMetaKey ?? false
+        }
+    }
+
     // MARK: - Actions
 
     private func applyTheme(_ index: Int) {
@@ -383,6 +412,24 @@ struct TerminalPanel: View {
         workspaceState.selectedTabID = tab.id
     }
 
+    private func toggleOptionAsMetaForFocusedPane() {
+        switch workspaceState.focusedPane {
+        case .top:
+            guard let selectedID = workspaceState.selectedTabID,
+                  let index = workspaceState.tabs.firstIndex(where: { $0.id == selectedID }) else {
+                return
+            }
+            var tabs = workspaceState.tabs
+            tabs[index].optionAsMetaKey.toggle()
+            workspaceState.tabs = tabs
+        case .bottom:
+            guard let index = workspaceState.splitTabs.indices.first else { return }
+            var tabs = workspaceState.splitTabs
+            tabs[index].optionAsMetaKey.toggle()
+            workspaceState.splitTabs = tabs
+        }
+    }
+
     private func closeTab(_ tab: TerminalTab) {
         guard workspaceState.tabs.count > 1 else { return }
         if let index = workspaceState.tabs.firstIndex(where: { $0.id == tab.id }) {
@@ -438,6 +485,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
     let tabID: UUID
     @Binding var terminalViews: [UUID: LocalProcessTerminalView]
     let isActive: Bool
+    let optionAsMetaKey: Bool
     let fontSize: CGFloat
     let theme: (name: String, bg: NSColor, fg: NSColor, cursor: NSColor)
     let startupWorkingDirectory: URL?
@@ -449,6 +497,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
             existing.nativeForegroundColor = theme.fg
             existing.caretColor = theme.cursor
             existing.shouldCaptureFocusFromClicks = isActive
+            existing.optionAsMetaKey = optionAsMetaKey
             existing.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             existing.setContentHuggingPriority(.defaultLow, for: .horizontal)
             return existing
@@ -459,7 +508,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
         tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
         tv.font = makeTerminalFont(size: fontSize)
         tv.getTerminal().setCursorStyle(preferredTerminalCursorStyle)
-        tv.optionAsMetaKey = false
+        tv.optionAsMetaKey = optionAsMetaKey
         tv.nativeBackgroundColor = theme.bg
         tv.nativeForegroundColor = theme.fg
         tv.caretColor = theme.cursor
@@ -495,6 +544,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
         nsView.nativeBackgroundColor = theme.bg
         nsView.nativeForegroundColor = theme.fg
         nsView.caretColor = theme.cursor
+        nsView.optionAsMetaKey = optionAsMetaKey
     }
 
     static func dismantleNSView(_ nsView: FocusAwareLocalProcessTerminalView, coordinator: ()) {
@@ -568,6 +618,7 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
     var shouldCaptureFocusFromClicks = true
     private var clickMonitor: Any?
     private var scrollMonitor: Any?
+    private var keyMonitor: Any?
 
     override func cursorStyleChanged(source: Terminal, newStyle: CursorStyle) {
         source.options.cursorStyle = preferredTerminalCursorStyle
@@ -585,6 +636,7 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
         } else {
             installClickMonitorIfNeeded()
             installScrollMonitor()
+            installKeyMonitorIfNeeded()
             DispatchQueue.main.async { [weak self] in
                 self?.activateInputFocus()
                 self?.applyPreferredCursorAppearance()
@@ -672,6 +724,41 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
         }
     }
 
+    private func installKeyMonitorIfNeeded() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let window = self.window else { return event }
+            guard event.window === window, window.firstResponder === self else { return event }
+
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard flags.contains(.option),
+                  !flags.contains(.command),
+                  !flags.contains(.control) else {
+                return event
+            }
+
+            if self.optionAsMetaKey,
+               let rawCharacter = event.charactersIgnoringModifiers,
+               !rawCharacter.isEmpty {
+                self.send(txt: "\u{1b}\(rawCharacter)")
+                return nil
+            }
+
+            let terminal = self.getTerminal()
+            if !self.optionAsMetaKey,
+               !terminal.keyboardEnhancementFlags.isEmpty,
+               let composedCharacter = event.characters,
+               let rawCharacter = event.charactersIgnoringModifiers,
+               !composedCharacter.isEmpty,
+               composedCharacter != rawCharacter {
+                self.send(txt: composedCharacter)
+                return nil
+            }
+
+            return event
+        }
+    }
+
     private func removeClickMonitor() {
         guard let clickMonitor else { return }
         NSEvent.removeMonitor(clickMonitor)
@@ -684,8 +771,15 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
         self.scrollMonitor = nil
     }
 
+    private func removeKeyMonitor() {
+        guard let keyMonitor else { return }
+        NSEvent.removeMonitor(keyMonitor)
+        self.keyMonitor = nil
+    }
+
     private func removeEventMonitors() {
         removeClickMonitor()
         removeScrollMonitor()
+        removeKeyMonitor()
     }
 }
