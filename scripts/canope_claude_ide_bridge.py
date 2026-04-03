@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import queue
+import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -223,6 +225,49 @@ def log_debug(message: str) -> None:
         pass
 
 
+def extract_pdf_text(file_path: str) -> str:
+    if not file_path or not file_path.lower().endswith(".pdf"):
+        return ""
+
+    path = Path(file_path)
+    if not path.exists():
+        return ""
+
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(str(path))
+        chunks: list[str] = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text.strip():
+                chunks.append(text.strip())
+        content = "\n\n".join(chunks).strip()
+        if content:
+            return content
+    except Exception as error:
+        log_debug(f"pypdf extraction failed for {file_path}: {error}")
+
+    pdftotext_path = shutil.which("pdftotext")
+    if not pdftotext_path:
+        return ""
+
+    try:
+        result = subprocess.run(
+            [pdftotext_path, file_path, "-"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        log_debug(f"pdftotext failed for {file_path}: rc={result.returncode} stderr={result.stderr.strip()}")
+    except Exception as error:
+        log_debug(f"pdftotext execution failed for {file_path}: {error}")
+
+    return ""
+
+
 @dataclass
 class Session:
     session_id: str
@@ -339,10 +384,12 @@ class BridgeState:
         except OSError:
             content = ""
 
-        preview = "\n".join(content.splitlines()[:24]).strip()
         selected_file_path = selection_payload.get("filePath", "")
         selected_file_url = selection_payload.get("fileUrl", "")
         is_pdf_selection = selected_file_path.lower().endswith(".pdf")
+        if not content and is_pdf_selection:
+            content = extract_pdf_text(selected_file_path)
+        preview = "\n".join(content.splitlines()[:24]).strip()
         return {
             "success": bool(content) or is_pdf_selection,
             "filePath": selected_file_path if is_pdf_selection else str(DEFAULT_PAPER_FILE),

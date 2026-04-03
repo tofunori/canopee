@@ -617,8 +617,10 @@ final class EventForwardingView: NSView {
 final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildProcessTerminable {
     var shouldCaptureFocusFromClicks = true
     private var clickMonitor: Any?
-    private var scrollMonitor: Any?
     private var keyMonitor: Any?
+    private var scrollMonitor: Any?
+    private var mouseWheelAccumulator: CGFloat = 0
+    private var alternateWheelAccumulator: CGFloat = 0
 
     override func cursorStyleChanged(source: Terminal, newStyle: CursorStyle) {
         source.options.cursorStyle = preferredTerminalCursorStyle
@@ -635,8 +637,8 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
             removeEventMonitors()
         } else {
             installClickMonitorIfNeeded()
-            installScrollMonitor()
             installKeyMonitorIfNeeded()
+            installScrollMonitorIfNeeded()
             DispatchQueue.main.async { [weak self] in
                 self?.activateInputFocus()
                 self?.applyPreferredCursorAppearance()
@@ -666,35 +668,6 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.applyPreferredCursorAppearance()
             }
-        }
-    }
-
-    func installScrollMonitor() {
-        guard scrollMonitor == nil else { return }
-        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self, let window = self.window else { return event }
-            guard event.window === window else { return event }
-            let point = self.convert(event.locationInWindow, from: nil)
-            guard self.bounds.contains(point), event.deltaY != 0 else { return event }
-
-            let terminal = self.getTerminal()
-            // If app has enabled mouse reporting, send scroll as button events
-            if terminal.mouseMode != .off {
-                let cols = terminal.cols
-                let rows = terminal.rows
-                let cellW = self.bounds.width / CGFloat(max(1, cols))
-                let cellH = self.bounds.height / CGFloat(max(1, rows))
-                let col = max(0, Int(point.x / cellW))
-                let row = max(0, Int((self.frame.height - point.y) / cellH))
-
-                // SGR: button 64 = scroll up, 65 = scroll down
-                let button = event.deltaY > 0 ? 64 : 65
-                let seq = "\u{1b}[<\(button);\(col + 1);\(row + 1)M"
-                self.send(txt: seq)
-                return nil // consume the event
-            }
-
-            return event // let SwiftTerm handle buffer scroll
         }
     }
 
@@ -765,12 +738,6 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
         self.clickMonitor = nil
     }
 
-    private func removeScrollMonitor() {
-        guard let scrollMonitor else { return }
-        NSEvent.removeMonitor(scrollMonitor)
-        self.scrollMonitor = nil
-    }
-
     private func removeKeyMonitor() {
         guard let keyMonitor else { return }
         NSEvent.removeMonitor(keyMonitor)
@@ -779,7 +746,118 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
 
     private func removeEventMonitors() {
         removeClickMonitor()
-        removeScrollMonitor()
         removeKeyMonitor()
+        removeScrollMonitor()
+    }
+
+    private func installScrollMonitorIfNeeded() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, let window = self.window else { return event }
+            guard event.window === window else { return event }
+            guard event.scrollingDeltaY != 0 else { return event }
+
+            let point = self.convert(event.locationInWindow, from: nil)
+            guard self.bounds.contains(point) else { return event }
+
+            let terminal = self.getTerminal()
+            if terminal.mouseMode != .off {
+                if self.sendMouseWheelEvent(event, terminal: terminal) {
+                    return nil
+                }
+                return event
+            }
+
+            // Codex appears to use the alternate screen without enabling mouse
+            // reporting. In that case SwiftTerm's native macOS scroller is
+            // disabled by design, so wheel events need a keyboard fallback.
+            if !self.canScroll {
+                if self.sendAlternateBufferScrollFallback(event, terminal: terminal) {
+                    return nil
+                }
+                return event
+            }
+
+            return event
+        }
+    }
+
+    private func removeScrollMonitor() {
+        guard let scrollMonitor else { return }
+        NSEvent.removeMonitor(scrollMonitor)
+        self.scrollMonitor = nil
+    }
+
+    private func resetWheelAccumulatorsForDirectionChange(deltaY: CGFloat) {
+        if mouseWheelAccumulator != 0, deltaY.sign != mouseWheelAccumulator.sign {
+            mouseWheelAccumulator = 0
+        }
+        if alternateWheelAccumulator != 0, deltaY.sign != alternateWheelAccumulator.sign {
+            alternateWheelAccumulator = 0
+        }
+    }
+
+    @discardableResult
+    private func sendMouseWheelEvent(_ event: NSEvent, terminal: Terminal) -> Bool {
+        let flags = event.modifierFlags
+        let point = convert(event.locationInWindow, from: nil)
+        let safeWidth = max(bounds.width, 1)
+        let safeHeight = max(bounds.height, 1)
+        let cellWidth = safeWidth / CGFloat(max(terminal.cols, 1))
+        let cellHeight = safeHeight / CGFloat(max(terminal.rows, 1))
+
+        let clampedX = min(max(point.x, 0), safeWidth - 1)
+        let clampedY = min(max(point.y, 0), safeHeight - 1)
+        let column = min(max(Int(clampedX / max(cellWidth, 1)), 0), max(terminal.cols - 1, 0))
+        let rowFromTop = min(max(Int((safeHeight - clampedY) / max(cellHeight, 1)), 0), max(terminal.rows - 1, 0))
+        let pixelX = Int(clampedX)
+        let pixelY = Int(safeHeight - clampedY)
+
+        let deltaY = event.scrollingDeltaY
+        resetWheelAccumulatorsForDirectionChange(deltaY: deltaY)
+
+        let threshold: CGFloat = event.hasPreciseScrollingDeltas ? 12 : 1
+        mouseWheelAccumulator += deltaY
+        let steps = min(max(Int(abs(mouseWheelAccumulator) / threshold), 0), 3)
+        guard steps > 0 else { return false }
+        mouseWheelAccumulator -= CGFloat(steps) * threshold * (mouseWheelAccumulator >= 0 ? 1 : -1)
+
+        let button = deltaY > 0 ? 4 : 5
+        let buttonFlags = terminal.encodeButton(
+            button: button,
+            release: false,
+            shift: flags.contains(.shift),
+            meta: flags.contains(.option),
+            control: flags.contains(.control)
+        )
+
+        for _ in 0..<steps {
+            terminal.sendEvent(
+                buttonFlags: buttonFlags,
+                x: column,
+                y: rowFromTop,
+                pixelX: pixelX,
+                pixelY: pixelY
+            )
+        }
+        return true
+    }
+
+    @discardableResult
+    private func sendAlternateBufferScrollFallback(_ event: NSEvent, terminal: Terminal) -> Bool {
+        let deltaY = event.scrollingDeltaY
+        resetWheelAccumulatorsForDirectionChange(deltaY: deltaY)
+
+        let threshold: CGFloat = event.hasPreciseScrollingDeltas ? 18 : 1
+        alternateWheelAccumulator += deltaY
+        let steps = min(max(Int(abs(alternateWheelAccumulator) / threshold), 0), 2)
+        guard steps > 0 else { return false }
+        alternateWheelAccumulator -= CGFloat(steps) * threshold * (alternateWheelAccumulator >= 0 ? 1 : -1)
+
+        let sequence = deltaY > 0 ? EscapeSequences.cmdPageUp : EscapeSequences.cmdPageDown
+        for _ in 0..<steps {
+            send(data: sequence[...])
+        }
+        return true
     }
 }
