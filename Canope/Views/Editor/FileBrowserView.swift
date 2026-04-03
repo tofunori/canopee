@@ -37,6 +37,7 @@ struct FileItem: Identifiable, Hashable {
 }
 
 struct FileBrowserView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let initialRootURL: URL
     let onOpenFile: (URL) -> Void
     @State private var currentDir: URL
@@ -44,6 +45,7 @@ struct FileBrowserView: View {
     @State private var expandedDirs: Set<URL> = []
     @State private var childDirectoryCache: [URL: [FileItem]] = [:]
     @State private var selectedIndex: Int = 0
+    @State private var hoveredItemURL: URL?
     @FocusState private var isFocused: Bool
 
     private let bgColor = Color(nsColor: NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1))
@@ -91,7 +93,7 @@ struct FileBrowserView: View {
             .padding(.vertical, 4)
             .background(bgColor.opacity(0.8))
 
-            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+            AppChromeDivider(role: .inset)
 
             // File list
             ScrollViewReader { proxy in
@@ -172,6 +174,7 @@ struct FileBrowserView: View {
     private func renderItem(_ item: FileItem, depth: Int, index: Int) -> some View {
         let isExpanded = expandedDirs.contains(item.url)
         let isSelected = selectedIndex == index
+        let isHovered = hoveredItemURL == item.url
         let indent = CGFloat(depth) * 14
 
         Button(action: {
@@ -187,7 +190,7 @@ struct FileBrowserView: View {
                 // First click — select only
                 selectedIndex = index
                 if item.isDirectory {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
                         if isExpanded { expandedDirs.remove(item.url) }
                         else {
                             loadChildrenIfNeeded(for: item.url)
@@ -219,10 +222,19 @@ struct FileBrowserView: View {
             }
             .frame(height: 19)
             .frame(maxWidth: .infinity)
-            .background(isSelected ? Color.white.opacity(0.1) : Color.clear)
+            .background(
+                isSelected ? AppChromePalette.selectedAccentFill
+                : isHovered ? AppChromePalette.hoverFill
+                : Color.clear
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            hoveredItemURL = hovering ? item.url : nil
+        }
+        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: hoveredItemURL)
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
 
         if item.isDirectory && isExpanded, let children = childItems(for: item.url) {
             ForEach(children) { child in

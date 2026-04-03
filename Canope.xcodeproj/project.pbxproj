@@ -39,6 +39,7 @@
 		B16CD80407DDAF29CB6A131C /* PDFFileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A4DC9894C16B5FB4C79B498 /* PDFFileManager.swift */; };
 		BA1CC7C393692A6F0E92B75E /* ClaudeIDEBridgeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46E0CF6500C50097F0D77FF5 /* ClaudeIDEBridgeService.swift */; };
 		BA26CC6387AE6CC2E7447200 /* LaTeXTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64494B3369625558447F0913 /* LaTeXTextEditor.swift */; };
+		B1A6D9E43F1C4F37A9E1B102 /* AppChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A6D9E53F1C4F37A9E1B102 /* AppChrome.swift */; };
 		BF63157CD6C69DE2472A3C0B /* MetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F63CE44FF6158ED19809BED5 /* MetadataExtractor.swift */; };
 		C0CCD66691C04566F42D8A46 /* PaperTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9150735813E3A10D61D07D74 /* PaperTableView.swift */; };
 		C143C9F848CA1F82B914653C /* AnnotationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1190F7AF51184A02BE7D55D /* AnnotationService.swift */; };
@@ -100,6 +101,7 @@
 		A22CE0F3F75B2FB0F7F0FB46 /* CanopeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanopeApp.swift; sourceTree = "<group>"; };
 		AAA8E9FC6B60137A6822B07A /* AnnotationColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationColor.swift; sourceTree = "<group>"; };
 		BF2088594C9985A874B328F3 /* PDFReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFReaderView.swift; sourceTree = "<group>"; };
+		B1A6D9E53F1C4F37A9E1B102 /* AppChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppChrome.swift; sourceTree = "<group>"; };
 		C57612B1DBD072F8ECA3D83D /* WorkspaceSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSessionStore.swift; sourceTree = "<group>"; };
 		CE7CABB496A722FDA2F4D18E /* ClaudeIDESelectionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeIDESelectionState.swift; sourceTree = "<group>"; };
 		CF070FD58C3AF62DE1BB997D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -189,6 +191,7 @@
 				5FD81183407C2DE1E0BBD0BC /* PaperList */,
 				D31F790921C836ADB2CCBA52 /* PDFReader */,
 				AC6AAFF6FDFDD55BDB1A234A /* Reader */,
+				B1A6D9E63F1C4F37A9E1B102 /* Shared */,
 				2BF71743B8413C4DEE3765D7 /* Sidebar */,
 			);
 			path = Views;
@@ -228,6 +231,14 @@
 				86E472B4EC8C837F4FB0A749 /* ShapeAnnotations.swift */,
 			);
 			path = Utilities;
+			sourceTree = "<group>";
+		};
+		B1A6D9E63F1C4F37A9E1B102 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				B1A6D9E53F1C4F37A9E1B102 /* AppChrome.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		A1E776E22E3D4367C383F170 /* Services */ = {
@@ -426,6 +437,7 @@
 				1DE7851A5DC59918FBB69D69 /* ContentView.swift in Sources */,
 				7C8E8AF16DD8ABF9EF0C6FAE /* DiffEngine.swift in Sources */,
 				3AAF798637E4A87DB4061B44 /* FileBrowserView.swift in Sources */,
+				B1A6D9E43F1C4F37A9E1B102 /* AppChrome.swift in Sources */,
 				21F48FB74A057ABF3322903A /* LaTeXAnnotation.swift in Sources */,
 				563C0ED08E10FB592419D207 /* LaTeXCompiler.swift in Sources */,
 				52453870CC0D1918012DF059 /* LaTeXEditorView.swift in Sources */,

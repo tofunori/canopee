@@ -89,8 +89,8 @@ struct TerminalPanel: View {
             if topInset > 0 {
                 Color.clear
                     .frame(height: topInset)
-                    .background(.bar)
-                Divider()
+                    .background(AppChromePalette.surfaceBar)
+                AppChromeDivider(role: .shell)
             }
 
             // Tab bar
@@ -167,10 +167,10 @@ struct TerminalPanel: View {
                     .padding(.trailing, 6)
                 }
             }
-            .frame(height: EditorChromeMetrics.tabBarHeight)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            .frame(height: AppChromeMetrics.tabBarHeight)
+            .background(AppChromePalette.surfaceSubbar)
 
-            Divider()
+            AppChromeDivider(role: .panel)
 
             // Terminal views with optional split
             VSplitView {

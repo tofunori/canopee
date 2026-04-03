@@ -2,11 +2,6 @@ import SwiftUI
 import SwiftData
 import PDFKit
 
-enum EditorChromeMetrics {
-    static let toolbarHeight: CGFloat = 32
-    static let tabBarHeight: CGFloat = 24
-}
-
 extension Notification.Name {
     static let syncTeXScrollToLine = Notification.Name("syncTeXScrollToLine")
     static let syncTeXForwardSync = Notification.Name("syncTeXForwardSync")
@@ -14,6 +9,7 @@ extension Notification.Name {
 }
 
 struct LaTeXEditorView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let threePaneCoordinateSpace = "LaTeXThreePaneLayout"
 
     private enum SidebarSizing {
@@ -92,6 +88,8 @@ struct LaTeXEditorView: View {
     @State private var threePaneDragStartLeftWidth: CGFloat?
     @State private var threePaneDragStartRightWidth: CGFloat?
     @State private var isDraggingThreePaneDivider = false
+    @State private var toolbarStatus: ToolbarStatusState = .idle
+    @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
 
     // PDF pane tabs (compiled + reference articles)
     enum PdfPaneTab: Hashable {
@@ -101,6 +99,7 @@ struct LaTeXEditorView: View {
     @Query private var allPapers: [Paper]
     @State private var fitToWidthTrigger = false
     @State private var referenceContextWriteID = UUID()
+    @Namespace private var pdfTabIndicatorNamespace
 
     enum SplitLayout: String {
         case horizontal
@@ -271,7 +270,7 @@ struct LaTeXEditorView: View {
         VStack(spacing: 0) {
             // Toolbar
             editorToolbar
-            Divider()
+            AppChromeDivider(role: .shell)
 
             // Main content: file browser | (editor / pdf split)
             HSplitView {
@@ -358,26 +357,32 @@ struct LaTeXEditorView: View {
 
     @ViewBuilder
     private var workAreaPane: some View {
-        if isActive && showTerminal && showPDFPreview && showEditorPane && splitLayout == .horizontal {
-            horizontalThreePaneLayout
-        } else if isActive && showTerminal {
-            switch panelArrangement {
-            case .terminalEditorPDF:
-                HSplitView {
-                    embeddedTerminalPane
-                    editorAndPDFPane
-                        .layoutPriority(1)
+        Group {
+            if isActive && showTerminal && showPDFPreview && showEditorPane && splitLayout == .horizontal {
+                horizontalThreePaneLayout
+            } else if isActive && showTerminal {
+                switch panelArrangement {
+                case .terminalEditorPDF:
+                    HSplitView {
+                        embeddedTerminalPane
+                        editorAndPDFPane
+                            .layoutPriority(1)
+                    }
+                case .editorPDFTerminal, .pdfEditorTerminal:
+                    HSplitView {
+                        editorAndPDFPane
+                            .layoutPriority(1)
+                        embeddedTerminalPane
+                    }
                 }
-            case .editorPDFTerminal, .pdfEditorTerminal:
-                HSplitView {
-                    editorAndPDFPane
-                        .layoutPriority(1)
-                    embeddedTerminalPane
-                }
+            } else {
+                editorAndPDFPane
             }
-        } else {
-            editorAndPDFPane
         }
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showPDFPreview)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showEditorPane)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: splitLayout)
     }
 
     @ViewBuilder
@@ -544,23 +549,17 @@ struct LaTeXEditorView: View {
         onExit: @escaping () -> Void,
         drag: @escaping () -> AnyGesture<DragGesture.Value>
     ) -> some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: ThreePaneSizing.dividerWidth)
-            .contentShape(Rectangle())
-            .overlay {
-                Rectangle()
-                    .fill(Color.white.opacity(0.06))
-                    .frame(width: 1)
-            }
-            .onHover { hovering in
+        AppChromeResizeHandle(
+            width: ThreePaneSizing.dividerWidth,
+            onHoverChanged: { hovering in
                 if hovering {
                     onEnter()
                 } else {
                     onExit()
                 }
-            }
-            .gesture(drag())
+            },
+            dragGesture: drag()
+        )
     }
 
     @ViewBuilder
@@ -612,7 +611,7 @@ struct LaTeXEditorView: View {
     private var sidebarPane: some View {
         HStack(spacing: 0) {
             sidebarActivityBar
-            Divider()
+            AppChromeDivider(role: .panel, axis: .vertical)
             Group {
                 switch selectedSidebarSection {
                 case .files:
@@ -638,30 +637,23 @@ struct LaTeXEditorView: View {
         }
         .frame(
             width: showSidebar
-                ? SidebarSizing.activityBarWidth + sidebarWidth + SidebarSizing.resizeHandleWidth + 1
+                ? SidebarSizing.activityBarWidth + sidebarWidth + SidebarSizing.resizeHandleWidth + AppChromeMetrics.dividerThickness
                 : SidebarSizing.activityBarWidth
         )
-        .animation(nil, value: showSidebar)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showSidebar)
     }
 
     private var sidebarResizeHandle: some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: SidebarSizing.resizeHandleWidth)
-            .contentShape(Rectangle())
-            .overlay {
-                Rectangle()
-                    .fill(Color.white.opacity(0.06))
-                    .frame(width: 1)
-            }
-            .onHover { hovering in
+        AppChromeResizeHandle(
+            width: SidebarSizing.resizeHandleWidth,
+            onHoverChanged: { hovering in
                 if hovering {
                     NSCursor.resizeLeftRight.push()
                 } else {
                     NSCursor.pop()
                 }
-            }
-            .gesture(
+            },
+            dragGesture: AnyGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         let baseWidth = sidebarResizeStartWidth ?? sidebarWidth
@@ -674,6 +666,7 @@ struct LaTeXEditorView: View {
                         sidebarResizeStartWidth = nil
                     }
             )
+        )
     }
 
     private var sidebarActivityBar: some View {
@@ -685,7 +678,7 @@ struct LaTeXEditorView: View {
         }
         .padding(.top, 10)
         .frame(width: 44)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+        .background(AppChromePalette.surfaceSubbar)
     }
 
     private var fileBrowserSidebar: some View {
@@ -740,7 +733,7 @@ struct LaTeXEditorView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            Divider()
+            AppChromeDivider(role: .panel)
 
             if sidebarAnnotations.isEmpty {
                 VStack(spacing: 10) {
@@ -795,7 +788,7 @@ struct LaTeXEditorView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            Divider()
+            AppChromeDivider(role: .panel)
 
             AnnotationSidebarView(
                 document: document,
@@ -872,7 +865,7 @@ struct LaTeXEditorView: View {
                 .padding(.bottom, 8)
             }
 
-            Divider()
+            AppChromeDivider(role: .panel)
 
             if diffGroups.isEmpty {
                 VStack(spacing: 10) {
@@ -937,7 +930,7 @@ struct LaTeXEditorView: View {
         VStack(spacing: 0) {
             if let editorTabBar {
                 editorTabBar
-                Divider()
+                AppChromeDivider(role: .panel)
             }
 
             LaTeXTextEditor(
@@ -954,7 +947,7 @@ struct LaTeXEditorView: View {
                 onTextChange: reconcileAnnotations
             )
             if showErrors {
-                Divider()
+                AppChromeDivider(role: .panel)
                 VStack(alignment: .leading, spacing: 0) {
                     // Header
                     HStack {
@@ -972,7 +965,7 @@ struct LaTeXEditorView: View {
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(.bar)
+                    .background(AppChromePalette.surfaceSubbar)
 
                     // Console output
                     ScrollView {
@@ -1207,6 +1200,10 @@ struct LaTeXEditorView: View {
         }
     }
 
+    private var activeErrorCount: Int {
+        errors.filter { !$0.isWarning }.count
+    }
+
     private func paperFor(_ id: UUID) -> Paper? {
         allPapers.first { $0.id == id }
     }
@@ -1222,9 +1219,9 @@ struct LaTeXEditorView: View {
                         }
                     }
                 }
-                .frame(height: EditorChromeMetrics.tabBarHeight)
-                .background(.bar)
-                Divider()
+                .frame(height: AppChromeMetrics.tabBarHeight)
+                .background(AppChromePalette.surfaceSubbar)
+                AppChromeDivider(role: .panel)
             }
 
             // PDF content — each tab keeps its own PDFView to preserve scroll position
@@ -1300,7 +1297,9 @@ struct LaTeXEditorView: View {
         let isSelected = tab == selectedPdfTab
         HStack(spacing: 4) {
             Button {
-                selectPdfTab(tab)
+                AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                    selectPdfTab(tab)
+                }
             } label: {
                 HStack(spacing: 4) {
                     switch tab {
@@ -1335,35 +1334,34 @@ struct LaTeXEditorView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-        .cornerRadius(4)
+        .background(isSelected ? AppChromePalette.selectedAccentFill : Color.clear)
+        .overlay(alignment: .bottom) {
+            if isSelected {
+                Rectangle()
+                    .fill(AppChromePalette.selectedAccent)
+                    .frame(height: AppChromeMetrics.tabIndicatorHeight)
+                    .matchedGeometryEffect(id: "pdf-tab-indicator", in: pdfTabIndicatorNamespace)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.tabCornerRadius, style: .continuous))
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
     }
 
     // MARK: - Toolbar
 
     private var editorToolbar: some View {
         HStack(spacing: 8) {
-            toolbarCluster {
-                Button(action: {
-                    showSidebar.toggle()
-                }) {
-                    Image(systemName: "sidebar.left")
-                        .symbolVariant(showSidebar ? .none : .slash)
-                }
-                .buttonStyle(.plain)
-                .help("Afficher la barre latérale")
-
-                toolbarInnerDivider
-
+            toolbarCluster(zone: .leading, title: "Fichier") {
                 Image(systemName: "doc.plaintext")
                     .foregroundStyle(.green)
                 Text(fileURL.lastPathComponent)
                     .font(.caption)
                     .fontWeight(.semibold)
                     .lineLimit(1)
+                AppChromeStatusCapsule(status: toolbarStatus)
             }
 
-            toolbarCluster {
+            toolbarCluster(zone: .primary, title: "LaTeX") {
                 Button(action: compile) {
                     if isCompiling {
                         ProgressView().controlSize(.small)
@@ -1406,7 +1404,7 @@ struct LaTeXEditorView: View {
                 .help("Console de compilation")
             }
 
-            toolbarCluster {
+            toolbarCluster(zone: .primary, title: "Réf.") {
                 Menu {
                     let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
                     if openPapers.isEmpty {
@@ -1427,27 +1425,65 @@ struct LaTeXEditorView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Ouvrir un article de référence")
+            }
 
-                toolbarInnerDivider
+            if let referenceState = activeReferencePDFState {
+                ReferencePDFToolCluster(title: "Outils", state: referenceState)
+
+                ReferencePDFActionsCluster(
+                    title: "Actions",
+                    state: referenceState,
+                    annotationCount: activeReferenceAnnotationCount,
+                    isAnnotationSidebarVisible: showSidebar && selectedSidebarSection == .annotations,
+                    onChangeSelectedColor: changeSelectedReferenceAnnotationColor,
+                    onFitToWidth: fitToWidth,
+                    onRefresh: refreshCurrentReference,
+                    onSave: saveCurrentReferencePDF,
+                    onDeleteSelected: deleteSelectedReferenceAnnotation,
+                    onDeleteAll: deleteAllReferenceAnnotations,
+                    onToggleAnnotations: {
+                        toggleReferenceAnnotationSidebar()
+                    }
+                )
+            }
+
+            Spacer(minLength: 8)
+
+            toolbarCluster(zone: .trailing, title: "Vue") {
+                Button(action: {
+                    toggleSidebar()
+                }) {
+                    Image(systemName: "sidebar.left")
+                        .symbolVariant(showSidebar ? .none : .slash)
+                        .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Afficher la barre latérale")
 
                 Menu {
                     Button {
-                        splitLayout = .horizontal
-                        showPDFPreview = true
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            splitLayout = .horizontal
+                            showPDFPreview = true
+                        }
                     } label: {
                         Label("Côte à côte", systemImage: "rectangle.split.2x1")
                         if splitLayout == .horizontal { Image(systemName: "checkmark") }
                     }
                     Button {
-                        splitLayout = .vertical
-                        showPDFPreview = true
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            splitLayout = .vertical
+                            showPDFPreview = true
+                        }
                     } label: {
                         Label("Haut / Bas", systemImage: "rectangle.split.1x2")
                         if splitLayout == .vertical { Image(systemName: "checkmark") }
                     }
                     Button {
-                        splitLayout = .editorOnly
-                        showPDFPreview = false
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            splitLayout = .editorOnly
+                            showPDFPreview = false
+                        }
                     } label: {
                         Label("Éditeur seul", systemImage: "doc.text")
                         if splitLayout == .editorOnly { Image(systemName: "checkmark") }
@@ -1461,7 +1497,9 @@ struct LaTeXEditorView: View {
                 Menu {
                     ForEach(LaTeXPanelArrangement.allCases, id: \.self) { arrangement in
                         Button {
-                            panelArrangement = arrangement
+                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                                panelArrangement = arrangement
+                            }
                         } label: {
                             HStack {
                                 if panelArrangement == arrangement {
@@ -1476,35 +1514,28 @@ struct LaTeXEditorView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Ordre des panneaux")
+
+                Button(action: {
+                    toggleEditorPaneVisibility()
+                }) {
+                    Image(systemName: showEditorPane ? "doc.text.fill" : "doc.text")
+                        .foregroundStyle(showEditorPane ? AppChromePalette.info : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Panneau LaTeX")
+                .disabled(showEditorPane && !showTerminal && !showPDFPreview)
+
+                Button(action: {
+                    toggleTerminalVisibility()
+                }) {
+                    Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                        .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Terminal")
             }
 
-            if let referenceState = activeReferencePDFState {
-                ReferencePDFToolCluster(state: referenceState)
-
-                ReferencePDFActionsCluster(
-                    state: referenceState,
-                    annotationCount: activeReferenceAnnotationCount,
-                    isAnnotationSidebarVisible: showSidebar && selectedSidebarSection == .annotations,
-                    onChangeSelectedColor: changeSelectedReferenceAnnotationColor,
-                    onFitToWidth: fitToWidth,
-                    onRefresh: refreshCurrentReference,
-                    onSave: saveCurrentReferencePDF,
-                    onDeleteSelected: deleteSelectedReferenceAnnotation,
-                    onDeleteAll: deleteAllReferenceAnnotations,
-                    onToggleAnnotations: {
-                        if showSidebar && selectedSidebarSection == .annotations {
-                            showSidebar = false
-                        } else {
-                            selectedSidebarSection = .annotations
-                            showSidebar = true
-                        }
-                    }
-                )
-            }
-
-            Spacer(minLength: 8)
-
-            toolbarCluster {
+            toolbarCluster(zone: .trailing, title: "Ed.") {
                 Menu {
                     ForEach([11, 12, 13, 14, 15, 16, 18, 20, 24], id: \.self) { size in
                         Button {
@@ -1540,32 +1571,8 @@ struct LaTeXEditorView: View {
                 .help("Thème éditeur")
             }
 
-            toolbarCluster {
-                Button(action: {
-                    if showEditorPane && !showTerminal && !showPDFPreview {
-                        return
-                    }
-                    showEditorPane.toggle()
-                }) {
-                    Image(systemName: showEditorPane ? "doc.text.fill" : "doc.text")
-                        .foregroundStyle(showEditorPane ? .blue : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Panneau LaTeX")
-                .disabled(showEditorPane && !showTerminal && !showPDFPreview)
-
-                toolbarInnerDivider
-
-                Button(action: { showTerminal.toggle() }) {
-                    Image(systemName: showTerminal ? "terminal.fill" : "terminal")
-                        .foregroundStyle(showTerminal ? .green : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Terminal")
-
-                if showTerminal {
-                    toolbarInnerDivider
-
+            if showTerminal {
+                toolbarCluster(zone: .trailing, title: "Term.") {
                     Button(action: addTerminalTab) {
                         Image(systemName: "plus")
                             .foregroundStyle(.green)
@@ -1607,29 +1614,63 @@ struct LaTeXEditorView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .frame(height: EditorChromeMetrics.toolbarHeight)
-        .background(.bar)
+        .frame(height: AppChromeMetrics.toolbarHeight)
+        .background(AppChromePalette.surfaceBar)
     }
 
-    private var toolbarInnerDivider: some View {
-        Divider()
-            .frame(height: 12)
+    private func toolbarCluster<Content: View>(
+        zone: ToolbarZone,
+        title: String? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        AppChromeToolbarCluster(zone: zone, title: title, content: content)
     }
 
-    private func toolbarCluster<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 6) {
-            content()
+    private func setToolbarStatus(_ status: ToolbarStatusState, autoClearAfter delay: TimeInterval? = nil) {
+        toolbarStatusClearWorkItem?.cancel()
+        toolbarStatusClearWorkItem = nil
+        toolbarStatus = status
+
+        guard let delay, status != .idle else { return }
+
+        let workItem = DispatchWorkItem {
+            toolbarStatus = .idle
+            toolbarStatusClearWorkItem = nil
         }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.white.opacity(0.035))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color.white.opacity(0.05), lineWidth: 1)
-        )
+        toolbarStatusClearWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func toggleSidebar(section: SidebarSection? = nil) {
+        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+            if let section {
+                if showSidebar && selectedSidebarSection == section {
+                    showSidebar = false
+                } else {
+                    selectedSidebarSection = section
+                    showSidebar = true
+                }
+            } else {
+                showSidebar.toggle()
+            }
+        }
+    }
+
+    private func toggleEditorPaneVisibility() {
+        guard !(showEditorPane && !showTerminal && !showPDFPreview) else { return }
+        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+            showEditorPane.toggle()
+        }
+    }
+
+    private func toggleTerminalVisibility() {
+        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+            showTerminal.toggle()
+        }
+    }
+
+    private func toggleReferenceAnnotationSidebar() {
+        toggleSidebar(section: .annotations)
     }
 
     // MARK: - File Operations
@@ -1735,10 +1776,12 @@ struct LaTeXEditorView: View {
             return
         }
 
-        if !showSidebar {
-            showSidebar = true
+        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+            if !showSidebar {
+                showSidebar = true
+            }
+            selectedSidebarSection = .annotations
         }
-        selectedSidebarSection = .annotations
         pendingAnnotation = PendingAnnotation(draft: draft, existingAnnotationID: nil)
     }
 
@@ -1895,12 +1938,7 @@ struct LaTeXEditorView: View {
         let isActive = showSidebar && selectedSidebarSection == section
 
         Button {
-            if isActive {
-                showSidebar = false
-            } else {
-                selectedSidebarSection = section
-                showSidebar = true
-            }
+            toggleSidebar(section: section)
         } label: {
             Image(systemName: systemImage)
                 .font(.system(size: 14, weight: .medium))
@@ -2177,7 +2215,9 @@ struct LaTeXEditorView: View {
     private func openReference(_ paper: Paper) {
         let tab = PdfPaneTab.reference(paper.id)
         if pdfPaneTabs.contains(tab) {
-            workspaceState.selectedReferencePaperID = paper.id
+            AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                workspaceState.selectedReferencePaperID = paper.id
+            }
             writeReferencePaperContext(for: paper.id)
             return
         }
@@ -2188,22 +2228,30 @@ struct LaTeXEditorView: View {
             workspaceState.referencePDFUIStates[paper.id] = ReferencePDFUIState()
         }
         workspaceState.referencePaperIDs.append(paper.id)
-        workspaceState.selectedReferencePaperID = paper.id
+        AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+            workspaceState.selectedReferencePaperID = paper.id
+        }
         writeReferencePaperContext(for: paper.id)
         if splitLayout == .editorOnly {
-            layoutBeforeReference = .editorOnly
-            splitLayout = .horizontal
-            showPDFPreview = true
+            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                layoutBeforeReference = .editorOnly
+                splitLayout = .horizontal
+                showPDFPreview = true
+            }
         }
     }
 
     private func selectPdfTab(_ tab: PdfPaneTab) {
         switch tab {
         case .compiled:
-            workspaceState.selectedReferencePaperID = nil
+            AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                workspaceState.selectedReferencePaperID = nil
+            }
             invalidateReferencePaperContextWrites()
         case .reference(let id):
-            workspaceState.selectedReferencePaperID = id
+            AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                workspaceState.selectedReferencePaperID = id
+            }
             writeReferencePaperContext(for: id)
         }
     }
@@ -2220,7 +2268,9 @@ struct LaTeXEditorView: View {
         workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
         workspaceState.referencePDFUIStates.removeValue(forKey: id)
         if selectedPdfTab == tab || workspaceState.selectedReferencePaperID == id {
-            workspaceState.selectedReferencePaperID = remainingReferenceIDs.first
+            AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                workspaceState.selectedReferencePaperID = remainingReferenceIDs.first
+            }
             if let nextID = remainingReferenceIDs.first {
                 writeReferencePaperContext(for: nextID)
             } else {
@@ -2231,9 +2281,11 @@ struct LaTeXEditorView: View {
         if pdfPaneTabs == [.compiled],
            let previous = layoutBeforeReference,
            compiledPDF == nil {
-            splitLayout = previous
-            showPDFPreview = previous != .editorOnly
-            layoutBeforeReference = nil
+            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                splitLayout = previous
+                showPDFPreview = previous != .editorOnly
+                layoutBeforeReference = nil
+            }
         }
 
         guard pendingSave,
@@ -2497,6 +2549,7 @@ struct LaTeXEditorView: View {
         guard !isCompiling else { return }
         try? text.write(to: fileURL, atomically: true, encoding: .utf8)
         isCompiling = true
+        setToolbarStatus(.compiling)
         Task {
             let result = await LaTeXCompiler.compile(file: fileURL)
             await MainActor.run {
@@ -2507,6 +2560,11 @@ struct LaTeXEditorView: View {
                     compiledPDF = PDFDocument(url: pdfURL)
                 }
                 isCompiling = false
+                if activeErrorCount > 0 {
+                    setToolbarStatus(.errors(activeErrorCount))
+                } else {
+                    setToolbarStatus(.saved, autoClearAfter: 2.4)
+                }
             }
         }
     }
@@ -3036,35 +3094,30 @@ private struct ReferencePDFAnnotationPane: View {
 }
 
 private struct ReferencePDFToolCluster: View {
+    let title: String
     @ObservedObject var state: ReferencePDFUIState
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
-                ReferencePDFToolbarIconButton(
-                    systemName: tool.icon,
-                    isActive: state.currentTool == tool,
-                    help: tool.displayName,
-                    action: {
-                        state.currentTool = tool
-                    }
-                )
+        AppChromeToolbarCluster(zone: .primary, title: title) {
+            HStack(spacing: 6) {
+                ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
+                    ReferencePDFToolbarIconButton(
+                        systemName: tool.icon,
+                        isActive: state.currentTool == tool,
+                        help: tool.displayName,
+                        action: {
+                            state.currentTool = tool
+                        }
+                    )
+                }
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.white.opacity(0.035))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color.white.opacity(0.05), lineWidth: 1)
-        )
     }
 }
 
 private struct ReferencePDFActionsCluster: View {
+    @State private var showDeleteAllConfirm = false
+    let title: String
     @ObservedObject var state: ReferencePDFUIState
     let annotationCount: Int
     let isAnnotationSidebarVisible: Bool
@@ -3077,90 +3130,95 @@ private struct ReferencePDFActionsCluster: View {
     let onToggleAnnotations: () -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
-            Menu {
-                ForEach(AnnotationColor.all, id: \.name) { item in
-                    Button {
-                        onChangeSelectedColor(item.color)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(nsImage: annotationColorSwatchImage(item.color))
-                                .renderingMode(.original)
+        AppChromeToolbarCluster(zone: .primary, title: title) {
+            HStack(spacing: 6) {
+                Menu {
+                    ForEach(AnnotationColor.all, id: \.name) { item in
+                        Button {
+                            onChangeSelectedColor(item.color)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(nsImage: annotationColorSwatchImage(item.color))
+                                    .renderingMode(.original)
 
-                            Text(item.name)
+                                Text(item.name)
 
-                            if colorsMatch(item.color, state.currentColor) {
-                                Spacer(minLength: 8)
-                                Image(systemName: "checkmark")
+                                if colorsMatch(item.color, state.currentColor) {
+                                    Spacer(minLength: 8)
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
+                } label: {
+                    ReferencePDFToolbarIconLabel(systemName: "paintpalette", isActive: false)
                 }
-            } label: {
-                ReferencePDFToolbarIconLabel(systemName: "paintpalette", isActive: false)
+                .buttonStyle(.plain)
+                .help("Couleur d’annotation")
+
+                AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
+
+                ReferencePDFToolbarIconButton(
+                    systemName: "arrow.left.and.right.square",
+                    isActive: false,
+                    help: "Ajuster à la largeur",
+                    action: onFitToWidth
+                )
+
+                ReferencePDFToolbarIconButton(
+                    systemName: "arrow.clockwise",
+                    isActive: false,
+                    help: "Actualiser le PDF de référence",
+                    action: onRefresh
+                )
+
+                ReferencePDFToolbarIconButton(
+                    systemName: "square.and.arrow.down",
+                    isActive: state.hasUnsavedChanges,
+                    help: "Enregistrer les annotations du PDF",
+                    action: onSave
+                )
+
+                AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
+
+                if state.selectedAnnotation != nil {
+                    ReferencePDFToolbarIconButton(
+                        systemName: "trash",
+                        isActive: true,
+                        activeTint: AppChromePalette.danger,
+                        help: "Supprimer l’annotation sélectionnée",
+                        action: onDeleteSelected
+                    )
+                }
+
+                ReferencePDFToolbarIconButton(
+                    systemName: "trash.slash",
+                    isActive: false,
+                    help: "Effacer toutes les annotations du PDF",
+                    action: { showDeleteAllConfirm = true }
+                )
+                .confirmationDialog(
+                    "Effacer toutes les annotations du PDF?",
+                    isPresented: $showDeleteAllConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Tout effacer", role: .destructive, action: onDeleteAll)
+                    Button("Annuler", role: .cancel) {}
+                }
+                .disabled(annotationCount == 0)
+
+                AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
+
+                ReferencePDFToolbarIconButton(
+                    systemName: "sidebar.right",
+                    symbolVariant: isAnnotationSidebarVisible ? .none : .slash,
+                    isActive: isAnnotationSidebarVisible,
+                    activeTint: AppChromePalette.info,
+                    help: "Afficher les annotations PDF",
+                    action: onToggleAnnotations
+                )
             }
-            .buttonStyle(.plain)
-            .help("Couleur d’annotation")
-
-            Divider()
-                .frame(height: 12)
-
-            ReferencePDFToolbarIconButton(
-                systemName: "arrow.left.and.right.square",
-                isActive: false,
-                help: "Ajuster à la largeur",
-                action: onFitToWidth
-            )
-
-            ReferencePDFToolbarIconButton(
-                systemName: "arrow.clockwise",
-                isActive: false,
-                help: "Actualiser le PDF de référence",
-                action: onRefresh
-            )
-
-            ReferencePDFToolbarIconButton(
-                systemName: "square.and.arrow.down",
-                isActive: state.hasUnsavedChanges,
-                help: "Enregistrer les annotations du PDF",
-                action: onSave
-            )
-
-            ReferencePDFToolbarIconButton(
-                systemName: "trash",
-                isActive: state.selectedAnnotation != nil,
-                activeTint: .red,
-                help: "Supprimer l’annotation sélectionnée",
-                action: onDeleteSelected
-            )
-            .disabled(state.selectedAnnotation == nil)
-
-            ReferencePDFToolbarIconButton(
-                systemName: "trash.slash",
-                isActive: false,
-                help: "Effacer toutes les annotations du PDF",
-                action: onDeleteAll
-            )
-            .disabled(annotationCount == 0)
-
-            ReferencePDFToolbarIconButton(
-                systemName: "sidebar.right",
-                symbolVariant: isAnnotationSidebarVisible ? .none : .slash,
-                isActive: isAnnotationSidebarVisible,
-                help: "Afficher les annotations PDF",
-                action: onToggleAnnotations
-            )
         }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.white.opacity(0.035))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color.white.opacity(0.05), lineWidth: 1)
-        )
     }
 }
 
@@ -3183,6 +3241,7 @@ private func annotationColorSwatchImage(_ color: NSColor) -> NSImage {
 }
 
 private struct ReferencePDFToolbarIconButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let systemName: String
     var symbolVariant: SymbolVariants = .none
     let isActive: Bool
@@ -3197,23 +3256,23 @@ private struct ReferencePDFToolbarIconButton: View {
             Image(systemName: systemName)
                 .symbolVariant(symbolVariant)
                 .foregroundStyle(iconTint)
-                .frame(width: 16, height: 16)
-                .padding(4)
+                .frame(width: AppChromeMetrics.toolbarCompactIconSize, height: AppChromeMetrics.toolbarCompactIconSize)
+                .frame(width: AppChromeMetrics.toolbarButtonSize, height: AppChromeMetrics.toolbarButtonSize)
                 .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
                         .fill(backgroundTint)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
                         .stroke(borderTint, lineWidth: borderTint == .clear ? 0 : 1)
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(help)
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isActive)
+        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isActive)
     }
 
     private var iconTint: Color {
@@ -3224,18 +3283,19 @@ private struct ReferencePDFToolbarIconButton: View {
 
     private var backgroundTint: Color {
         if isActive { return activeTint.opacity(0.18) }
-        if isHovered { return Color.white.opacity(0.08) }
+        if isHovered { return AppChromePalette.hoverFill }
         return .clear
     }
 
     private var borderTint: Color {
         if isActive { return activeTint.opacity(0.32) }
-        if isHovered { return Color.white.opacity(0.10) }
+        if isHovered { return AppChromePalette.clusterStroke }
         return .clear
     }
 }
 
 private struct ReferencePDFToolbarIconLabel: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let systemName: String
     let isActive: Bool
 
@@ -3243,21 +3303,21 @@ private struct ReferencePDFToolbarIconLabel: View {
 
     var body: some View {
         Image(systemName: systemName)
-            .foregroundStyle(isActive ? Color.accentColor : (isHovered ? Color.primary : Color.secondary))
-            .frame(width: 16, height: 16)
-            .padding(4)
+            .foregroundStyle(isActive ? AppChromePalette.selectedAccent : (isHovered ? Color.primary : Color.secondary))
+            .frame(width: AppChromeMetrics.toolbarCompactIconSize, height: AppChromeMetrics.toolbarCompactIconSize)
+            .frame(width: AppChromeMetrics.toolbarButtonSize, height: AppChromeMetrics.toolbarButtonSize)
             .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isActive ? Color.accentColor.opacity(0.18) : (isHovered ? Color.white.opacity(0.08) : .clear))
+                RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
+                    .fill(isActive ? AppChromePalette.selectedAccentFill : (isHovered ? AppChromePalette.hoverFill : .clear))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .stroke(isActive ? Color.accentColor.opacity(0.32) : (isHovered ? Color.white.opacity(0.10) : .clear), lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
+                    .stroke(isActive ? AppChromePalette.selectedAccentStroke : (isHovered ? AppChromePalette.clusterStroke : .clear), lineWidth: 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous))
             .onHover { isHovered = $0 }
-            .animation(.easeOut(duration: 0.12), value: isHovered)
-            .animation(.easeOut(duration: 0.12), value: isActive)
+            .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
+            .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isActive)
     }
 }
 

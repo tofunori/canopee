@@ -7,6 +7,7 @@ struct PDFReaderView: View {
     var isSplitMode: Bool = false
     var isActive: Bool = true
     @Binding var showTerminal: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
     @State private var document: PDFDocument?
     @State private var selectedText = ""
@@ -47,7 +48,7 @@ struct PDFReaderView: View {
                 onDeleteAll: deleteAllAnnotations,
                 onChangeColor: changeSelectedAnnotationColor
             )
-            Divider()
+            AppChromeDivider(role: .shell)
 
             if let document, let paper {
                 HStack(spacing: 0) {
@@ -87,7 +88,7 @@ struct PDFReaderView: View {
                     .frame(maxWidth: .infinity)
 
                     if showAnnotationSidebar {
-                        Divider()
+                        AppChromeDivider(role: .panel, axis: .vertical)
                         AnnotationSidebarView(
                             document: document,
                             selectedAnnotation: $selectedAnnotation,
@@ -114,6 +115,8 @@ struct PDFReaderView: View {
                 )
             }
         }
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showAnnotationSidebar)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
         .navigationTitle(paper?.title ?? "Article")
         .onAppear {
             loadDocument()

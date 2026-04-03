@@ -2,11 +2,6 @@ import SwiftUI
 import SwiftData
 import ObjectiveC
 
-enum AppChromeMetrics {
-    static let topBarHeight: CGFloat = 24
-    static let topButtonSize: CGFloat = 24
-}
-
 enum SidebarSelection: Hashable {
     case allPapers
     case favorites
@@ -41,6 +36,7 @@ private final class SplitViewGrabDelegate: NSObject, NSSplitViewDelegate {
 }
 
 struct MainWindow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var allPapers: [Paper]
     @State private var openTabs: [TabItem] = [.library]
     @State private var selectedTab: TabItem = .library
@@ -52,6 +48,7 @@ struct MainWindow: View {
     @State private var didRestoreWorkspace = false
     @StateObject private var latexWorkspaceState = LaTeXWorkspaceUIState()
     @StateObject private var terminalWorkspaceState = TerminalWorkspaceState()
+    @Namespace private var documentTabIndicatorNamespace
 
     private var openPaperIDs: [UUID] {
         openTabs.compactMap { if case .paper(let id) = $0 { return id } else { return nil } }
@@ -127,6 +124,7 @@ struct MainWindow: View {
                     .allowsHitTesting(selectedTab == .pdfFile(path))
             }
         }
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: selectedTab)
     }
 
     private var terminalPane: some View {
@@ -143,6 +141,7 @@ struct MainWindow: View {
             maxWidth: showTerminal && selectedTab != .library && !isEditorSelected ? .infinity : 0
         )
         .opacity(showTerminal && selectedTab != .library && !isEditorSelected ? 1 : 0)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
     }
 
     private func tabTitle(_ tab: TabItem) -> String {
@@ -169,16 +168,20 @@ struct MainWindow: View {
 
         latexWorkspaceState.selectedReferencePaperID = id
 
-        if let activeEditor = openTabs.first(where: { if case .editor = $0 { return true } else { return false } }) {
-            selectedTab = activeEditor
-        } else {
-            selectedTab = .editor("")
+        AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+            if let activeEditor = openTabs.first(where: { if case .editor = $0 { return true } else { return false } }) {
+                selectedTab = activeEditor
+            } else {
+                selectedTab = .editor("")
+            }
         }
 
         if latexWorkspaceState.splitLayout == "editorOnly" {
-            latexWorkspaceState.layoutBeforeReference = "editorOnly"
-            latexWorkspaceState.splitLayout = "horizontal"
-            latexWorkspaceState.showPDFPreview = true
+            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                latexWorkspaceState.layoutBeforeReference = "editorOnly"
+                latexWorkspaceState.splitLayout = "horizontal"
+                latexWorkspaceState.showPDFPreview = true
+            }
         }
     }
 
@@ -187,7 +190,9 @@ struct MainWindow: View {
         if !openTabs.contains(tab) {
             openTabs.append(tab)
         }
-        selectedTab = tab
+        AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+            selectedTab = tab
+        }
     }
 
     /// Find all NSSplitViews and make dividers thick + easy to grab
@@ -259,7 +264,9 @@ struct MainWindow: View {
         if !openTabs.contains(tab) {
             openTabs.append(tab)
         }
-        selectedTab = tab
+        AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+            selectedTab = tab
+        }
         Self.addRecentTeXFile(url.path)
     }
 
@@ -414,7 +421,7 @@ struct MainWindow: View {
                 .padding(.trailing, 4)
             }
             .frame(height: AppChromeMetrics.topBarHeight)
-            .background(.bar)
+            .background(AppChromePalette.surfaceBar)
 
             // Document tabs row (papers/PDFs from library)
             let docTabs = openTabs.filter {
@@ -429,6 +436,7 @@ struct MainWindow: View {
                             TabButton(
                                 tab: tab,
                                 isSelected: selectedTab == tab,
+                                indicatorNamespace: documentTabIndicatorNamespace,
                                 title: tabTitle(tab),
                                 onSelect: { selectedTab = tab },
                                 onClose: {
@@ -443,11 +451,11 @@ struct MainWindow: View {
                         }
                     }
                 }
-                .frame(height: EditorChromeMetrics.tabBarHeight)
-                .background(.bar.opacity(0.7))
+                .frame(height: AppChromeMetrics.tabBarHeight)
+                .background(AppChromePalette.surfaceSubbar)
             }
 
-            Divider()
+            AppChromeDivider(role: .shell)
 
             // Content + resizable shared terminal
             HSplitView {
@@ -492,10 +500,12 @@ struct MainWindow: View {
 // MARK: - Tab Bar
 
 struct TabBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var tabs: [TabItem]
     @Binding var selectedTab: TabItem
     let allPapers: [Paper]
     var onOpenTeX: () -> Void = {}
+    @Namespace private var sectionTabIndicatorNamespace
 
     /// The active editor tab (current selection if it's an editor, otherwise the last opened one)
     private var editorTab: TabItem? {
@@ -529,14 +539,16 @@ struct TabBar: View {
             SectionTab(
                 icon: "books.vertical",
                 label: "Bibliothèque",
-                isSelected: selectedTab == .library
+                isSelected: selectedTab == .library,
+                indicatorNamespace: sectionTabIndicatorNamespace
             ) { selectedTab = .library }
 
             SectionTab(
                 icon: "chevron.left.forwardslash.chevron.right",
                 iconColor: .green,
                 label: editorTabs.count > 1 ? "LaTeX" : (editorTab.map { title(for: $0) } ?? "LaTeX"),
-                isSelected: isEditorSelected
+                isSelected: isEditorSelected,
+                indicatorNamespace: sectionTabIndicatorNamespace
             ) {
                 if let tab = editorTab {
                     selectedTab = tab
@@ -573,16 +585,20 @@ struct TabBar: View {
 // MARK: - Section Tab (top row — Bibliothèque / LaTeX)
 
 struct SectionTab: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let icon: String
     var iconColor: Color? = nil
     let label: String
     let isSelected: Bool
+    let indicatorNamespace: Namespace.ID
     let action: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            AppChromeMotion.performSelection(reduceMotion: reduceMotion, updates: action)
+        }) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.system(size: 10))
@@ -594,26 +610,33 @@ struct SectionTab: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .background(
-                isSelected ? Color.white.opacity(0.06)
-                : isHovered ? Color.white.opacity(0.03)
+                isSelected ? AppChromePalette.tabSelectedFill
+                : isHovered ? AppChromePalette.tabHoverFill
                 : Color.clear
             )
             .overlay(alignment: .bottom) {
                 if isSelected {
-                    Rectangle().fill(Color.white.opacity(0.3)).frame(height: 1)
+                    Rectangle()
+                        .fill(AppChromePalette.subtleUnderline)
+                        .frame(height: AppChromeMetrics.tabIndicatorHeight)
+                        .matchedGeometryEffect(id: "section-tab-indicator", in: indicatorNamespace)
                 }
             }
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
     }
 }
 
 // MARK: - Document Tab (bottom row — papers / PDFs)
 
 struct TabButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let tab: TabItem
     let isSelected: Bool
+    let indicatorNamespace: Namespace.ID
     let title: String
     let onSelect: () -> Void
     let onClose: (() -> Void)?
@@ -651,18 +674,26 @@ struct TabButton: View {
         .padding(.horizontal, 8)
         .frame(maxHeight: .infinity)
         .background(
-            isSelected ? Color.accentColor.opacity(0.12)
-            : isHovered ? Color.white.opacity(0.05)
+            isSelected ? AppChromePalette.selectedAccentFill
+            : isHovered ? AppChromePalette.tabHoverFill
             : Color.clear
         )
         .overlay(alignment: .bottom) {
             if isSelected {
-                Rectangle().fill(Color.accentColor).frame(height: 1.5)
+                Rectangle()
+                    .fill(AppChromePalette.selectedAccent)
+                    .frame(height: AppChromeMetrics.tabIndicatorHeight)
+                    .matchedGeometryEffect(id: "document-tab-indicator", in: indicatorNamespace)
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
+        .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.tabCornerRadius, style: .continuous))
+        .onTapGesture {
+            AppChromeMotion.performSelection(reduceMotion: reduceMotion, updates: onSelect)
+        }
         .onHover { isHovered = $0 }
+        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
     }
 }
 
@@ -742,6 +773,7 @@ struct StandalonePDFView: NSViewRepresentable {
 // MARK: - LaTeX Editor Container (manages multiple .tex files with sub-tabs)
 
 struct LaTeXEditorContainer: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var allPapers: [Paper]
     let openPaths: [String]
     @Binding var selectedTab: TabItem
@@ -753,6 +785,7 @@ struct LaTeXEditorContainer: View {
     var onOpenPDF: (URL) -> Void
     var onCloseEditor: (String) -> Void
     @State private var didRestoreWorkspaceState = false
+    @Namespace private var editorTabIndicatorNamespace
 
     /// The currently active editor path
     private var activePath: String? {
@@ -761,18 +794,20 @@ struct LaTeXEditorContainer: View {
     }
 
     private func switchEditor(_ path: String) {
-        selectedTab = .editor(path)
+        AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+            selectedTab = .editor(path)
+        }
     }
 
     private func closeEditor(_ path: String) {
         onCloseEditor(path)
         if activePath == path {
-            if let other = openPaths.first(where: { $0 != path }) {
-                selectedTab = .editor(other)
-            } else if !workspaceState.referencePaperIDs.isEmpty {
-                selectedTab = .editor("")
-            } else {
-                selectedTab = .editor("")
+            AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                if let other = openPaths.first(where: { $0 != path }) {
+                    selectedTab = .editor(other)
+                } else {
+                    selectedTab = .editor("")
+                }
             }
         }
     }
@@ -881,25 +916,31 @@ struct LaTeXEditorContainer: View {
                             .opacity(isCurrent || isHov ? 1 : 0)
                         }
                         .padding(.horizontal, 10)
-                        .frame(height: EditorChromeMetrics.tabBarHeight)
+                        .frame(height: AppChromeMetrics.tabBarHeight)
                         .background(
-                            isCurrent ? Color.white.opacity(0.06)
-                            : isHov ? Color.white.opacity(0.03)
+                            isCurrent ? AppChromePalette.tabSelectedFill
+                            : isHov ? AppChromePalette.tabHoverFill
                             : Color.clear
                         )
                         .overlay(alignment: .bottom) {
                             if isCurrent {
-                                Rectangle().fill(Color.green.opacity(0.5)).frame(height: 1.5)
+                                Rectangle()
+                                    .fill(Color.green.opacity(0.6))
+                                    .frame(height: AppChromeMetrics.tabIndicatorHeight)
+                                    .matchedGeometryEffect(id: "editor-tab-indicator", in: editorTabIndicatorNamespace)
                             }
                         }
+                        .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.tabCornerRadius, style: .continuous))
                         .contentShape(Rectangle())
                         .onTapGesture { switchEditor(path) }
                         .onHover { hoveredTabPath = $0 ? path : nil }
+                        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHov)
+                        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isCurrent)
                     }
                 }
             }
-            .frame(height: EditorChromeMetrics.tabBarHeight)
-            .background(.bar.opacity(0.5))
+            .frame(height: AppChromeMetrics.tabBarHeight)
+            .background(AppChromePalette.surfaceSubbar)
         }
     }
 
@@ -1082,9 +1123,9 @@ struct LaTeXLandingView: View {
                                         }
                                     }
                                 }
-                                .frame(height: EditorChromeMetrics.tabBarHeight)
-                                .background(.bar)
-                                Divider()
+                                .frame(height: AppChromeMetrics.tabBarHeight)
+                                .background(AppChromePalette.surfaceSubbar)
+                                AppChromeDivider(role: .panel)
                             }
 
                             Group {

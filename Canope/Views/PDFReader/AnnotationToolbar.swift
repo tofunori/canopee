@@ -3,6 +3,7 @@ import PDFKit
 import AppKit
 
 struct AnnotationToolbar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var currentTool: AnnotationTool
     @Binding var currentColor: NSColor
     let selectedAnnotation: PDFAnnotation?
@@ -19,114 +20,119 @@ struct AnnotationToolbar: View {
     @State private var showColorPicker = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            // Tool buttons
-            ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
-                toolButton(tool)
+        HStack(spacing: 8) {
+            AppChromeToolbarCluster(zone: .primary, title: "Outils") {
+                ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
+                    toolButton(tool)
+                }
             }
 
-            Divider()
-                .frame(height: 20)
-                .padding(.horizontal, 4)
-
-            // 5 favorite color slots
-            ForEach(0..<5, id: \.self) { index in
-                ColorSlotButton(
-                    color: favoriteColors[index],
-                    isSelected: colorsMatch(currentColor, favoriteColors[index]),
-                    onSelect: {
-                        currentColor = favoriteColors[index]
-                        if selectedAnnotation != nil {
-                            onChangeColor(favoriteColors[index])
+            AppChromeToolbarCluster(zone: .primary, title: "Couleurs") {
+                ForEach(0..<5, id: \.self) { index in
+                    ColorSlotButton(
+                        color: favoriteColors[index],
+                        isSelected: colorsMatch(currentColor, favoriteColors[index]),
+                        onSelect: {
+                            currentColor = favoriteColors[index]
+                            if selectedAnnotation != nil {
+                                onChangeColor(favoriteColors[index])
+                            }
+                        },
+                        onCustomize: {
+                            editingSlotIndex = index
+                            customColor = Color(nsColor: favoriteColors[index])
+                            showColorPicker = true
                         }
-                    },
-                    onCustomize: {
-                        editingSlotIndex = index
-                        customColor = Color(nsColor: favoriteColors[index])
+                    )
+                }
+
+                ToolbarIconButton(
+                    systemName: "plus.circle",
+                    helpText: "Couleur personnalisée",
+                    action: {
+                        editingSlotIndex = nil
+                        customColor = Color(nsColor: currentColor)
                         showColorPicker = true
                     }
                 )
             }
 
-            // Custom color picker button
-            ToolbarIconButton(
-                systemName: "plus.circle",
-                helpText: "Couleur personnalisée",
-                action: {
-                    editingSlotIndex = nil
-                    customColor = Color(nsColor: currentColor)
-                    showColorPicker = true
-                }
-            )
-
-            Divider()
-                .frame(height: 20)
-                .padding(.horizontal, 4)
-
-            // Selection-dependent actions
             if selectedAnnotation != nil {
-                ToolbarIconButton(
-                    systemName: "trash",
-                    foregroundStyle: .red,
-                    helpText: "Supprimer l'annotation (⌫)",
-                    action: onDeleteSelected
-                )
+                AppChromeToolbarCluster(zone: .primary, title: "Sélection") {
+                    ToolbarIconButton(
+                        systemName: "trash",
+                        foregroundStyle: AppChromePalette.danger,
+                        helpText: "Supprimer l'annotation (⌫)",
+                        action: onDeleteSelected
+                    )
 
-                Text("Sélectionné")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Text("Sélectionné")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
 
-            // Delete all
-            ToolbarIconButton(
-                systemName: "trash.slash",
-                helpText: "Effacer toutes les annotations",
-                action: { showDeleteAllConfirm = true }
-            )
-            .confirmationDialog(
-                "Effacer toutes les annotations?",
-                isPresented: $showDeleteAllConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Tout effacer", role: .destructive, action: onDeleteAll)
-                Button("Annuler", role: .cancel) {}
+            AppChromeToolbarCluster(zone: .trailing, title: "Actions") {
+                ToolbarIconButton(
+                    systemName: "trash.slash",
+                    foregroundStyle: AppChromePalette.danger,
+                    helpText: "Effacer toutes les annotations",
+                    action: { showDeleteAllConfirm = true }
+                )
+                .confirmationDialog(
+                    "Effacer toutes les annotations?",
+                    isPresented: $showDeleteAllConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Tout effacer", role: .destructive, action: onDeleteAll)
+                    Button("Annuler", role: .cancel) {}
+                }
+
+                AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
+
+                ToolbarIconButton(
+                    systemName: "square.and.arrow.down",
+                    helpText: "Enregistrer (⌘S)",
+                    action: onSave
+                )
+                .keyboardShortcut("s", modifiers: .command)
             }
 
-            // Save button
-            ToolbarIconButton(
-                systemName: "square.and.arrow.down",
-                helpText: "Enregistrer (⌘S)",
-                action: onSave
-            )
-            .keyboardShortcut("s", modifiers: .command)
+            AppChromeToolbarCluster(zone: .trailing, title: "Vue") {
+                ToolbarIconButton(
+                    systemName: showTerminal ? "terminal.fill" : "terminal",
+                    isSelected: showTerminal,
+                    foregroundStyle: showTerminal ? AppChromePalette.success : .secondary,
+                    selectedFillTint: AppChromePalette.success,
+                    helpText: "Terminal",
+                    action: {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            showTerminal.toggle()
+                        }
+                    }
+                )
 
-            Divider()
-                .frame(height: 20)
-                .padding(.horizontal, 2)
-
-            // Terminal toggle
-            ToolbarIconButton(
-                systemName: showTerminal ? "terminal.fill" : "terminal",
-                isSelected: showTerminal,
-                foregroundStyle: showTerminal ? .green : .secondary,
-                helpText: "Terminal",
-                action: { showTerminal.toggle() }
-            )
-
-            // Annotations sidebar toggle
-            ToolbarIconButton(
-                systemName: "sidebar.right",
-                symbolVariant: showAnnotations ? .none : .slash,
-                isSelected: showAnnotations,
-                helpText: "Annotations",
-                action: { showAnnotations.toggle() }
-            )
+                ToolbarIconButton(
+                    systemName: "sidebar.right",
+                    symbolVariant: showAnnotations ? .none : .slash,
+                    isSelected: showAnnotations,
+                    foregroundStyle: showAnnotations ? AppChromePalette.info : .secondary,
+                    selectedFillTint: AppChromePalette.info,
+                    helpText: "Annotations",
+                    action: {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            showAnnotations.toggle()
+                        }
+                    }
+                )
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.bar)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(height: AppChromeMetrics.toolbarHeight)
+        .background(AppChromePalette.surfaceBar)
         .popover(isPresented: $showColorPicker) {
             ColorPickerPopover(
                 selectedColor: $customColor,
@@ -161,7 +167,11 @@ struct AnnotationToolbar: View {
             systemName: tool.icon,
             isSelected: currentTool == tool,
             helpText: tool.displayName,
-            action: { currentTool = tool }
+            action: {
+                AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                    currentTool = tool
+                }
+            }
         )
     }
 
@@ -179,6 +189,7 @@ struct AnnotationToolbar: View {
 // MARK: - Color Slot Button
 
 struct ColorSlotButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let color: NSColor
     let isSelected: Bool
     let onSelect: () -> Void
@@ -196,10 +207,10 @@ struct ColorSlotButton: View {
                             .strokeBorder(.primary, lineWidth: 2)
                     }
                 }
-                .frame(width: 30, height: 30)
+                .frame(width: AppChromeMetrics.toolbarButtonSize, height: AppChromeMetrics.toolbarButtonSize)
                 .background(backgroundFill)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius))
+                .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius))
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -210,14 +221,16 @@ struct ColorSlotButton: View {
                 onCustomize()
             }
         }
+        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
     }
 
     private var backgroundFill: Color {
         if isSelected {
-            return Color.primary.opacity(0.14)
+            return AppChromePalette.selectedAccentFill
         }
         if isHovered {
-            return Color.primary.opacity(0.08)
+            return AppChromePalette.hoverFill
         }
         return .clear
     }
@@ -226,10 +239,12 @@ struct ColorSlotButton: View {
 // MARK: - Toolbar Icon Button
 
 struct ToolbarIconButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let systemName: String
     var symbolVariant: SymbolVariants = .none
     var isSelected = false
     var foregroundStyle: Color = .primary
+    var selectedFillTint: Color? = nil
     let helpText: String
     let action: () -> Void
     @State private var isHovered = false
@@ -238,11 +253,11 @@ struct ToolbarIconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .symbolVariant(symbolVariant)
-                .imageScale(.medium)
-                .frame(width: 34, height: 34)
+                .imageScale(.small)
+                .frame(width: AppChromeMetrics.toolbarButtonSize, height: AppChromeMetrics.toolbarButtonSize)
                 .background(backgroundFill)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius))
+                .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius))
         }
         .buttonStyle(.plain)
         .foregroundStyle(foregroundStyle)
@@ -250,14 +265,16 @@ struct ToolbarIconButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
     }
 
     private var backgroundFill: Color {
         if isSelected {
-            return Color.accentColor.opacity(0.2)
+            return (selectedFillTint ?? AppChromePalette.selectedAccent).opacity(0.18)
         }
         if isHovered {
-            return Color.primary.opacity(0.08)
+            return AppChromePalette.hoverFill
         }
         return .clear
     }
