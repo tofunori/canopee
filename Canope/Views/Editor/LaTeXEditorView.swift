@@ -100,6 +100,7 @@ struct LaTeXEditorView: View {
     }
     @Query private var allPapers: [Paper]
     @State private var fitToWidthTrigger = false
+    @State private var referenceContextWriteID = UUID()
 
     enum SplitLayout: String {
         case horizontal
@@ -810,6 +811,9 @@ struct LaTeXEditorView: View {
                 },
                 onEditNote: { annotation in
                     beginEditingReferenceAnnotationNote(annotation, in: referenceID)
+                },
+                onChangeColor: { annotation, color in
+                    changeReferenceAnnotationColor(annotation, to: color, in: referenceID)
                 }
             )
             .id(state.annotationRefreshToken)
@@ -2197,6 +2201,7 @@ struct LaTeXEditorView: View {
         switch tab {
         case .compiled:
             workspaceState.selectedReferencePaperID = nil
+            invalidateReferencePaperContextWrites()
         case .reference(let id):
             workspaceState.selectedReferencePaperID = id
             writeReferencePaperContext(for: id)
@@ -2218,6 +2223,8 @@ struct LaTeXEditorView: View {
             workspaceState.selectedReferencePaperID = remainingReferenceIDs.first
             if let nextID = remainingReferenceIDs.first {
                 writeReferencePaperContext(for: nextID)
+            } else {
+                invalidateReferencePaperContextWrites()
             }
         }
         // Restore layout only if no more references AND user hasn't changed layout since
@@ -2325,6 +2332,9 @@ struct LaTeXEditorView: View {
         let journal = paper.journal ?? "unknown"
         let doi = paper.doi ?? "unknown"
         let fileURL = paper.fileURL
+        let writeID = UUID()
+
+        referenceContextWriteID = writeID
 
         DispatchQueue.global(qos: .utility).async {
             guard let snapshotDocument = PDFDocument(url: fileURL) else { return }
@@ -2349,12 +2359,21 @@ struct LaTeXEditorView: View {
                 }
             }
 
+            let shouldWrite = DispatchQueue.main.sync {
+                referenceContextWriteID == writeID && activeReferencePDFID == id
+            }
+            guard shouldWrite else { return }
+
             CanopeContextFiles.writePaper(fullText)
             CanopeContextFiles.writeIDESelectionState(
                 ClaudeIDESelectionState.makeSnapshot(selectedText: "", fileURL: fileURL)
             )
             CanopeContextFiles.clearLegacySelectionMirror()
         }
+    }
+
+    private func invalidateReferencePaperContextWrites() {
+        referenceContextWriteID = UUID()
     }
 
     private func deleteSelectedReferenceAnnotation() {
@@ -2417,29 +2436,27 @@ struct LaTeXEditorView: View {
               let state = activeReferencePDFState else { return }
 
         guard let annotation = state.selectedAnnotation else { return }
+        changeReferenceAnnotationColor(annotation, to: color, in: id)
+    }
+
+    private func changeReferenceAnnotationColor(_ annotation: PDFAnnotation, to color: NSColor, in id: UUID) {
+        guard let state = workspaceState.referencePDFUIStates[id] else { return }
+
         let previousCurrentColor = state.currentColor
-        let previousAnnotationColor = annotation.color
+        let previousAnnotationColor = annotation.isTextBoxAnnotation ? annotation.textBoxFillColor : annotation.color
 
         state.pushUndoAction { [weak state] in
             guard let state else { return }
             state.currentColor = previousCurrentColor
-            if annotation.isTextBoxAnnotation {
-                annotation.setTextBoxFillColor(previousAnnotationColor)
-            } else {
-                annotation.color = previousAnnotationColor
-            }
+            AnnotationService.applyColor(previousAnnotationColor, to: annotation)
+            state.selectedAnnotation = annotation
             state.annotationRefreshToken = UUID()
             referencePDFDocumentDidChange(id: id)
         }
 
         state.currentColor = color
-        if annotation.isTextBoxAnnotation {
-            annotation.setTextBoxFillColor(AnnotationColor.annotationColor(color, for: "FreeText"))
-        } else {
-            annotation.color = AnnotationColor.annotationColor(color, for: annotation.type ?? "")
-        }
-
-        workspaceState.referencePDFUIStates[id]?.annotationRefreshToken = UUID()
+        state.selectedAnnotation = annotation
+        AnnotationService.applyColor(color, to: annotation)
         referencePDFDocumentDidChange(id: id)
     }
 
@@ -2935,7 +2952,10 @@ private struct ReferencePDFAnnotationPane: View {
             applyBridgeAnnotation: Binding(
                 get: { state.applyBridgeAnnotationAction },
                 set: { state.setPDFViewApplyBridgeAnnotation($0) }
-            )
+            ),
+            onUserInteraction: {
+                BridgeCommandRouter.shared.setPreferredHandler(id: bridgeCommandTargetID)
+            }
         )
         .id(state.pdfViewRefreshToken)
         .onKeyPress(phases: .down) { press in
@@ -2991,6 +3011,7 @@ private struct ReferencePDFAnnotationPane: View {
                 applyBridgeAnnotation: state.applyBridgeAnnotationAction
             )
         }
+        BridgeCommandRouter.shared.setPreferredHandler(id: bridgeCommandTargetID)
     }
 
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {

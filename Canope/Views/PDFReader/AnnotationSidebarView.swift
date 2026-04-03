@@ -7,7 +7,7 @@ struct AnnotationSidebarView: View {
     let onNavigate: (PDFAnnotation) -> Void
     let onDelete: (PDFAnnotation) -> Void
     let onEditNote: (PDFAnnotation) -> Void
-    @State private var annotations: [PageAnnotations] = []
+    let onChangeColor: (PDFAnnotation, NSColor) -> Void
 
     struct PageAnnotations: Identifiable {
         let id: Int
@@ -15,7 +15,31 @@ struct AnnotationSidebarView: View {
         let annotations: [PDFAnnotation]
     }
 
+    private var pageAnnotations: [PageAnnotations] {
+        var result: [PageAnnotations] = []
+        for i in 0..<document.pageCount {
+            guard let page = document.page(at: i) else { continue }
+            let pageAnnotations = page.annotations.filter { annotation in
+                annotation.type != "Link" && annotation.type != "Widget"
+            }
+            if !pageAnnotations.isEmpty {
+                result.append(PageAnnotations(
+                    id: i,
+                    pageLabel: page.label ?? "\(i + 1)",
+                    annotations: pageAnnotations
+                ))
+            }
+        }
+        return result
+    }
+
+    private var totalCount: Int {
+        pageAnnotations.reduce(0) { $0 + $1.annotations.count }
+    }
+
     var body: some View {
+        let annotations = pageAnnotations
+
         VStack(spacing: 0) {
             // Header
             HStack {
@@ -62,7 +86,7 @@ struct AnnotationSidebarView: View {
                                     Menu("Couleur") {
                                         ForEach(AnnotationColor.all, id: \.name) { item in
                                             Button(item.name) {
-                                                annotation.color = AnnotationColor.annotationColor(item.color, for: annotation.type)
+                                                onChangeColor(annotation, item.color)
                                             }
                                         }
                                     }
@@ -80,30 +104,6 @@ struct AnnotationSidebarView: View {
             }
             .listStyle(.sidebar)
         }
-        .onAppear { refreshAnnotations() }
-        .onChange(of: document.pageCount) { refreshAnnotations() }
-    }
-
-    private var totalCount: Int {
-        annotations.reduce(0) { $0 + $1.annotations.count }
-    }
-
-    func refreshAnnotations() {
-        var result: [PageAnnotations] = []
-        for i in 0..<document.pageCount {
-            guard let page = document.page(at: i) else { continue }
-            let pageAnnotations = page.annotations.filter { annotation in
-                annotation.type != "Link" && annotation.type != "Widget"
-            }
-            if !pageAnnotations.isEmpty {
-                result.append(PageAnnotations(
-                    id: i,
-                    pageLabel: page.label ?? "\(i + 1)",
-                    annotations: pageAnnotations
-                ))
-            }
-        }
-        annotations = result
     }
 }
 
@@ -111,10 +111,14 @@ struct AnnotationRowView: View {
     let annotation: PDFAnnotation
     let isSelected: Bool
 
+    private var displayColor: NSColor {
+        annotation.isTextBoxAnnotation ? annotation.textBoxFillColor : annotation.color
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 2)
-                .fill(Color(nsColor: annotation.color))
+                .fill(Color(nsColor: displayColor))
                 .frame(width: 4, height: 32)
 
             VStack(alignment: .leading, spacing: 2) {

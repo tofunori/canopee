@@ -356,25 +356,47 @@ struct BridgeMatchCandidate {
 final class BridgeCommandRouter {
     static let shared = BridgeCommandRouter()
 
-    private var activeHandlerID: String?
-    private var activeHandler: (([String: Any]) -> Void)?
+    typealias Handler = ([String: Any]) -> Void
+
+    private var handlers: [String: Handler] = [:]
+    private var preferredHandlerID: String?
 
     private init() {}
 
-    func setActiveHandler(id: String, handler: @escaping ([String: Any]) -> Void) {
-        activeHandlerID = id
-        activeHandler = handler
+    func setActiveHandler(id: String, handler: @escaping Handler) {
+        handlers[id] = handler
+    }
+
+    func setPreferredHandler(id: String) {
+        guard handlers[id] != nil else { return }
+        preferredHandlerID = id
     }
 
     func removeActiveHandler(id: String) {
-        guard activeHandlerID == id else { return }
-        activeHandlerID = nil
-        activeHandler = nil
+        handlers.removeValue(forKey: id)
+        if preferredHandlerID == id {
+            preferredHandlerID = nil
+        }
     }
 
     func dispatch(command: [String: Any]) -> Bool {
-        guard let activeHandler else { return false }
-        activeHandler(command)
+        if let preferredHandlerID,
+           let preferredHandler = handlers[preferredHandlerID] {
+            preferredHandler(command)
+            return true
+        }
+
+        guard handlers.count == 1,
+              let handler = handlers.values.first else {
+            return false
+        }
+
+        handler(command)
         return true
+    }
+
+    func resetForTesting() {
+        handlers.removeAll()
+        preferredHandlerID = nil
     }
 }

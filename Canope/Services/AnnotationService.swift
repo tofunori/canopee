@@ -2,6 +2,18 @@ import PDFKit
 import AppKit
 
 struct AnnotationService {
+    static func applyColor(_ color: NSColor, to annotation: PDFAnnotation) {
+        let normalizedColor = AnnotationColor.annotationColor(
+            color,
+            for: annotation.isTextBoxAnnotation ? "FreeText" : (annotation.type ?? "")
+        )
+
+        if annotation.isTextBoxAnnotation {
+            annotation.setTextBoxFillColor(normalizedColor)
+        } else {
+            annotation.color = normalizedColor
+        }
+    }
 
     private static func quadPoints(for rects: [CGRect]) -> [NSValue] {
         rects.flatMap { rect in

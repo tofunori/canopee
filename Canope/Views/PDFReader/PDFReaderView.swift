@@ -75,7 +75,10 @@ struct PDFReaderView: View {
                         },
                         clearSelectionAction: $clearSelectionAction,
                         undoAction: $undoAction,
-                        applyBridgeAnnotation: $applyBridgeAnnotation
+                        applyBridgeAnnotation: $applyBridgeAnnotation,
+                        onUserInteraction: {
+                            setPreferredBridgeCommandTarget()
+                        }
                     )
                     .id(pdfViewRefreshToken)
                     .onKeyPress(phases: .down) { press in
@@ -94,6 +97,9 @@ struct PDFReaderView: View {
                                 selectedAnnotation = annotation
                                 editingNoteText = annotation.contents ?? ""
                                 isEditingNote = true
+                            },
+                            onChangeColor: { annotation, color in
+                                changeAnnotationColor(annotation, to: color)
                             }
                         )
                         .id(annotationRefreshToken)
@@ -331,11 +337,12 @@ struct PDFReaderView: View {
 
     private func changeSelectedAnnotationColor(_ color: NSColor) {
         guard let annotation = selectedAnnotation else { return }
-        if annotation.isTextBoxAnnotation {
-            annotation.setTextBoxFillColor(AnnotationColor.annotationColor(color, for: "FreeText"))
-        } else {
-            annotation.color = AnnotationColor.annotationColor(color, for: annotation.type ?? "")
-        }
+        changeAnnotationColor(annotation, to: color)
+    }
+
+    private func changeAnnotationColor(_ annotation: PDFAnnotation, to color: NSColor) {
+        selectedAnnotation = annotation
+        AnnotationService.applyColor(color, to: annotation)
         hasUnsavedChanges = true
         annotationRefreshToken = UUID()
         scheduleAutoSave()
@@ -358,6 +365,15 @@ struct PDFReaderView: View {
                 applyBridgeAnnotation: applyBridgeAnnotation
             )
         }
+
+        if !isSplitMode {
+            setPreferredBridgeCommandTarget()
+        }
+    }
+
+    private func setPreferredBridgeCommandTarget() {
+        guard isActive else { return }
+        BridgeCommandRouter.shared.setPreferredHandler(id: bridgeCommandTargetID)
     }
 }
 

@@ -819,6 +819,7 @@ final class TextNoteEditorView: NSView {
 final class InteractivePDFView: PDFView {
     var onPreMouseDown: ((NSEvent, NSPoint, InteractivePDFView) -> Bool)?
     var onPostMouseUp: ((NSPoint) -> Void)?
+    var onUserInteraction: (() -> Void)?
     var selectionPreviewTool: AnnotationTool = .pointer
     var selectionPreviewColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
 
@@ -850,6 +851,7 @@ final class InteractivePDFView: PDFView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        onUserInteraction?()
         let location = convert(event.locationInWindow, from: nil)
         if onPreMouseDown?(event, location, self) == true {
             return
@@ -876,6 +878,26 @@ final class InteractivePDFView: PDFView {
         super.setCurrentSelection(selection, animate: animate)
         refreshCurrentSelectionAppearance()
     }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onUserInteraction?()
+        super.rightMouseDown(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        onUserInteraction?()
+        super.scrollWheel(with: event)
+    }
+
+    override func magnify(with event: NSEvent) {
+        onUserInteraction?()
+        super.magnify(with: event)
+    }
+
+    override func smartMagnify(with event: NSEvent) {
+        onUserInteraction?()
+        super.smartMagnify(with: event)
+    }
 }
 
 // MARK: - NSViewRepresentable
@@ -894,6 +916,7 @@ struct PDFKitView: NSViewRepresentable {
     @Binding var clearSelectionAction: (() -> Void)?
     @Binding var undoAction: (() -> Void)?
     @Binding var applyBridgeAnnotation: ((_ selection: PDFSelection, _ type: PDFAnnotationSubtype, _ color: NSColor) -> Void)?
+    let onUserInteraction: @MainActor () -> Void
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -956,6 +979,9 @@ struct PDFKitView: NSViewRepresentable {
         }
         pdfView.onPostMouseUp = { [weak coordinator = context.coordinator] location in
             coordinator?.handlePostMouseUp(at: location)
+        }
+        pdfView.onUserInteraction = { [weak coordinator = context.coordinator] in
+            coordinator?.recordUserInteraction()
         }
         context.coordinator.installMouseUpMonitor()
         context.coordinator.installMagnifyMonitor()
@@ -1664,7 +1690,12 @@ struct PDFKitView: NSViewRepresentable {
             }
         }
 
+        func recordUserInteraction() {
+            parent.onUserInteraction()
+        }
+
         func handleInteractiveMouseDown(event: NSEvent, at locationInCursorView: NSPoint) -> CursorMouseDownAction {
+            recordUserInteraction()
             guard currentTool == .textBox,
                   let cursorView = cursorView,
                   let pdfView = pdfView else { return .passThrough }
@@ -1953,6 +1984,7 @@ struct PDFKitView: NSViewRepresentable {
         }
 
         func handlePreMouseDown(event: NSEvent, at locationInView: NSPoint, in pdfView: InteractivePDFView) -> Bool {
+            recordUserInteraction()
             if editingTextView != nil {
                 commitTextBoxEditing()
                 pdfView.window?.makeFirstResponder(pdfView)
@@ -2021,6 +2053,7 @@ struct PDFKitView: NSViewRepresentable {
         }
 
         func handlePostMouseUp(at locationInView: NSPoint) {
+            recordUserInteraction()
             guard let pdfView = pdfView else { return }
 
             if currentTool == .note {
@@ -2145,6 +2178,7 @@ struct PDFKitView: NSViewRepresentable {
         // MARK: - Double Click (edit Text Box)
 
         @objc func handleDoubleClick(_ gesture: NSClickGestureRecognizer) {
+            recordUserInteraction()
             guard let pdfView = pdfView else { return }
             let locationInView = gesture.location(in: pdfView)
             guard let annotation = annotationAtPoint(locationInView),
@@ -2158,6 +2192,7 @@ struct PDFKitView: NSViewRepresentable {
         // MARK: - Right Click
 
         @objc func handleRightClick(_ gesture: NSClickGestureRecognizer) {
+            recordUserInteraction()
             guard let pdfView = pdfView else { return }
             let locationInView = gesture.location(in: pdfView)
             guard let annotation = annotationAtPoint(locationInView) else { return }
@@ -2258,11 +2293,7 @@ struct PDFKitView: NSViewRepresentable {
         @objc func changeAnnotationColor(_ sender: NSMenuItem) {
             guard let color = sender.representedObject as? NSColor,
                   let annotation = parent.selectedAnnotation else { return }
-            if annotation.isTextBoxAnnotation {
-                annotation.setTextBoxFillColor(AnnotationColor.annotationColor(color, for: "FreeText"))
-            } else {
-                annotation.color = AnnotationColor.annotationColor(color, for: annotation.type ?? "")
-            }
+            AnnotationService.applyColor(color, to: annotation)
             if editingAnnotation === annotation {
                 syncEditingViewAppearance()
             }

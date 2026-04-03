@@ -1,7 +1,23 @@
+import AppKit
+import PDFKit
 import XCTest
 @testable import Canope
 
 final class ServiceParsingTests: XCTestCase {
+    private func assertColorsEqual(_ lhs: NSColor?, _ rhs: NSColor?, file: StaticString = #filePath, line: UInt = #line) {
+        guard let lhs, let rhs else {
+            return XCTAssertEqual(lhs != nil, rhs != nil, file: file, line: line)
+        }
+
+        let normalizedLHS = AnnotationColor.normalized(lhs)
+        let normalizedRHS = AnnotationColor.normalized(rhs)
+
+        XCTAssertEqual(normalizedLHS.redComponent, normalizedRHS.redComponent, accuracy: 0.01, file: file, line: line)
+        XCTAssertEqual(normalizedLHS.greenComponent, normalizedRHS.greenComponent, accuracy: 0.01, file: file, line: line)
+        XCTAssertEqual(normalizedLHS.blueComponent, normalizedRHS.blueComponent, accuracy: 0.01, file: file, line: line)
+        XCTAssertEqual(normalizedLHS.alphaComponent, normalizedRHS.alphaComponent, accuracy: 0.01, file: file, line: line)
+    }
+
     func testParseLatexErrorsCapturesErrorsAndWarnings() {
         let log = """
         ! Undefined control sequence.
@@ -350,6 +366,7 @@ final class ServiceParsingTests: XCTestCase {
             wrapperDirectory: "/tmp/canope-cli-bin",
             claudeWrapperPath: "/tmp/canope-cli-bin/claude",
             codexWrapperPath: "/tmp/canope-cli-bin/codex",
+            opencodeWrapperPath: nil,
             mcpConfigPath: "/tmp/canope_claude_ide_mcp.json",
             alternateMcpConfigPath: "/tmp/canopee_claude_ide_mcp.json",
             bridgeURL: "http://127.0.0.1:8765/sse"
@@ -361,6 +378,32 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertTrue(script.contains("alias codex='/tmp/canope-cli-bin/codex'"))
         XCTAssertTrue(script.contains("export CANOPE_CLAUDE_IDE_MCP_CONFIG='/tmp/canope_claude_ide_mcp.json'"))
         XCTAssertTrue(script.contains("hash -r 2>/dev/null || rehash 2>/dev/null || true"))
+    }
+
+    func testClaudeCLIWrapperZshBootstrapRCInjectsOpencodeAliasOnlyWhenConfigured() {
+        let withoutOpencode = ClaudeCLIWrapperService.zshBootstrapRC(
+            sourceDirectory: "/Users/tofunori",
+            wrapperDirectory: "/tmp/canope-cli-bin",
+            claudeWrapperPath: "/tmp/canope-cli-bin/claude",
+            codexWrapperPath: "/tmp/canope-cli-bin/codex",
+            opencodeWrapperPath: nil,
+            mcpConfigPath: "/tmp/canope_claude_ide_mcp.json",
+            alternateMcpConfigPath: "/tmp/canopee_claude_ide_mcp.json",
+            bridgeURL: "http://127.0.0.1:8765/sse"
+        )
+        let withOpencode = ClaudeCLIWrapperService.zshBootstrapRC(
+            sourceDirectory: "/Users/tofunori",
+            wrapperDirectory: "/tmp/canope-cli-bin",
+            claudeWrapperPath: "/tmp/canope-cli-bin/claude",
+            codexWrapperPath: "/tmp/canope-cli-bin/codex",
+            opencodeWrapperPath: "/tmp/canope-cli-bin/opencode",
+            mcpConfigPath: "/tmp/canope_claude_ide_mcp.json",
+            alternateMcpConfigPath: "/tmp/canopee_claude_ide_mcp.json",
+            bridgeURL: "http://127.0.0.1:8765/sse"
+        )
+
+        XCTAssertFalse(withoutOpencode.contains("alias opencode="))
+        XCTAssertTrue(withOpencode.contains("alias opencode='/tmp/canope-cli-bin/opencode'"))
     }
 
     func testCodexWrapperScriptInjectsCanopeBridgeForInteractiveSessions() {
@@ -471,5 +514,90 @@ final class ServiceParsingTests: XCTestCase {
         )
 
         XCTAssertGreaterThan(exactScore, weakerScore)
+    }
+
+    @MainActor
+    func testBridgeCommandRouterDispatchesToPreferredHandler() {
+        let router = BridgeCommandRouter.shared
+        router.resetForTesting()
+        defer { router.resetForTesting() }
+
+        var receivedByFirst = false
+        var receivedCommand: [String: Any]?
+
+        router.setActiveHandler(id: "first") { _ in
+            receivedByFirst = true
+        }
+        router.setActiveHandler(id: "preferred") { command in
+            receivedCommand = command
+        }
+        router.setPreferredHandler(id: "preferred")
+
+        let dispatched = router.dispatch(command: ["kind": "annotate", "text": "alpha"])
+
+        XCTAssertTrue(dispatched)
+        XCTAssertFalse(receivedByFirst)
+        XCTAssertEqual(receivedCommand?["kind"] as? String, "annotate")
+        XCTAssertEqual(receivedCommand?["text"] as? String, "alpha")
+    }
+
+    @MainActor
+    func testBridgeCommandRouterFallsBackToSoleRegisteredHandler() {
+        let router = BridgeCommandRouter.shared
+        router.resetForTesting()
+        defer { router.resetForTesting() }
+
+        var receivedCommand: [String: Any]?
+        router.setActiveHandler(id: "only") { command in
+            receivedCommand = command
+        }
+
+        let dispatched = router.dispatch(command: ["text": "beta"])
+
+        XCTAssertTrue(dispatched)
+        XCTAssertEqual(receivedCommand?["text"] as? String, "beta")
+    }
+
+    @MainActor
+    func testBridgeCommandRouterRemovingPreferredHandlerClearsPreference() {
+        let router = BridgeCommandRouter.shared
+        router.resetForTesting()
+        defer { router.resetForTesting() }
+
+        var receivedCount = 0
+        router.setActiveHandler(id: "first") { _ in
+            receivedCount += 1
+        }
+        router.setActiveHandler(id: "preferred") { _ in
+            receivedCount += 1
+        }
+        router.setActiveHandler(id: "third") { _ in
+            receivedCount += 1
+        }
+        router.setPreferredHandler(id: "preferred")
+        router.removeActiveHandler(id: "preferred")
+
+        let dispatched = router.dispatch(command: ["text": "gamma"])
+
+        XCTAssertFalse(dispatched)
+        XCTAssertEqual(receivedCount, 0)
+    }
+
+    func testAnnotationServiceApplyColorUpdatesStandardMarkupColor() {
+        let annotation = PDFAnnotation(bounds: .init(x: 0, y: 0, width: 10, height: 10), forType: .highlight, withProperties: nil)
+        let color = NSColor.systemBlue
+
+        AnnotationService.applyColor(color, to: annotation)
+
+        assertColorsEqual(annotation.color, AnnotationColor.annotationColor(color, for: annotation.type ?? ""))
+    }
+
+    func testAnnotationServiceApplyColorUpdatesTextBoxFillColor() {
+        let annotation = PDFAnnotation(bounds: .init(x: 0, y: 0, width: 40, height: 20), forType: .freeText, withProperties: nil)
+        let color = NSColor.systemPink
+
+        AnnotationService.applyColor(color, to: annotation)
+
+        assertColorsEqual(annotation.textBoxFillColor, AnnotationColor.annotationColor(color, for: "FreeText"))
     }
 }
