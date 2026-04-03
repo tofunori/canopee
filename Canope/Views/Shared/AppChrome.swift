@@ -65,7 +65,9 @@ enum AppChromeDividerRole {
 enum ToolbarStatusState: Equatable {
     case idle
     case compiling
+    case rendering
     case saved
+    case previewReady
     case errors(Int)
 
     var isVisible: Bool {
@@ -78,8 +80,12 @@ enum ToolbarStatusState: Equatable {
             return "circle.fill"
         case .compiling:
             return "hourglass"
+        case .rendering:
+            return "doc.richtext"
         case .saved:
             return "checkmark.circle.fill"
+        case .previewReady:
+            return "doc.richtext.fill"
         case .errors:
             return "exclamationmark.triangle.fill"
         }
@@ -91,8 +97,12 @@ enum ToolbarStatusState: Equatable {
             return ""
         case .compiling:
             return "Compilation…"
+        case .rendering:
+            return "Rendu…"
         case .saved:
             return "Enregistré"
+        case .previewReady:
+            return "PDF prêt"
         case .errors(let count):
             return "\(count) erreur\(count > 1 ? "s" : "")"
         }
@@ -104,10 +114,32 @@ enum ToolbarStatusState: Equatable {
             return AppChromePalette.neutral
         case .compiling:
             return AppChromePalette.info
+        case .rendering:
+            return AppChromePalette.info
         case .saved:
+            return AppChromePalette.success
+        case .previewReady:
             return AppChromePalette.success
         case .errors:
             return AppChromePalette.danger
+        }
+    }
+
+    var isEmphasized: Bool {
+        switch self {
+        case .compiling, .rendering, .errors:
+            return true
+        case .idle, .saved, .previewReady:
+            return false
+        }
+    }
+
+    var textTint: Color {
+        switch self {
+        case .saved, .previewReady:
+            return .secondary
+        default:
+            return tint
         }
     }
 }
@@ -207,6 +239,7 @@ struct AppChromeDivider: View {
 }
 
 struct AppChromeStatusCapsule: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let status: ToolbarStatusState
 
     var body: some View {
@@ -214,19 +247,24 @@ struct AppChromeStatusCapsule: View {
             HStack(spacing: 5) {
                 Image(systemName: status.systemImage)
                     .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(status.tint)
                 Text(status.title)
                     .font(.system(size: 10, weight: .medium))
                     .lineLimit(1)
+                    .foregroundStyle(status.textTint)
             }
-            .foregroundStyle(status.tint)
-            .padding(.horizontal, 7)
+            .padding(.horizontal, status.isEmphasized ? 7 : 2)
             .frame(height: AppChromeMetrics.statusCapsuleHeight)
-            .background(status.tint.opacity(0.12))
-            .overlay(
-                Capsule()
-                    .stroke(status.tint.opacity(0.22), lineWidth: 1)
-            )
+            .background(status.isEmphasized ? status.tint.opacity(0.12) : .clear)
+            .overlay {
+                if status.isEmphasized {
+                    Capsule()
+                        .stroke(status.tint.opacity(0.22), lineWidth: 1)
+                }
+            }
             .clipShape(Capsule())
+            .transition(.opacity)
+            .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: status)
         }
     }
 }

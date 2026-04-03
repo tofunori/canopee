@@ -26,6 +26,7 @@
 		5417CF5CFD9C6A163238399D /* ProcessSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59B07E152FE9E2BF485A696A /* ProcessSupport.swift */; };
 		563C0ED08E10FB592419D207 /* LaTeXCompiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD312ECC61638F9C7416BE7 /* LaTeXCompiler.swift */; };
 		58BE54C5E0F8743CAD064A0B /* BridgeCommandWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65641D21C00AF173744B276C /* BridgeCommandWatcher.swift */; };
+		5E1B27A6C4D94E1A8F0B2C34 /* MarkdownPreviewRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1B27A6C4D94E1A8F0B2C33 /* MarkdownPreviewRenderer.swift */; };
 		5A5C3C970350B253F747E628 /* ClaudeIDESelectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE7CABB496A722FDA2F4D18E /* ClaudeIDESelectionState.swift */; };
 		5C28940D18AE2A973DBCCA3C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CF070FD58C3AF62DE1BB997D /* Assets.xcassets */; };
 		676D9C605B9AB759B62B8459 /* ShapeAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E472B4EC8C837F4FB0A749 /* ShapeAnnotations.swift */; };
@@ -78,6 +79,7 @@
 		5006D63CF28C22E24CD82738 /* AIChatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatPanel.swift; sourceTree = "<group>"; };
 		57B5C6B9A75697EC4A079BDC /* Canope.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Canope.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		59B07E152FE9E2BF485A696A /* ProcessSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessSupport.swift; sourceTree = "<group>"; };
+		5E1B27A6C4D94E1A8F0B2C33 /* MarkdownPreviewRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPreviewRenderer.swift; sourceTree = "<group>"; };
 		64494B3369625558447F0913 /* LaTeXTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXTextEditor.swift; sourceTree = "<group>"; };
 		650A9684E43A16704D17EB30 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		65641D21C00AF173744B276C /* BridgeCommandWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeCommandWatcher.swift; sourceTree = "<group>"; };
@@ -254,6 +256,7 @@
 				1F0E3A4CBD7E0C8753DA44D0 /* ClaudeService.swift */,
 				888AB1D2ECB6F588E3C27898 /* DiffEngine.swift */,
 				FAD312ECC61638F9C7416BE7 /* LaTeXCompiler.swift */,
+				5E1B27A6C4D94E1A8F0B2C33 /* MarkdownPreviewRenderer.swift */,
 				F63CE44FF6158ED19809BED5 /* MetadataExtractor.swift */,
 				0A4DC9894C16B5FB4C79B498 /* PDFFileManager.swift */,
 				59B07E152FE9E2BF485A696A /* ProcessSupport.swift */,
@@ -442,6 +445,7 @@
 				563C0ED08E10FB592419D207 /* LaTeXCompiler.swift in Sources */,
 				52453870CC0D1918012DF059 /* LaTeXEditorView.swift in Sources */,
 				BA26CC6387AE6CC2E7447200 /* LaTeXTextEditor.swift in Sources */,
+				5E1B27A6C4D94E1A8F0B2C34 /* MarkdownPreviewRenderer.swift in Sources */,
 				BF63157CD6C69DE2472A3C0B /* MetadataExtractor.swift in Sources */,
 				B16CD80407DDAF29CB6A131C /* PDFFileManager.swift in Sources */,
 				AB47630463A76B43C287698A /* PDFKitView.swift in Sources */,

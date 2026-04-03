@@ -348,114 +348,117 @@ struct MainWindow: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top: section tabs + action buttons
-            HStack(spacing: 0) {
-                TabBar(
-                    tabs: $openTabs,
-                    selectedTab: $selectedTab,
-                    allPapers: allPapers,
-                    onOpenTeX: { isOpeningTeX = true }
-                )
+            VStack(spacing: 0) {
+                // Top: section tabs + action buttons
+                HStack(spacing: 0) {
+                    TabBar(
+                        tabs: $openTabs,
+                        selectedTab: $selectedTab,
+                        allPapers: allPapers,
+                        onOpenTeX: { isOpeningTeX = true }
+                    )
 
-                // Action buttons (right side, aligned with section row)
-                HStack(spacing: 1) {
-                    if selectedTab == .library {
-                        Button {
-                            isImportingPDF = true
-                        } label: {
-                            Image(systemName: "doc.badge.plus")
-                                .font(.system(size: 11))
-                                .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Importer un PDF")
-                    } else {
-                        // Open .tex file (with recent files)
-                        Menu {
-                            let recents = Self.recentTeXFiles
-                            if !recents.isEmpty {
-                                ForEach(recents, id: \.self) { path in
-                                    Button {
-                                        openTeXFile(URL(fileURLWithPath: path))
-                                    } label: {
-                                        Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "doc.plaintext")
-                                    }
-                                }
-                                Divider()
-                            }
+                    // Action buttons (right side, aligned with section row)
+                    HStack(spacing: 1) {
+                        if selectedTab == .library {
                             Button {
-                                isOpeningTeX = true
+                                isImportingPDF = true
                             } label: {
-                                Label("Parcourir…", systemImage: "folder")
+                                Image(systemName: "doc.badge.plus")
+                                    .font(.system(size: 11))
+                                    .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
                             }
-                        } label: {
-                            Image(systemName: "doc.badge.plus")
-                                .font(.system(size: 11))
-                                .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Ouvrir un fichier .tex (⌘O)")
-                    }
-
-                    // Split toggle
-                    if case .paper = selectedTab {
-                        Menu {
-                            if splitPaperID != nil {
-                                Button("Fermer le split") { splitPaperID = nil }
-                                Divider()
-                            }
-                            ForEach(openPaperIDs, id: \.self) { id in
-                                if let paper = allPapers.first(where: { $0.id == id }) {
-                                    Button(paper.title) { splitPaperID = id }
-                                }
-                            }
-                        } label: {
-                            Image(systemName: splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
-                                .font(.system(size: 11))
-                                .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Split view")
-                    }
-                }
-                .padding(.trailing, 4)
-            }
-            .frame(height: AppChromeMetrics.topBarHeight)
-            .background(AppChromePalette.surfaceBar)
-
-            // Document tabs row (papers/PDFs from library)
-            let docTabs = openTabs.filter {
-                if case .paper = $0 { return true }
-                if case .pdfFile = $0 { return true }
-                return false
-            }
-            if !docTabs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        ForEach(docTabs, id: \.self) { tab in
-                            TabButton(
-                                tab: tab,
-                                isSelected: selectedTab == tab,
-                                indicatorNamespace: documentTabIndicatorNamespace,
-                                title: tabTitle(tab),
-                                onSelect: { selectedTab = tab },
-                                onClose: {
-                                    if let i = openTabs.firstIndex(of: tab) {
-                                        openTabs.remove(at: i)
-                                        if selectedTab == tab {
-                                            selectedTab = i > 0 ? openTabs[i-1] : (openTabs.first ?? .library)
+                            .buttonStyle(.plain)
+                            .help("Importer un PDF")
+                        } else {
+                            // Open .tex file (with recent files)
+                            Menu {
+                                let recents = Self.recentTeXFiles
+                                if !recents.isEmpty {
+                                    ForEach(recents, id: \.self) { path in
+                                        Button {
+                                            openTeXFile(URL(fileURLWithPath: path))
+                                        } label: {
+                                            Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "doc.plaintext")
                                         }
                                     }
+                                    Divider()
                                 }
-                            )
+                                Button {
+                                    isOpeningTeX = true
+                                } label: {
+                                    Label("Parcourir…", systemImage: "folder")
+                                }
+                            } label: {
+                                Image(systemName: "doc.badge.plus")
+                                    .font(.system(size: 11))
+                                    .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Ouvrir un fichier .tex ou .md (⌘O)")
+                        }
+
+                        // Split toggle
+                        if case .paper = selectedTab {
+                            Menu {
+                                if splitPaperID != nil {
+                                    Button("Fermer le split") { splitPaperID = nil }
+                                    Divider()
+                                }
+                                ForEach(openPaperIDs, id: \.self) { id in
+                                    if let paper = allPapers.first(where: { $0.id == id }) {
+                                        Button(paper.title) { splitPaperID = id }
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+                                    .font(.system(size: 11))
+                                    .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Split view")
                         }
                     }
+                    .padding(.trailing, 4)
                 }
-                .frame(height: AppChromeMetrics.tabBarHeight)
-                .background(AppChromePalette.surfaceSubbar)
-            }
+                .frame(height: AppChromeMetrics.topBarHeight)
+                .background(AppChromePalette.surfaceBar)
 
-            AppChromeDivider(role: .shell)
+                // Document tabs row (papers/PDFs from library)
+                let docTabs = openTabs.filter {
+                    if case .paper = $0 { return true }
+                    if case .pdfFile = $0 { return true }
+                    return false
+                }
+                if !docTabs.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 0) {
+                            ForEach(docTabs, id: \.self) { tab in
+                                TabButton(
+                                    tab: tab,
+                                    isSelected: selectedTab == tab,
+                                    indicatorNamespace: documentTabIndicatorNamespace,
+                                    title: tabTitle(tab),
+                                    onSelect: { selectedTab = tab },
+                                    onClose: {
+                                        if let i = openTabs.firstIndex(of: tab) {
+                                            openTabs.remove(at: i)
+                                            if selectedTab == tab {
+                                                selectedTab = i > 0 ? openTabs[i-1] : (openTabs.first ?? .library)
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    .frame(height: AppChromeMetrics.tabBarHeight)
+                    .background(AppChromePalette.surfaceSubbar)
+                }
+
+                AppChromeDivider(role: .shell)
+            }
+            .modifier(MainWindowTitleBarBehavior())
 
             // Content + resizable shared terminal
             HSplitView {
@@ -481,7 +484,10 @@ struct MainWindow: View {
         }
         .fileImporter(
             isPresented: $isOpeningTeX,
-            allowedContentTypes: [.init(filenameExtension: "tex")!],
+            allowedContentTypes: [
+                .init(filenameExtension: "tex")!,
+                .init(filenameExtension: "md")!,
+            ],
             allowsMultipleSelection: false
         ) { result in
             if let urls = try? result.get(), let url = urls.first {
@@ -494,6 +500,54 @@ struct MainWindow: View {
             }
         }
         .keyboardShortcut("o", modifiers: .command)
+    }
+}
+
+private struct MainWindowTitleBarBehavior: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    TapGesture(count: 2).onEnded {
+                        MainWindowTitleBarDoubleClickAction.perform()
+                    }
+                )
+                .gesture(WindowDragGesture())
+                .allowsWindowActivationEvents(true)
+        } else {
+            content
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    MainWindowTitleBarDoubleClickAction.perform()
+                }
+        }
+    }
+}
+
+private enum MainWindowTitleBarDoubleClickAction {
+    @MainActor
+    static func perform() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+
+        if let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick")?.lowercased() {
+            if action.contains("minimize") {
+                window.performMiniaturize(nil)
+                return
+            }
+
+            if action.contains("maximize") || action.contains("zoom") || action.contains("fill") {
+                window.performZoom(nil)
+                return
+            }
+        }
+
+        if UserDefaults.standard.bool(forKey: "AppleMiniaturizeOnDoubleClick") {
+            window.performMiniaturize(nil)
+        } else {
+            window.performZoom(nil)
+        }
     }
 }
 

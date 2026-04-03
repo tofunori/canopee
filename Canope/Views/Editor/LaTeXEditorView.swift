@@ -1,6 +1,8 @@
+import AppKit
 import SwiftUI
 import SwiftData
 import PDFKit
+import UniformTypeIdentifiers
 
 extension Notification.Name {
     static let syncTeXScrollToLine = Notification.Name("syncTeXScrollToLine")
@@ -60,6 +62,148 @@ struct LaTeXEditorView: View {
         case diff
     }
 
+    private enum NewEditorFileKind {
+        case latex
+        case markdown
+
+        var defaultFileName: String {
+            switch self {
+            case .latex:
+                return "untitled.tex"
+            case .markdown:
+                return "notes.md"
+            }
+        }
+
+        var contentType: UTType {
+            switch self {
+            case .latex:
+                return UTType(filenameExtension: "tex") ?? .plainText
+            case .markdown:
+                return UTType(filenameExtension: "md") ?? .plainText
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .latex:
+                return "Nouveau fichier LaTeX"
+            case .markdown:
+                return "Nouveau fichier Markdown"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .latex:
+                return "Crée un nouveau fichier .tex dans le dossier courant"
+            case .markdown:
+                return "Crée un nouveau fichier .md dans le dossier courant"
+            }
+        }
+
+        var template: String {
+            switch self {
+            case .latex:
+                return """
+                \\documentclass{article}
+
+                \\begin{document}
+
+                \\end{document}
+                """
+            case .markdown:
+                return ""
+            }
+        }
+    }
+
+    private enum EditorDocumentMode {
+        case latex
+        case markdown
+
+        init(fileURL: URL) {
+            switch fileURL.pathExtension.lowercased() {
+            case "md":
+                self = .markdown
+            default:
+                self = .latex
+            }
+        }
+
+        var fileIconTint: Color {
+            switch self {
+            case .latex:
+                return .green
+            case .markdown:
+                return .blue
+            }
+        }
+
+        var primaryClusterTitle: String {
+            switch self {
+            case .latex:
+                return "LaTeX"
+            case .markdown:
+                return "Markdown"
+            }
+        }
+
+        var compiledTabTitle: String {
+            switch self {
+            case .latex:
+                return "PDF compilé"
+            case .markdown:
+                return "PDF aperçu"
+            }
+        }
+
+        var emptyPreviewTitle: String {
+            switch self {
+            case .latex:
+                return "Pas encore compilé"
+            case .markdown:
+                return "Pas encore rendu"
+            }
+        }
+
+        var emptyPreviewDescription: String {
+            switch self {
+            case .latex:
+                return "⌘B pour compiler"
+            case .markdown:
+                return "Clique sur Rendre le PDF"
+            }
+        }
+
+        var runningStatus: ToolbarStatusState {
+            switch self {
+            case .latex:
+                return .compiling
+            case .markdown:
+                return .rendering
+            }
+        }
+
+        var successStatus: ToolbarStatusState {
+            switch self {
+            case .latex:
+                return .saved
+            case .markdown:
+                return .previewReady
+            }
+        }
+
+        var outputSuccessTitle: String {
+            switch self {
+            case .latex:
+                return "Compilation réussie"
+            case .markdown:
+                return "PDF prêt"
+            }
+        }
+    }
+
     let fileURL: URL
     var isActive: Bool = true
     @Binding var showTerminal: Bool
@@ -90,6 +234,7 @@ struct LaTeXEditorView: View {
     @State private var isDraggingThreePaneDivider = false
     @State private var toolbarStatus: ToolbarStatusState = .idle
     @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
+    @State private var fileCreationError: String?
 
     // PDF pane tabs (compiled + reference articles)
     enum PdfPaneTab: Hashable {
@@ -151,6 +296,8 @@ struct LaTeXEditorView: View {
     ]
 
     private var projectRoot: URL { fileURL.deletingLastPathComponent() }
+    private var documentMode: EditorDocumentMode { EditorDocumentMode(fileURL: fileURL) }
+    private var previewPDFURL: URL { MarkdownPreviewRenderer.previewURL(for: fileURL) }
     private var errorLines: Set<Int> {
         Set(errors.filter { !$0.isWarning && $0.line > 0 }.map { $0.line })
     }
@@ -162,6 +309,22 @@ struct LaTeXEditorView: View {
         return !resolvedLaTeXAnnotations.contains { resolved in
             resolved.resolvedRange == range
         }
+    }
+
+    private var canAnnotateCurrentDocument: Bool {
+        documentMode == .latex && canCreateAnnotationFromSelection
+    }
+
+    private var isFileBrowserCreateMenuVisible: Bool {
+        showSidebar && selectedSidebarSection == .files
+    }
+
+    private var outputSummaryText: String {
+        if errors.isEmpty {
+            return documentMode.outputSuccessTitle
+        }
+
+        return "\(errors.filter { !$0.isWarning }.count) erreur(s), \(errors.filter { $0.isWarning }.count) avertissement(s)"
     }
 
     private var sidebarAnnotations: [ResolvedLaTeXAnnotation] {
@@ -305,7 +468,16 @@ struct LaTeXEditorView: View {
                 inverseSyncResult = nil
             }
         }
+        .alert("Impossible de créer le fichier", isPresented: Binding(
+            get: { fileCreationError != nil },
+            set: { if !$0 { fileCreationError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(fileCreationError ?? "")
+        }
         .onReceive(NotificationCenter.default.publisher(for: .syncTeXForwardSync)) { notification in
+            guard documentMode == .latex else { return }
             if let line = notification.userInfo?["line"] as? Int {
                 forwardSync(line: line)
             }
@@ -682,7 +854,7 @@ struct LaTeXEditorView: View {
     }
 
     private var fileBrowserSidebar: some View {
-        FileBrowserView(rootURL: projectRoot) { url in
+        FileBrowserView(rootURL: projectRoot, showsCreateFileMenu: true) { url in
             let ext = url.pathExtension.lowercased()
             if ext == "pdf" {
                 onOpenPDF?(url)
@@ -953,7 +1125,7 @@ struct LaTeXEditorView: View {
                     HStack {
                         Image(systemName: errors.contains(where: { !$0.isWarning }) ? "xmark.circle.fill" : "checkmark.circle.fill")
                             .foregroundStyle(errors.contains(where: { !$0.isWarning }) ? .red : .green)
-                        Text(errors.isEmpty ? "Compilation réussie" : "\(errors.filter { !$0.isWarning }.count) erreur(s), \(errors.filter { $0.isWarning }.count) avertissement(s)")
+                        Text(outputSummaryText)
                             .font(.caption)
                             .fontWeight(.semibold)
                         Spacer()
@@ -1231,15 +1403,16 @@ struct LaTeXEditorView: View {
                     if let pdf = compiledPDF {
                         PDFPreviewView(
                             document: pdf,
-                            syncTarget: selectedPdfTab == .compiled ? syncTarget : nil,
-                            onInverseSync: { result in inverseSyncResult = result },
+                            syncTarget: documentMode == .latex && selectedPdfTab == .compiled ? syncTarget : nil,
+                            onInverseSync: documentMode == .latex ? { result in inverseSyncResult = result } : nil,
+                            allowsInverseSync: documentMode == .latex,
                             fitToWidthTrigger: selectedPdfTab == .compiled ? fitToWidthTrigger : false
                         )
                     } else {
                         ContentUnavailableView(
-                            "Pas encore compilé",
+                            documentMode.emptyPreviewTitle,
                             systemImage: "doc.text",
-                            description: Text("⌘B pour compiler")
+                            description: Text(documentMode.emptyPreviewDescription)
                         )
                     }
                 }
@@ -1306,7 +1479,7 @@ struct LaTeXEditorView: View {
                     case .compiled:
                         Image(systemName: "doc.text")
                             .font(.system(size: 9))
-                        Text("PDF compilé")
+                        Text(documentMode.compiledTabTitle)
                             .font(.system(size: 11))
                             .lineLimit(1)
                     case .reference(let id):
@@ -1353,16 +1526,36 @@ struct LaTeXEditorView: View {
         HStack(spacing: 8) {
             toolbarCluster(zone: .leading, title: "Fichier") {
                 Image(systemName: "doc.plaintext")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(documentMode.fileIconTint)
                 Text(fileURL.lastPathComponent)
                     .font(.caption)
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 AppChromeStatusCapsule(status: toolbarStatus)
+                if !isFileBrowserCreateMenuVisible {
+                    Menu {
+                        Button {
+                            createNewEditorFile(.latex)
+                        } label: {
+                            Label("Nouveau fichier LaTeX", systemImage: "doc.badge.plus")
+                        }
+
+                        Button {
+                            createNewEditorFile(.markdown)
+                        } label: {
+                            Label("Nouveau fichier Markdown", systemImage: "text.badge.plus")
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Créer un nouveau fichier .tex ou .md")
+                }
             }
 
-            toolbarCluster(zone: .primary, title: "LaTeX") {
-                Button(action: compile) {
+            toolbarCluster(zone: .primary, title: documentMode.primaryClusterTitle) {
+                Button(action: runPrimaryDocumentAction) {
                     if isCompiling {
                         ProgressView().controlSize(.small)
                     } else {
@@ -1370,7 +1563,7 @@ struct LaTeXEditorView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help("Compiler (⌘B)")
+                .help(documentMode == .latex ? "Compiler (⌘B)" : "Rendre le PDF (⌘B)")
                 .keyboardShortcut("b", modifiers: .command)
                 .disabled(isCompiling)
 
@@ -1381,28 +1574,31 @@ struct LaTeXEditorView: View {
                 .help("Sauvegarder (⌘S)")
                 .keyboardShortcut("s", modifiers: .command)
 
-                Button(action: beginAnnotationFromSelection) {
-                    Image(systemName: "highlighter")
-                }
-                .buttonStyle(.plain)
-                .help("Annoter la sélection (⇧⌘A)")
-                .keyboardShortcut("a", modifiers: [.command, .shift])
-                .disabled(!canCreateAnnotationFromSelection)
+                if documentMode == .latex {
+                    Button(action: beginAnnotationFromSelection) {
+                        Image(systemName: "highlighter")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Annoter la sélection (⇧⌘A)")
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
+                    .disabled(!canAnnotateCurrentDocument)
 
-                Button(action: reflowParagraphs) {
-                    Image(systemName: "text.justify.leading")
+                    Button(action: reflowParagraphs) {
+                        Image(systemName: "text.justify.leading")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reflow paragraphes (⌘⇧W)")
+                    .keyboardShortcut("w", modifiers: [.command, .shift])
                 }
-                .buttonStyle(.plain)
-                .help("Reflow paragraphes (⌘⇧W)")
-                .keyboardShortcut("w", modifiers: [.command, .shift])
 
                 Button(action: { showErrors.toggle() }) {
                     Image(systemName: "doc.text.below.ecg")
                         .foregroundStyle(showErrors ? .green : errors.contains(where: { !$0.isWarning }) ? .red : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Console de compilation")
+                .help(documentMode == .latex ? "Console de compilation" : "Journal du rendu")
             }
+            .id("document-toolbar-shortcuts:\(fileURL.path)")
 
             toolbarCluster(zone: .primary, title: "Réf.") {
                 Menu {
@@ -1629,12 +1825,16 @@ struct LaTeXEditorView: View {
     private func setToolbarStatus(_ status: ToolbarStatusState, autoClearAfter delay: TimeInterval? = nil) {
         toolbarStatusClearWorkItem?.cancel()
         toolbarStatusClearWorkItem = nil
-        toolbarStatus = status
+        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+            toolbarStatus = status
+        }
 
         guard let delay, status != .idle else { return }
 
         let workItem = DispatchWorkItem {
-            toolbarStatus = .idle
+            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                toolbarStatus = .idle
+            }
             toolbarStatusClearWorkItem = nil
         }
         toolbarStatusClearWorkItem = workItem
@@ -1681,26 +1881,49 @@ struct LaTeXEditorView: View {
         if useAsBaseline {
             savedText = content
         }
-        latexAnnotations = LaTeXAnnotationStore.load(for: fileURL)
+        latexAnnotations = documentMode == .latex ? LaTeXAnnotationStore.load(for: fileURL) : []
         reconcileAnnotations()
         lastModified = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
     }
 
     private func saveFile() {
-        try? text.write(to: fileURL, atomically: true, encoding: .utf8)
-        savedText = text
-        reconcileAnnotations()
-        lastModified = modificationDate()
-        compile()
+        if documentMode == .latex {
+            compile()
+        } else {
+            renderMarkdownPreview()
+        }
+    }
+
+    private func createNewEditorFile(_ kind: NewEditorFileKind) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.directoryURL = projectRoot
+        panel.nameFieldStringValue = kind.defaultFileName
+        panel.allowedContentTypes = [kind.contentType]
+        panel.isExtensionHidden = false
+        panel.title = kind.title
+        panel.message = kind.message
+        panel.prompt = "Créer"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try kind.template.write(to: url, atomically: true, encoding: .utf8)
+            setToolbarStatus(.saved, autoClearAfter: 1.4)
+            onOpenInNewTab?(url)
+        } catch {
+            fileCreationError = error.localizedDescription
+        }
     }
 
     private func openFile(_ url: URL) {
-        if url.pathExtension == "tex" {
+        let fileExtension = url.pathExtension.lowercased()
+        if fileExtension == "tex" || fileExtension == "md" || fileExtension == "bib" || fileExtension == "txt" {
             try? text.write(to: fileURL, atomically: true, encoding: .utf8)
             if let content = try? String(contentsOf: url, encoding: .utf8) {
                 text = content
                 savedText = content
-                latexAnnotations = LaTeXAnnotationStore.load(for: url)
+                latexAnnotations = EditorDocumentMode(fileURL: url) == .latex ? LaTeXAnnotationStore.load(for: url) : []
                 reconcileAnnotations()
             }
         }
@@ -1758,10 +1981,15 @@ struct LaTeXEditorView: View {
     }
 
     private func reconcileAnnotations() {
+        guard documentMode == .latex else {
+            resolvedLaTeXAnnotations = []
+            return
+        }
         resolvedLaTeXAnnotations = LaTeXAnnotationStore.resolve(latexAnnotations, in: text)
     }
 
     private func persistAnnotations() {
+        guard documentMode == .latex else { return }
         if latexAnnotations.isEmpty {
             try? LaTeXAnnotationStore.deleteSidecar(for: fileURL)
         } else {
@@ -1770,8 +1998,9 @@ struct LaTeXEditorView: View {
     }
 
     private func beginAnnotationFromSelection() {
+        guard documentMode == .latex else { return }
         guard let range = selectedEditorRange,
-              canCreateAnnotationFromSelection,
+              canAnnotateCurrentDocument,
               let draft = LaTeXAnnotationStore.makeDraft(from: range, in: text) else {
             return
         }
@@ -2019,9 +2248,8 @@ struct LaTeXEditorView: View {
     }
 
     private func loadExistingPDF() {
-        let pdfURL = fileURL.deletingPathExtension().appendingPathExtension("pdf")
-        if FileManager.default.fileExists(atPath: pdfURL.path) {
-            compiledPDF = PDFDocument(url: pdfURL)
+        if FileManager.default.fileExists(atPath: previewPDFURL.path) {
+            compiledPDF = PDFDocument(url: previewPDFURL)
         } else {
             compiledPDF = nil
         }
@@ -2035,6 +2263,7 @@ struct LaTeXEditorView: View {
         inverseSyncResult = nil
         errors = []
         compileOutput = ""
+        setToolbarStatus(.idle)
         loadFile()
         loadExistingPDF()
         if isActive {
@@ -2193,7 +2422,8 @@ struct LaTeXEditorView: View {
     // MARK: - SyncTeX
 
     private func forwardSync(line: Int) {
-        let pdfPath = fileURL.deletingPathExtension().appendingPathExtension("pdf").path
+        guard documentMode == .latex else { return }
+        let pdfPath = previewPDFURL.path
         guard FileManager.default.fileExists(atPath: pdfPath) else { return }
         let texFile = fileURL.lastPathComponent
 
@@ -2545,11 +2775,44 @@ struct LaTeXEditorView: View {
 
     // MARK: - Compilation
 
+    private func runPrimaryDocumentAction() {
+        switch documentMode {
+        case .latex:
+            compile()
+        case .markdown:
+            renderMarkdownPreview()
+        }
+    }
+
+    @discardableResult
+    private func writeCurrentTextToDisk() -> Bool {
+        do {
+            try text.write(to: fileURL, atomically: true, encoding: .utf8)
+            savedText = text
+            reconcileAnnotations()
+            lastModified = modificationDate()
+            return true
+        } catch {
+            errors = [
+                CompilationError(
+                    line: 0,
+                    message: error.localizedDescription,
+                    file: fileURL.lastPathComponent,
+                    isWarning: false
+                )
+            ]
+            compileOutput = error.localizedDescription
+            showErrors = true
+            setToolbarStatus(.errors(1))
+            return false
+        }
+    }
+
     private func compile() {
-        guard !isCompiling else { return }
-        try? text.write(to: fileURL, atomically: true, encoding: .utf8)
+        guard documentMode == .latex, !isCompiling else { return }
+        guard writeCurrentTextToDisk() else { return }
         isCompiling = true
-        setToolbarStatus(.compiling)
+        setToolbarStatus(documentMode.runningStatus)
         Task {
             let result = await LaTeXCompiler.compile(file: fileURL)
             await MainActor.run {
@@ -2563,7 +2826,33 @@ struct LaTeXEditorView: View {
                 if activeErrorCount > 0 {
                     setToolbarStatus(.errors(activeErrorCount))
                 } else {
-                    setToolbarStatus(.saved, autoClearAfter: 2.4)
+                    setToolbarStatus(documentMode.successStatus, autoClearAfter: 1.6)
+                }
+            }
+        }
+    }
+
+    private func renderMarkdownPreview() {
+        guard documentMode == .markdown, !isCompiling else { return }
+        guard writeCurrentTextToDisk() else { return }
+        isCompiling = true
+        setToolbarStatus(documentMode.runningStatus)
+        Task {
+            let result = await MarkdownPreviewRenderer.render(file: fileURL)
+            await MainActor.run {
+                errors = result.errors
+                compileOutput = result.log
+                showErrors = !result.success || !result.errors.isEmpty
+                if let pdfURL = result.pdfURL {
+                    compiledPDF = PDFDocument(url: pdfURL)
+                } else if !result.success {
+                    compiledPDF = nil
+                }
+                isCompiling = false
+                if activeErrorCount > 0 {
+                    setToolbarStatus(.errors(activeErrorCount))
+                } else {
+                    setToolbarStatus(documentMode.successStatus, autoClearAfter: 1.6)
                 }
             }
         }
@@ -2609,6 +2898,7 @@ struct PDFPreviewView: NSViewRepresentable {
     let document: PDFDocument
     var syncTarget: SyncTeXForwardResult?
     var onInverseSync: ((SyncTeXInverseResult) -> Void)?
+    var allowsInverseSync: Bool = true
     var fitToWidthTrigger: Bool = false
 
     func makeNSView(context: Context) -> NSView {
@@ -2654,6 +2944,7 @@ struct PDFPreviewView: NSViewRepresentable {
             }
         }
         context.coordinator.onInverseSync = onInverseSync
+        context.coordinator.allowsInverseSync = allowsInverseSync
         context.coordinator.configureSelectionObservation(for: pdfView)
 
         // Fit to width
@@ -2691,6 +2982,7 @@ struct PDFPreviewView: NSViewRepresentable {
         weak var pdfView: PDFView?
         weak var observedSelectionPDFView: PDFView?
         var onInverseSync: ((SyncTeXInverseResult) -> Void)?
+        var allowsInverseSync = true
         var lastFitTrigger: Bool = false
         private var hadSelectionAtMouseDown = false
         private var clickedInsideSelectionAtMouseDown = false
@@ -2735,6 +3027,7 @@ struct PDFPreviewView: NSViewRepresentable {
 
         @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
             guard let pdfView = pdfView,
+                  allowsInverseSync,
                   NSApp.currentEvent?.modifierFlags.contains(.command) == true else { return }
 
             let locationInView = gesture.location(in: pdfView)

@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FileItem: Identifiable, Hashable {
     let id = UUID()
@@ -37,8 +39,65 @@ struct FileItem: Identifiable, Hashable {
 }
 
 struct FileBrowserView: View {
+    private enum NewFileKind {
+        case latex
+        case markdown
+
+        var defaultFileName: String {
+            switch self {
+            case .latex:
+                return "untitled.tex"
+            case .markdown:
+                return "notes.md"
+            }
+        }
+
+        var contentType: UTType {
+            switch self {
+            case .latex:
+                return UTType(filenameExtension: "tex") ?? .plainText
+            case .markdown:
+                return UTType(filenameExtension: "md") ?? .plainText
+            }
+        }
+
+        var panelTitle: String {
+            switch self {
+            case .latex:
+                return "Nouveau fichier LaTeX"
+            case .markdown:
+                return "Nouveau fichier Markdown"
+            }
+        }
+
+        var panelMessage: String {
+            switch self {
+            case .latex:
+                return "Crée un nouveau fichier .tex"
+            case .markdown:
+                return "Crée un nouveau fichier .md"
+            }
+        }
+
+        var template: String {
+            switch self {
+            case .latex:
+                return """
+                \\documentclass{article}
+
+                \\begin{document}
+
+                \\end{document}
+                """
+            case .markdown:
+                return ""
+            }
+        }
+    }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let initialRootURL: URL
+    let showsCreateFileMenu: Bool
     let onOpenFile: (URL) -> Void
     @State private var currentDir: URL
     @State private var items: [FileItem] = []
@@ -46,12 +105,14 @@ struct FileBrowserView: View {
     @State private var childDirectoryCache: [URL: [FileItem]] = [:]
     @State private var selectedIndex: Int = 0
     @State private var hoveredItemURL: URL?
+    @State private var fileCreationError: String?
     @FocusState private var isFocused: Bool
 
     private let bgColor = Color(nsColor: NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1))
 
-    init(rootURL: URL, onOpenFile: @escaping (URL) -> Void) {
+    init(rootURL: URL, showsCreateFileMenu: Bool = true, onOpenFile: @escaping (URL) -> Void) {
         self.initialRootURL = rootURL
+        self.showsCreateFileMenu = showsCreateFileMenu
         self.onOpenFile = onOpenFile
         self._currentDir = State(initialValue: rootURL)
     }
@@ -82,6 +143,31 @@ struct FileBrowserView: View {
                     .foregroundStyle(.blue)
                     .lineLimit(1)
                 Spacer()
+                if showsCreateFileMenu {
+                    Menu {
+                        Button {
+                            createFile(.latex)
+                        } label: {
+                            Label("Nouveau fichier LaTeX", systemImage: "doc.badge.plus")
+                        }
+
+                        Button {
+                            createFile(.markdown)
+                        } label: {
+                            Label("Nouveau fichier Markdown", systemImage: "text.badge.plus")
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Créer un nouveau fichier .tex ou .md")
+                }
+
                 Button(action: refresh) {
                     Text("↻")
                         .font(.system(size: 11, design: .monospaced))
@@ -160,6 +246,14 @@ struct FileBrowserView: View {
         .onChange(of: currentDir) {
             refresh()
             selectedIndex = 0
+        }
+        .alert("Impossible de créer le fichier", isPresented: Binding(
+            get: { fileCreationError != nil },
+            set: { if !$0 { fileCreationError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(fileCreationError ?? "")
         }
     }
 
@@ -323,6 +417,50 @@ struct FileBrowserView: View {
     private func refresh() {
         childDirectoryCache.removeAll()
         items = scanDirectory(currentDir)
+    }
+
+    private var creationTargetDirectory: URL {
+        guard selectedIndex >= 0 && selectedIndex < flatItems.count else { return currentDir }
+        let item = flatItems[selectedIndex]
+        return item.isDirectory ? item.url : currentDir
+    }
+
+    private func createFile(_ kind: NewFileKind) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.directoryURL = creationTargetDirectory
+        panel.nameFieldStringValue = kind.defaultFileName
+        panel.allowedContentTypes = [kind.contentType]
+        panel.isExtensionHidden = false
+        panel.title = kind.panelTitle
+        panel.message = kind.panelMessage
+        panel.prompt = "Créer"
+
+        guard panel.runModal() == .OK, let fileURL = panel.url else { return }
+
+        do {
+            try kind.template.write(to: fileURL, atomically: true, encoding: .utf8)
+            revealCreatedFile(at: fileURL)
+            onOpenFile(fileURL)
+        } catch {
+            fileCreationError = error.localizedDescription
+        }
+    }
+
+    private func revealCreatedFile(at fileURL: URL) {
+        let targetDirectory = fileURL.deletingLastPathComponent()
+
+        if targetDirectory == currentDir {
+            refresh()
+        } else {
+            items = scanDirectory(currentDir)
+            childDirectoryCache[targetDirectory] = scanDirectory(targetDirectory)
+            expandedDirs.insert(targetDirectory)
+        }
+
+        if let newIndex = flatItems.firstIndex(where: { $0.url == fileURL }) {
+            selectedIndex = newIndex
+        }
     }
 
     private func childItems(for directory: URL) -> [FileItem]? {
