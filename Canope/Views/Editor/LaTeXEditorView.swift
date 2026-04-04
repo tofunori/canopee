@@ -2277,7 +2277,7 @@ struct LaTeXEditorView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 for window in NSApp.windows {
                     guard let contentView = window.contentView else { continue }
-                    MainWindow.thickenSplitViews(contentView)
+                    SplitViewHelper.thickenSplitViews(contentView)
                 }
             }
         }
