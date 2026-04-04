@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import PDFKit
 
-extension LaTeXEditorView {
+extension UnifiedEditorView {
     var sidebarPane: some View {
         HStack(spacing: 0) {
             sidebarActivityBar

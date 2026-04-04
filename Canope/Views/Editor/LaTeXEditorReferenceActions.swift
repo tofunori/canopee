@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import PDFKit
 
-extension LaTeXEditorView {
+extension UnifiedEditorView {
     func openReference(_ paper: Paper) {
         let tab = LaTeXEditorPdfPaneTab.reference(paper.id)
         if pdfPaneTabs.contains(tab) {

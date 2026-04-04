@@ -2,7 +2,7 @@ import AppKit
 import PDFKit
 import UniformTypeIdentifiers
 
-extension LaTeXEditorView {
+extension UnifiedEditorView {
     var activeMarkdownExportFileName: String? {
         documentMode == .markdown ? fileURL.lastPathComponent : nil
     }

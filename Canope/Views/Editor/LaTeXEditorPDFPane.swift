@@ -1,7 +1,7 @@
 import SwiftUI
 import PDFKit
 
-extension LaTeXEditorView {
+extension UnifiedEditorView {
     /// The PDF document for the currently selected pane tab
     var displayedPDF: PDFDocument? {
         switch selectedPdfTab {

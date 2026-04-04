@@ -207,38 +207,23 @@ struct LaTeXEditorContainer: View {
         }
     }
 
-    @ViewBuilder
     private func editorView(for fileURL: URL) -> some View {
-        switch EditorDocumentMode(fileURL: fileURL) {
-        case .latex, .markdown:
-            LaTeXEditorView(
-                fileURL: fileURL,
-                isActive: true,
-                showTerminal: $showTerminal,
-                workspaceState: workspaceState,
-                terminalWorkspaceState: terminalWorkspaceState,
-                onOpenPDF: onOpenPDF,
-                onOpenInNewTab: onOpenTeX,
-                openPaperIDs: openPaperIDs,
-                editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil
-            )
-        case .python, .r:
-            CodeEditorView(
-                fileURL: fileURL,
-                isActive: true,
-                showTerminal: $showTerminal,
-                workspaceState: workspaceState,
-                terminalWorkspaceState: terminalWorkspaceState,
-                documentState: codeDocumentStateStore.state(for: fileURL),
-                onOpenInNewTab: onOpenTeX,
-                openPaperIDs: openPaperIDs,
-                editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil,
-                onPersistWorkspaceState: {
-                    codeDocumentStateStore.persistState(for: fileURL)
-                    persistWorkspaceState()
-                }
-            )
-        }
+        UnifiedEditorView(
+            fileURL: fileURL,
+            isActive: true,
+            showTerminal: $showTerminal,
+            workspaceState: workspaceState,
+            terminalWorkspaceState: terminalWorkspaceState,
+            codeDocumentState: codeDocumentStateStore.state(for: fileURL),
+            onOpenPDF: onOpenPDF,
+            onOpenInNewTab: onOpenTeX,
+            openPaperIDs: openPaperIDs,
+            editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil,
+            onPersistWorkspaceState: {
+                codeDocumentStateStore.persistState(for: fileURL)
+                persistWorkspaceState()
+            }
+        )
     }
 
     private func syncCodeDocumentStates() {
