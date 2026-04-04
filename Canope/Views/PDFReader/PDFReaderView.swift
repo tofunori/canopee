@@ -86,6 +86,7 @@ struct PDFReaderView: View {
                         },
                         clearSelectionAction: $clearSelectionAction,
                         undoAction: $undoAction,
+                        fitToWidthAction: .constant(nil),
                         applyBridgeAnnotation: $applyBridgeAnnotation,
                         onUserInteraction: {
                             setPreferredBridgeCommandTarget()

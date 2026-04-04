@@ -14,6 +14,7 @@ final class ReferencePDFUIState: ObservableObject {
     @Published var requestedRestorePageIndex: Int?
     @Published var clearSelectionAction: (() -> Void)?
     @Published var undoAction: (() -> Void)?
+    @Published var fitToWidthAction: (() -> Void)?
     @Published var isEditingNote = false
     @Published var editingNoteText = ""
     @Published var bridgeCommandRegistrationToken = UUID()

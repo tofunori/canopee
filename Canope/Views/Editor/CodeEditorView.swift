@@ -405,7 +405,7 @@ struct CodeEditorView: View {
                             ReferencePDFAnnotationPane(
                                 document: pdf,
                                 fileURL: paper.fileURL,
-                                fitToWidthTrigger: selectedContentTab == .reference(id) ? fitToWidthTrigger : false,
+                                fitToWidthTrigger: fitToWidthTrigger,
                                 isBridgeCommandTargetActive: selectedContentTab == .reference(id),
                                 state: state,
                                 onDocumentChanged: {

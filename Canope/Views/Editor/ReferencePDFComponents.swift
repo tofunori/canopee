@@ -36,6 +36,7 @@ struct ReferencePDFAnnotationPane: View {
                 get: { state.undoAction },
                 set: { state.setPDFViewUndoAction($0) }
             ),
+            fitToWidthAction: $state.fitToWidthAction,
             applyBridgeAnnotation: Binding(
                 get: { state.applyBridgeAnnotationAction },
                 set: { state.setPDFViewApplyBridgeAnnotation($0) }
@@ -57,8 +58,7 @@ struct ReferencePDFAnnotationPane: View {
             state.isEditingNote = true
         }
         .onChange(of: fitToWidthTrigger) {
-            state.requestedRestorePageIndex = state.lastKnownPageIndex
-            state.pdfViewRefreshToken = UUID()
+            state.fitToWidthAction?()
         }
         .onChange(of: isBridgeCommandTargetActive) {
             refreshBridgeCommandTarget()

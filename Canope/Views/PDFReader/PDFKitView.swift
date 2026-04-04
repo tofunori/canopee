@@ -16,6 +16,7 @@ struct PDFKitView: NSViewRepresentable {
     let onMarkupAppearanceNeedsRefresh: @MainActor () -> Void
     @Binding var clearSelectionAction: (() -> Void)?
     @Binding var undoAction: (() -> Void)?
+    @Binding var fitToWidthAction: (() -> Void)?
     @Binding var applyBridgeAnnotation: ((_ selection: PDFSelection, _ type: PDFAnnotationSubtype, _ color: NSColor) -> Void)?
     let onUserInteraction: @MainActor () -> Void
 
@@ -97,6 +98,9 @@ struct PDFKitView: NSViewRepresentable {
             }
             self.clearSelectionAction = { [weak coordinator = context.coordinator] in
                 coordinator?.clearCurrentTextSelection()
+            }
+            self.fitToWidthAction = { [weak coordinator = context.coordinator] in
+                coordinator?.fitToWidth()
             }
             self.applyBridgeAnnotation = { [weak coordinator = context.coordinator] selection, type, color in
                 coordinator?.applyBridgeAnnotation(selection: selection, type: type, color: color)
@@ -1077,6 +1081,15 @@ struct PDFKitView: NSViewRepresentable {
 
         func clearCurrentTextSelection() {
             clearTextSelectionState()
+        }
+
+        func fitToWidth() {
+            guard let pdfView,
+                  let page = pdfView.currentPage else { return }
+            let pageWidth = page.bounds(for: pdfView.displayBox).width
+            guard pageWidth > 0 else { return }
+            let viewWidth = pdfView.bounds.width - pdfView.safeAreaInsets.left - pdfView.safeAreaInsets.right
+            pdfView.scaleFactor = viewWidth / pageWidth
         }
 
         private func updateSelectionDismissInterception() {
