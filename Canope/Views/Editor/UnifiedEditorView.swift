@@ -307,10 +307,10 @@ struct UnifiedEditorView: View {
         nonmutating set { workspaceState.editorTheme = newValue }
     }
 
-    // Unified isOutputVisible — shared across modes
+    // Code: per-document visibility. LaTeX: shared visibility via showPDFPreview.
     var isOutputVisible: Bool {
-        get { workspaceState.showPDFPreview }
-        nonmutating set { workspaceState.showPDFPreview = newValue }
+        get { codeDocumentState.outputLayout.isOutputVisible }
+        nonmutating set { codeDocumentState.updateOutputLayout { $0.isOutputVisible = newValue } }
     }
 
     // MARK: - PDF pane tabs (shared for both modes)
@@ -985,11 +985,23 @@ struct UnifiedEditorView: View {
 
     var editorToolbar: some View {
         HStack(spacing: 8) {
+            // Left side: file info + mode-specific actions + references
+            fileToolbarClusterView
+            documentActionsCluster
+            referencePickerToolbarClusterView
             if documentMode.isRunnableCode {
-                codeToolbarContent
+                codeActiveReferenceToolbarView
             } else {
-                latexToolbarContent
+                activeReferenceToolbarView
             }
+
+            Spacer(minLength: 8)
+
+            // Right side: shared layout controls
+            panneauxCluster
+            dispositionCluster
+            editorAppearanceToolbarClusterView
+            terminalToolbarClusterView
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -997,18 +1009,115 @@ struct UnifiedEditorView: View {
         .background(AppChromePalette.surfaceBar)
     }
 
-    // --- LaTeX toolbar ---
-
-    private var latexToolbarContent: some View {
-        Group {
-            fileToolbarClusterView
+    /// Mode-specific document actions (compile/run, save, errors/logs)
+    @ViewBuilder
+    private var documentActionsCluster: some View {
+        if documentMode.isRunnableCode {
+            codeDocumentActionsCluster
+        } else {
             documentToolbarClusterView
-            referencePickerToolbarClusterView
-            activeReferenceToolbarView
-            Spacer(minLength: 8)
-            viewToolbarClusterView
-            editorAppearanceToolbarClusterView
-            terminalToolbarClusterView
+        }
+    }
+
+    private var codeDocumentActionsCluster: some View {
+        toolbarCluster(zone: .primary, title: documentMode.primaryClusterTitle) {
+            Button(action: runScript) {
+                Image(systemName: codeDocumentState.isRunning ? "hourglass" : "play.fill")
+                    .foregroundStyle(AppChromePalette.success)
+            }
+            .buttonStyle(.plain)
+            .disabled(codeDocumentState.isRunning)
+            .help("Exécuter (⌘B)")
+            .keyboardShortcut("b", modifiers: .command)
+
+            Button(action: saveFile) {
+                Image(systemName: "square.and.arrow.down")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Enregistrer")
+
+            Button(action: { codeDocumentState.showLogs.toggle() }) {
+                Image(systemName: codeDocumentState.showLogs ? "list.bullet.rectangle.fill" : "list.bullet.rectangle")
+                    .foregroundStyle(codeDocumentState.showLogs ? AppChromePalette.info : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Journal d'exécution")
+        }
+    }
+
+    /// Shared pane toggles: sidebar, content pane, terminal
+    private var panneauxCluster: some View {
+        toolbarCluster(zone: .trailing, title: "Panneaux") {
+            Button(action: {
+                AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                    if documentMode.isRunnableCode { showSidebar.toggle() }
+                    else { toggleSidebar() }
+                }
+            }) {
+                Image(systemName: "sidebar.left")
+                    .symbolVariant(showSidebar ? .none : .slash)
+                    .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Fichiers")
+
+            Button(action: {
+                AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                    if documentMode.isRunnableCode {
+                        isOutputVisible.toggle()
+                    } else {
+                        showPDFPreview.toggle()
+                    }
+                }
+            }) {
+                let isContentVisible = documentMode.isRunnableCode ? isOutputVisible : showPDFPreview
+                Image(systemName: "sidebar.trailing")
+                    .symbolVariant(isContentVisible ? .none : .slash)
+                    .foregroundStyle(isContentVisible ? AppChromePalette.info : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(documentMode.isRunnableCode ? "Output" : "PDF")
+
+            Button(action: {
+                AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                    if documentMode.isRunnableCode { showTerminal.toggle() }
+                    else { toggleTerminalVisibility() }
+                }
+            }) {
+                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                    .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Terminal")
+        }
+    }
+
+    /// Shared disposition menu: panel arrangement
+    private var dispositionCluster: some View {
+        toolbarCluster(zone: .trailing, title: "Disposition") {
+            Menu {
+                Section("Ordre des panneaux") {
+                    ForEach(PanelArrangement.allCases, id: \.self) { arrangement in
+                        Button {
+                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                                panelArrangement = arrangement
+                            }
+                        } label: {
+                            HStack {
+                                if panelArrangement == arrangement {
+                                    Image(systemName: "checkmark")
+                                }
+                                Text(arrangement.title(contentLabel: documentMode.isRunnableCode ? "Output" : "PDF"))
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "rectangle.3.group")
+            }
+            .buttonStyle(.plain)
+            .help("Disposition des panneaux")
         }
     }
 
@@ -1102,94 +1211,6 @@ struct UnifiedEditorView: View {
             onDeleteAll: deleteAllReferenceAnnotations,
             onToggleAnnotations: toggleReferenceAnnotationSidebar
         )
-    }
-
-    private var viewToolbarClusterView: some View {
-        toolbarCluster(zone: .trailing, title: "Vue") {
-            Button(action: {
-                toggleSidebar()
-            }) {
-                Image(systemName: "sidebar.left")
-                    .symbolVariant(showSidebar ? .none : .slash)
-                    .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Afficher la barre latérale")
-
-            Menu {
-                Button {
-                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        splitLayout = .horizontal
-                        showPDFPreview = true
-                    }
-                } label: {
-                    Label("Côte à côte", systemImage: "rectangle.split.2x1")
-                    if splitLayout == .horizontal { Image(systemName: "checkmark") }
-                }
-                Button {
-                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        splitLayout = .vertical
-                        showPDFPreview = true
-                    }
-                } label: {
-                    Label("Haut / Bas", systemImage: "rectangle.split.1x2")
-                    if splitLayout == .vertical { Image(systemName: "checkmark") }
-                }
-                Button {
-                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        splitLayout = .editorOnly
-                        showPDFPreview = false
-                    }
-                } label: {
-                    Label("Éditeur seul", systemImage: "doc.text")
-                    if splitLayout == .editorOnly { Image(systemName: "checkmark") }
-                }
-            } label: {
-                Image(systemName: "rectangle.split.2x1")
-            }
-            .buttonStyle(.plain)
-            .help("Disposition")
-
-            Menu {
-                ForEach(PanelArrangement.allCases, id: \.self) { arrangement in
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            panelArrangement = arrangement
-                        }
-                    } label: {
-                        HStack {
-                            if panelArrangement == arrangement {
-                                Image(systemName: "checkmark")
-                            }
-                            Text(arrangement.title(contentLabel: "PDF"))
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-            }
-            .buttonStyle(.plain)
-            .help("Ordre des panneaux")
-
-            Button(action: {
-                toggleEditorPaneVisibility()
-            }) {
-                Image(systemName: showEditorPane ? "doc.text.fill" : "doc.text")
-                    .foregroundStyle(showEditorPane ? AppChromePalette.info : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Panneau LaTeX")
-            .disabled(showEditorPane && !showTerminal && !showPDFPreview)
-
-            Button(action: {
-                toggleTerminalVisibility()
-            }) {
-                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
-                    .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Terminal")
-        }
     }
 
     private var editorAppearanceToolbarClusterView: some View {
