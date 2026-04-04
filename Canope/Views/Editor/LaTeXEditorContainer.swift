@@ -18,6 +18,7 @@ struct LaTeXEditorContainer: View {
     var onCloseEditor: (String) -> Void
     @State private var didRestoreWorkspaceState = false
     @Namespace private var editorTabIndicatorNamespace
+    @StateObject private var codeDocumentStateStore = CodeDocumentStateStore()
 
     /// The currently active editor path
     private var activePath: String? {
@@ -32,6 +33,7 @@ struct LaTeXEditorContainer: View {
     }
 
     private func closeEditor(_ path: String) {
+        codeDocumentStateStore.removeState(for: URL(fileURLWithPath: path))
         onCloseEditor(path)
         if activePath == path {
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
@@ -186,24 +188,61 @@ struct LaTeXEditorContainer: View {
             }
 
             if let activePath, !activePath.isEmpty {
-                LaTeXEditorView(
-                    fileURL: URL(fileURLWithPath: activePath),
-                    isActive: true,
-                    showTerminal: $showTerminal,
-                    workspaceState: workspaceState,
-                    terminalWorkspaceState: terminalWorkspaceState,
-                    onOpenPDF: onOpenPDF,
-                    onOpenInNewTab: onOpenTeX,
-                    openPaperIDs: openPaperIDs,
-                    editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil
-                )
+                editorView(for: URL(fileURLWithPath: activePath))
             }
         }
         .onAppear {
             restoreWorkspaceStateIfNeeded()
+            syncCodeDocumentStates()
         }
         .onChange(of: workspaceSnapshot) {
             persistWorkspaceState()
         }
+        .onChange(of: openPaths) {
+            syncCodeDocumentStates()
+        }
+    }
+
+    @ViewBuilder
+    private func editorView(for fileURL: URL) -> some View {
+        switch EditorDocumentMode(fileURL: fileURL) {
+        case .latex, .markdown:
+            LaTeXEditorView(
+                fileURL: fileURL,
+                isActive: true,
+                showTerminal: $showTerminal,
+                workspaceState: workspaceState,
+                terminalWorkspaceState: terminalWorkspaceState,
+                onOpenPDF: onOpenPDF,
+                onOpenInNewTab: onOpenTeX,
+                openPaperIDs: openPaperIDs,
+                editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil
+            )
+        case .python, .r:
+            CodeEditorView(
+                fileURL: fileURL,
+                isActive: true,
+                showTerminal: $showTerminal,
+                workspaceState: workspaceState,
+                terminalWorkspaceState: terminalWorkspaceState,
+                documentState: codeDocumentStateStore.state(for: fileURL),
+                onOpenInNewTab: onOpenTeX,
+                editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil,
+                onPersistWorkspaceState: {
+                    codeDocumentStateStore.persistState(for: fileURL)
+                    persistWorkspaceState()
+                }
+            )
+        }
+    }
+
+    private func syncCodeDocumentStates() {
+        for path in openPaths {
+            let url = URL(fileURLWithPath: path)
+            if EditorDocumentMode(fileURL: url).isRunnableCode {
+                codeDocumentStateStore.ensureState(for: url)
+            }
+        }
+        codeDocumentStateStore.removeMissingStates(keepingPaths: openPaths)
     }
 }

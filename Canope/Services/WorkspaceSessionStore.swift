@@ -7,6 +7,7 @@ final class WorkspaceSessionStore {
     private enum Keys {
         static let mainWindowState = "canope.last-main-window-workspace.v1"
         static let latexWorkspaceState = "canope.last-latex-workspace.v2"
+        static let codeWorkspaceStates = "canope.last-code-workspace.v1"
     }
 
     private let defaults = UserDefaults.standard
@@ -29,6 +30,20 @@ final class WorkspaceSessionStore {
 
     func loadLaTeXWorkspaceState() -> LaTeXEditorWorkspaceState? {
         load(LaTeXEditorWorkspaceState.self, forKey: Keys.latexWorkspaceState)
+    }
+
+    func saveCodeDocumentWorkspaceState(_ state: CodeDocumentWorkspaceState, for path: String) {
+        var allStates = loadCodeDocumentWorkspaceStates()
+        allStates[path] = state
+        save(allStates, forKey: Keys.codeWorkspaceStates)
+    }
+
+    func loadCodeDocumentWorkspaceState(for path: String) -> CodeDocumentWorkspaceState? {
+        loadCodeDocumentWorkspaceStates()[path]
+    }
+
+    private func loadCodeDocumentWorkspaceStates() -> [String: CodeDocumentWorkspaceState] {
+        load([String: CodeDocumentWorkspaceState].self, forKey: Keys.codeWorkspaceStates) ?? [:]
     }
 
     private func save<T: Encodable>(_ value: T, forKey key: String) {

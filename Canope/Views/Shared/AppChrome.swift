@@ -175,7 +175,9 @@ enum ToolbarStatusState: Equatable {
     case idle
     case compiling
     case rendering
+    case running
     case saved
+    case completed
     case exported
     case previewReady
     case errors(Int)
@@ -192,8 +194,12 @@ enum ToolbarStatusState: Equatable {
             return "hourglass"
         case .rendering:
             return "doc.richtext"
+        case .running:
+            return "play.circle.fill"
         case .saved:
             return "checkmark.circle.fill"
+        case .completed:
+            return "checkmark.circle"
         case .exported:
             return "square.and.arrow.up.circle.fill"
         case .previewReady:
@@ -211,8 +217,12 @@ enum ToolbarStatusState: Equatable {
             return "Compilation…"
         case .rendering:
             return "Rendu…"
+        case .running:
+            return "Exécution…"
         case .saved:
             return "Enregistré"
+        case .completed:
+            return "Exécuté"
         case .exported:
             return "Annotations exportées"
         case .previewReady:
@@ -230,7 +240,11 @@ enum ToolbarStatusState: Equatable {
             return AppChromePalette.info
         case .rendering:
             return AppChromePalette.info
+        case .running:
+            return AppChromePalette.info
         case .saved:
+            return AppChromePalette.success
+        case .completed:
             return AppChromePalette.success
         case .exported:
             return AppChromePalette.success
@@ -243,16 +257,16 @@ enum ToolbarStatusState: Equatable {
 
     var isEmphasized: Bool {
         switch self {
-        case .compiling, .rendering, .errors:
+        case .compiling, .rendering, .running, .errors:
             return true
-        case .idle, .saved, .exported, .previewReady:
+        case .idle, .saved, .completed, .exported, .previewReady:
             return false
         }
     }
 
     var textTint: Color {
         switch self {
-        case .saved, .exported, .previewReady:
+        case .saved, .completed, .exported, .previewReady:
             return .secondary
         default:
             return tint

@@ -63,6 +63,44 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(normalizedLHS.alphaComponent, normalizedRHS.alphaComponent, accuracy: 0.01, file: file, line: line)
     }
 
+    private func seedCodeRun(
+        for fileURL: URL,
+        runID: UUID = UUID(),
+        executedAt: Date,
+        artifactNames: [String],
+        log: String = "done"
+    ) throws -> CodeRunRecord {
+        let runDirectory = CodeRunService.runDirectoryURL(for: fileURL, runID: runID, executedAt: executedAt)
+        try FileManager.default.createDirectory(at: runDirectory, withIntermediateDirectories: true)
+
+        for artifactName in artifactNames {
+            let artifactURL = runDirectory.appendingPathComponent(artifactName)
+            switch artifactURL.pathExtension.lowercased() {
+            case "png":
+                try Data([0x89, 0x50, 0x4e, 0x47]).write(to: artifactURL)
+            default:
+                try "<html><body>\(artifactName)</body></html>".write(to: artifactURL, atomically: true, encoding: .utf8)
+            }
+        }
+
+        let logURL = runDirectory.appendingPathComponent("run.log")
+        try log.write(to: logURL, atomically: true, encoding: .utf8)
+
+        let record = CodeRunRecord(
+            runID: runID,
+            executedAt: executedAt,
+            commandDescription: "python3 \(fileURL.lastPathComponent)",
+            exitCode: 0,
+            timedOut: false,
+            artifactDirectory: runDirectory,
+            artifacts: CodeRunService.discoverArtifacts(in: runDirectory, sourceDocumentPath: fileURL.path, runID: runID),
+            logURL: logURL
+        )
+        let data = try JSONEncoder().encode(record)
+        try data.write(to: runDirectory.appendingPathComponent("run.json"), options: .atomic)
+        return record
+    }
+
     func testParseLatexErrorsCapturesErrorsAndWarnings() {
         let log = """
         ! Undefined control sequence.
@@ -735,5 +773,215 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(AppChromePalette.tabFillToken(isSelected: false, isHovered: true), .hovered)
         XCTAssertEqual(AppChromePalette.tabFillToken(isSelected: true, isHovered: false), .selected)
         XCTAssertEqual(AppChromePalette.tabFillToken(isSelected: true, isHovered: true), .selected)
+    }
+
+    func testEditorDocumentModeRecognizesPythonAndR() {
+        XCTAssertEqual(EditorDocumentMode(fileURL: URL(fileURLWithPath: "/tmp/test.py")), .python)
+        XCTAssertEqual(EditorDocumentMode(fileURL: URL(fileURLWithPath: "/tmp/test.R")), .r)
+        XCTAssertEqual(EditorDocumentMode(fileURL: URL(fileURLWithPath: "/tmp/test.md")), .markdown)
+        XCTAssertEqual(EditorDocumentMode(fileURL: URL(fileURLWithPath: "/tmp/test.tex")), .latex)
+    }
+
+    func testArtifactDescriptorMapsPreviewableKinds() {
+        let basePath = "/tmp/example"
+        XCTAssertEqual(ArtifactDescriptor.make(url: URL(fileURLWithPath: "\(basePath).pdf"), sourceDocumentPath: "/tmp/script.py", runID: nil)?.kind, .pdf)
+        XCTAssertEqual(ArtifactDescriptor.make(url: URL(fileURLWithPath: "\(basePath).png"), sourceDocumentPath: "/tmp/script.py", runID: nil)?.kind, .image)
+        XCTAssertEqual(ArtifactDescriptor.make(url: URL(fileURLWithPath: "\(basePath).svg"), sourceDocumentPath: "/tmp/script.py", runID: nil)?.kind, .html)
+        XCTAssertNil(ArtifactDescriptor.make(url: URL(fileURLWithPath: "\(basePath).txt"), sourceDocumentPath: "/tmp/script.py", runID: nil))
+    }
+
+    func testCodeSyntaxThemeMonokaiProvidesExpectedKeywordColor() {
+        assertColorsEqual(
+            CodeSyntaxTheme.monokai.color(for: .keyword),
+            NSColor(red: 249 / 255, green: 38 / 255, blue: 114 / 255, alpha: 1)
+        )
+    }
+
+    func testCodeSyntaxHighlighterRecognizesPythonTokens() {
+        let text = """
+        @cache
+        def build_plot(value=3):
+            message = "hello"
+            if value > 2:
+                return value
+        """
+
+        let kinds = Set(CodeSyntaxHighlighter.tokens(for: text, language: .python).map(\.kind))
+
+        XCTAssertTrue(kinds.contains(.decorator))
+        XCTAssertTrue(kinds.contains(.function))
+        XCTAssertTrue(kinds.contains(.string))
+        XCTAssertTrue(kinds.contains(.keyword))
+        XCTAssertTrue(kinds.contains(.number))
+        XCTAssertTrue(kinds.contains(.oper))
+    }
+
+    func testCodeSyntaxHighlighterRecognizesRTokens() {
+        let text = """
+        build_plot <- function(value = 3) {
+          label <- "hello"
+          if (value > 2) {
+            return(label)
+          }
+        }
+        """
+
+        let kinds = Set(CodeSyntaxHighlighter.tokens(for: text, language: .r).map(\.kind))
+
+        XCTAssertTrue(kinds.contains(.function))
+        XCTAssertTrue(kinds.contains(.string))
+        XCTAssertTrue(kinds.contains(.keyword))
+        XCTAssertTrue(kinds.contains(.number))
+        XCTAssertTrue(kinds.contains(.oper))
+    }
+
+    func testCodeRunServiceDiscoversNewestArtifactsFirst() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let older = tempDirectory.appendingPathComponent("plot.png")
+        let newer = tempDirectory.appendingPathComponent("plot.html")
+        try Data([0x89, 0x50, 0x4e, 0x47]).write(to: older)
+        try "<html><body>ok</body></html>".write(to: newer, atomically: true, encoding: .utf8)
+
+        let oldDate = Date(timeIntervalSinceNow: -120)
+        let newDate = Date()
+        try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: older.path)
+        try FileManager.default.setAttributes([.modificationDate: newDate], ofItemAtPath: newer.path)
+
+        let artifacts = CodeRunService.discoverArtifacts(in: tempDirectory, sourceDocumentPath: "/tmp/script.py", runID: nil)
+
+        XCTAssertEqual(artifacts.map(\.url.lastPathComponent), ["plot.html", "plot.png"])
+    }
+
+    func testCodeRunServiceRunsPythonScriptAndCapturesHtmlArtifact() async throws {
+        guard ExecutableLocator.find("python3", preferredPaths: ["/opt/homebrew/bin/python3", "/usr/bin/python3", "/usr/local/bin/python3"]) != nil else {
+            throw XCTSkip("python3 non disponible sur ce système")
+        }
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let scriptURL = tempDirectory.appendingPathComponent("analysis.py")
+        try """
+        from pathlib import Path
+        import os
+
+        artifact_dir = Path(os.environ["CANOPE_ARTIFACT_DIR"])
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        output = artifact_dir / "report.html"
+        output.write_text("<html><body><h1>Hello</h1></body></html>", encoding="utf-8")
+        print("done")
+        """.write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        let result = await CodeRunService.run(file: scriptURL, mode: .python, timeout: 10)
+
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(result.artifacts.first?.kind, .html)
+        XCTAssertEqual(result.artifacts.first?.displayName, "report.html")
+        XCTAssertTrue(result.outputLog.contains("done"))
+        XCTAssertEqual(CodeRunService.loadRunHistory(for: scriptURL).first?.runID, result.runID)
+    }
+
+    func testCodeRunServiceRunsRScriptAndCapturesHtmlArtifact() async throws {
+        guard ExecutableLocator.find("Rscript", preferredPaths: ["/opt/homebrew/bin/Rscript", "/usr/local/bin/Rscript", "/usr/bin/Rscript"]) != nil else {
+            throw XCTSkip("Rscript non disponible sur ce système")
+        }
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let scriptURL = tempDirectory.appendingPathComponent("analysis.R")
+        try """
+        artifact_dir <- Sys.getenv("CANOPE_ARTIFACT_DIR")
+        dir.create(artifact_dir, recursive = TRUE, showWarnings = FALSE)
+        writeLines("<html><body><h1>Hello</h1></body></html>", file.path(artifact_dir, "report.html"))
+        cat("done\\n")
+        """.write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        let result = await CodeRunService.run(file: scriptURL, mode: .r, timeout: 10)
+
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(result.artifacts.first?.kind, .html)
+        XCTAssertEqual(result.artifacts.first?.displayName, "report.html")
+        XCTAssertTrue(result.outputLog.contains("done"))
+    }
+
+    func testCodeRunServicePrunesRunHistoryToTwentyRuns() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let scriptURL = tempDirectory.appendingPathComponent("analysis.py")
+        try "print('ok')".write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        for index in 0..<22 {
+            _ = try seedCodeRun(
+                for: scriptURL,
+                executedAt: Date(timeIntervalSince1970: TimeInterval(1_000 + index)),
+                artifactNames: ["plot-\(index).html"]
+            )
+        }
+
+        try CodeRunService.pruneRunHistory(for: scriptURL, keeping: 20)
+        let history = CodeRunService.loadRunHistory(for: scriptURL)
+
+        XCTAssertEqual(history.count, 20)
+        XCTAssertEqual(history.first?.artifacts.first?.displayName, "plot-21.html")
+        XCTAssertEqual(history.last?.artifacts.first?.displayName, "plot-2.html")
+    }
+
+    @MainActor
+    func testCodeDocumentUIStateNavigatesRunHistoryAndManualPreviewSeparately() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let scriptURL = tempDirectory.appendingPathComponent("analysis.py")
+        try "print('ok')".write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        let older = try seedCodeRun(
+            for: scriptURL,
+            executedAt: Date(timeIntervalSince1970: 1_000),
+            artifactNames: ["older.html"],
+            log: "older"
+        )
+        let newer = try seedCodeRun(
+            for: scriptURL,
+            executedAt: Date(timeIntervalSince1970: 2_000),
+            artifactNames: ["newer.html"],
+            log: "newer"
+        )
+
+        let state = CodeDocumentUIState(snapshot: nil, fileURL: scriptURL)
+
+        XCTAssertEqual(state.selectedRun?.runID, newer.runID)
+        XCTAssertEqual(state.activeArtifact?.displayName, "newer.html")
+
+        state.selectPreviousRun()
+        XCTAssertEqual(state.selectedRun?.runID, older.runID)
+        XCTAssertEqual(state.activeArtifact?.displayName, "older.html")
+
+        let manualURL = tempDirectory.appendingPathComponent("manual.png")
+        try Data([0x89, 0x50, 0x4e, 0x47]).write(to: manualURL)
+        let manualArtifact = try XCTUnwrap(
+            ArtifactDescriptor.make(url: manualURL, sourceDocumentPath: scriptURL.path, runID: nil)
+        )
+        state.setManualPreviewArtifact(manualArtifact)
+
+        XCTAssertEqual(state.activeArtifact?.url.path, manualURL.path)
+        XCTAssertFalse(state.canSelectPreviousRun)
+
+        state.returnToSelectedRun()
+        XCTAssertEqual(state.selectedRun?.runID, older.runID)
+        XCTAssertEqual(state.activeArtifact?.displayName, "older.html")
     }
 }

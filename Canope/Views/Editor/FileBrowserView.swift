@@ -16,6 +16,8 @@ struct FileItem: Identifiable, Hashable {
         case "bib": return ""
         case "pdf": return ""
         case "png", "jpg", "jpeg", "eps", "svg": return ""
+        case "py", "r": return ""
+        case "html", "htm": return ""
         case "md", "txt": return ""
         case "sty", "cls": return ""
         case "log", "aux", "out": return ""
@@ -30,6 +32,9 @@ struct FileItem: Identifiable, Hashable {
         case "bib": return Color(red: 0.85, green: 0.75, blue: 0.55) // warm tan
         case "pdf": return Color(red: 0.85, green: 0.6, blue: 0.6) // muted rose
         case "png", "jpg", "jpeg", "eps", "svg": return Color(red: 0.8, green: 0.65, blue: 0.8) // soft lavender
+        case "py": return Color(red: 0.93, green: 0.67, blue: 0.38)
+        case "r": return Color(red: 0.72, green: 0.58, blue: 0.88)
+        case "html", "htm": return Color(red: 0.58, green: 0.78, blue: 0.92)
         case "md", "txt": return Color(white: 0.7) // soft gray
         case "sty", "cls": return Color(red: 0.7, green: 0.6, blue: 0.8) // muted purple
         case "log", "aux", "out": return Color(white: 0.35)
@@ -39,62 +44,6 @@ struct FileItem: Identifiable, Hashable {
 }
 
 struct FileBrowserView: View {
-    private enum NewFileKind {
-        case latex
-        case markdown
-
-        var defaultFileName: String {
-            switch self {
-            case .latex:
-                return "untitled.tex"
-            case .markdown:
-                return "notes.md"
-            }
-        }
-
-        var contentType: UTType {
-            switch self {
-            case .latex:
-                return UTType(filenameExtension: "tex") ?? .plainText
-            case .markdown:
-                return UTType(filenameExtension: "md") ?? .plainText
-            }
-        }
-
-        var panelTitle: String {
-            switch self {
-            case .latex:
-                return "Nouveau fichier LaTeX"
-            case .markdown:
-                return "Nouveau fichier Markdown"
-            }
-        }
-
-        var panelMessage: String {
-            switch self {
-            case .latex:
-                return "Crée un nouveau fichier .tex"
-            case .markdown:
-                return "Crée un nouveau fichier .md"
-            }
-        }
-
-        var template: String {
-            switch self {
-            case .latex:
-                return """
-                \\documentclass{article}
-
-                \\begin{document}
-
-                \\end{document}
-                """
-            case .markdown:
-                return ""
-            }
-        }
-    }
-
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let initialRootURL: URL
     let showsCreateFileMenu: Bool
@@ -156,6 +105,18 @@ struct FileBrowserView: View {
                         } label: {
                             Label("Nouveau fichier Markdown", systemImage: "text.badge.plus")
                         }
+
+                        Button {
+                            createFile(.python)
+                        } label: {
+                            Label("Nouveau script Python", systemImage: "play.rectangle")
+                        }
+
+                        Button {
+                            createFile(.r)
+                        } label: {
+                            Label("Nouveau script R", systemImage: "chart.line.uptrend.xyaxis")
+                        }
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .semibold))
@@ -165,7 +126,7 @@ struct FileBrowserView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .help("Créer un nouveau fichier .tex ou .md")
+                    .help("Créer un nouveau fichier éditable")
                 }
 
                 Button(action: refresh) {
@@ -429,15 +390,15 @@ struct FileBrowserView: View {
         return item.isDirectory ? item.url : currentDir
     }
 
-    private func createFile(_ kind: NewFileKind) {
+    private func createFile(_ kind: NewEditorFileKind) {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.directoryURL = creationTargetDirectory
         panel.nameFieldStringValue = kind.defaultFileName
         panel.allowedContentTypes = [kind.contentType]
         panel.isExtensionHidden = false
-        panel.title = kind.panelTitle
-        panel.message = kind.panelMessage
+        panel.title = kind.title
+        panel.message = kind.message
         panel.prompt = "Créer"
 
         guard panel.runModal() == .OK, let fileURL = panel.url else { return }
@@ -483,15 +444,13 @@ struct FileBrowserView: View {
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
-        let validExtensions: Set<String> = ["tex", "bib", "sty", "cls", "pdf", "png", "jpg", "jpeg", "eps", "svg", "txt", "md"]
-
         return contents
             .filter { url in
                 let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 let isDir = values?.isDirectory ?? false
                 let isSymbolicLink = values?.isSymbolicLink ?? false
                 if isSymbolicLink { return false }
-                return isDir || validExtensions.contains(url.pathExtension.lowercased())
+                return isDir || EditorFileSupport.browseableExtensions.contains(url.pathExtension.lowercased())
             }
             .sorted { a, b in
                 let aDir = (try? a.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false

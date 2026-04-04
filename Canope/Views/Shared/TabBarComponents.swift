@@ -49,7 +49,7 @@ struct TabBar: View {
             SectionTab(
                 icon: "chevron.left.forwardslash.chevron.right",
                 iconColor: .green,
-                label: editorTabs.count > 1 ? "LaTeX" : (editorTab.map { title(for: $0) } ?? "LaTeX"),
+                label: editorTabs.count > 1 ? "Éditeur" : (editorTab.map { title(for: $0) } ?? "Éditeur"),
                 isSelected: isEditorSelected,
                 indicatorNamespace: sectionTabIndicatorNamespace
             ) {

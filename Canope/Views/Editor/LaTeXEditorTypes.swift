@@ -76,6 +76,8 @@ struct LaTeXEditorDiffGroup: Identifiable, Equatable {
 enum NewEditorFileKind {
     case latex
     case markdown
+    case python
+    case r
 
     var defaultFileName: String {
         switch self {
@@ -83,6 +85,10 @@ enum NewEditorFileKind {
             return "untitled.tex"
         case .markdown:
             return "notes.md"
+        case .python:
+            return "analysis.py"
+        case .r:
+            return "analysis.R"
         }
     }
 
@@ -92,6 +98,10 @@ enum NewEditorFileKind {
             return UTType(filenameExtension: "tex") ?? .plainText
         case .markdown:
             return UTType(filenameExtension: "md") ?? .plainText
+        case .python:
+            return UTType(filenameExtension: "py") ?? .plainText
+        case .r:
+            return UTType(filenameExtension: "r") ?? .plainText
         }
     }
 
@@ -101,6 +111,10 @@ enum NewEditorFileKind {
             return "Nouveau fichier LaTeX"
         case .markdown:
             return "Nouveau fichier Markdown"
+        case .python:
+            return "Nouveau script Python"
+        case .r:
+            return "Nouveau script R"
         }
     }
 
@@ -110,6 +124,10 @@ enum NewEditorFileKind {
             return "Crée un nouveau fichier .tex dans le dossier courant"
         case .markdown:
             return "Crée un nouveau fichier .md dans le dossier courant"
+        case .python:
+            return "Crée un nouveau script .py dans le dossier courant"
+        case .r:
+            return "Crée un nouveau script .R dans le dossier courant"
         }
     }
 
@@ -125,6 +143,25 @@ enum NewEditorFileKind {
             """
         case .markdown:
             return ""
+        case .python:
+            return """
+            from pathlib import Path
+            import os
+
+            artifact_dir = Path(os.environ.get("CANOPE_ARTIFACT_DIR", "."))
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+
+            # Écris tes sorties dans artifact_dir, par ex. artifact_dir / "plot.png"
+            print(f"Artifacts: {artifact_dir}")
+            """
+        case .r:
+            return """
+            artifact_dir <- Sys.getenv("CANOPE_ARTIFACT_DIR", ".")
+            dir.create(artifact_dir, recursive = TRUE, showWarnings = FALSE)
+
+            # Écris tes sorties dans artifact_dir, par ex. file.path(artifact_dir, "plot.png")
+            cat("Artifacts:", artifact_dir, "\\n")
+            """
         }
     }
 }
@@ -132,11 +169,17 @@ enum NewEditorFileKind {
 enum EditorDocumentMode {
     case latex
     case markdown
+    case python
+    case r
 
     init(fileURL: URL) {
         switch fileURL.pathExtension.lowercased() {
         case "md":
             self = .markdown
+        case "py":
+            self = .python
+        case "r":
+            self = .r
         default:
             self = .latex
         }
@@ -148,6 +191,10 @@ enum EditorDocumentMode {
             return .green
         case .markdown:
             return .blue
+        case .python:
+            return .orange
+        case .r:
+            return .purple
         }
     }
 
@@ -157,6 +204,10 @@ enum EditorDocumentMode {
             return "LaTeX"
         case .markdown:
             return "Markdown"
+        case .python:
+            return "Python"
+        case .r:
+            return "R"
         }
     }
 
@@ -166,6 +217,8 @@ enum EditorDocumentMode {
             return "PDF compilé"
         case .markdown:
             return "PDF aperçu"
+        case .python, .r:
+            return "Sortie"
         }
     }
 
@@ -175,6 +228,8 @@ enum EditorDocumentMode {
             return "Pas encore compilé"
         case .markdown:
             return "Pas encore rendu"
+        case .python, .r:
+            return "Aucun artefact"
         }
     }
 
@@ -184,6 +239,8 @@ enum EditorDocumentMode {
             return "⌘B pour compiler"
         case .markdown:
             return "Clique sur Rendre le PDF"
+        case .python, .r:
+            return "⌘B pour exécuter le script"
         }
     }
 
@@ -193,6 +250,8 @@ enum EditorDocumentMode {
             return .compiling
         case .markdown:
             return .rendering
+        case .python, .r:
+            return .running
         }
     }
 
@@ -202,6 +261,8 @@ enum EditorDocumentMode {
             return .saved
         case .markdown:
             return .previewReady
+        case .python, .r:
+            return .completed
         }
     }
 
@@ -211,6 +272,35 @@ enum EditorDocumentMode {
             return "Compilation réussie"
         case .markdown:
             return "PDF prêt"
+        case .python, .r:
+            return "Sortie prête"
         }
+    }
+
+    var isRunnableCode: Bool {
+        switch self {
+        case .python, .r:
+            return true
+        case .latex, .markdown:
+            return false
+        }
+    }
+}
+
+enum EditorFileSupport {
+    static let editorExtensions: Set<String> = ["tex", "md", "bib", "txt", "py", "r"]
+    static let previewableArtifactExtensions: Set<String> = ["pdf", "png", "jpg", "jpeg", "svg", "html", "htm"]
+    static let browseableExtensions: Set<String> = editorExtensions.union(["sty", "cls", "eps"]).union(previewableArtifactExtensions)
+
+    static func isEditorDocument(_ url: URL) -> Bool {
+        editorExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    static func isPreviewableArtifact(_ url: URL) -> Bool {
+        previewableArtifactExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    static var importerContentTypes: [UTType] {
+        ["tex", "md", "py", "r"].compactMap { UTType(filenameExtension: $0) }
     }
 }

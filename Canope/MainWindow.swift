@@ -185,7 +185,9 @@ struct MainWindow: View {
         AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
             selectedTab = tab
         }
-        RecentTeXFilesStore.addRecentTeXFile(url.path)
+        if EditorFileSupport.isEditorDocument(url) {
+            RecentTeXFilesStore.addRecentTeXFile(url.path)
+        }
     }
 
     private func persistWorkspaceState() {
@@ -295,7 +297,7 @@ struct MainWindow: View {
                                     .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
                             }
                             .buttonStyle(.plain)
-                            .help("Ouvrir un fichier .tex ou .md (⌘O)")
+                            .help("Ouvrir un fichier .tex, .md, .py ou .R (⌘O)")
                         }
 
                         // Split toggle
@@ -388,10 +390,7 @@ struct MainWindow: View {
         }
         .fileImporter(
             isPresented: $isOpeningTeX,
-            allowedContentTypes: [
-                .init(filenameExtension: "tex")!,
-                .init(filenameExtension: "md")!,
-            ],
+            allowedContentTypes: EditorFileSupport.importerContentTypes,
             allowsMultipleSelection: false
         ) { result in
             if let urls = try? result.get(), let url = urls.first {

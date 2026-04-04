@@ -37,8 +37,7 @@ struct LaTeXLandingView: View {
     var body: some View {
         HSplitView {
             FileBrowserView(rootURL: rootURL) { url in
-                let ext = url.pathExtension.lowercased()
-                if ext == "tex" || ext == "bib" || ext == "txt" || ext == "md" {
+                if EditorFileSupport.isEditorDocument(url) {
                     onOpenTeX(url)
                 }
             }
@@ -50,10 +49,10 @@ struct LaTeXLandingView: View {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
                             .font(.system(size: 48))
                             .foregroundStyle(.tertiary)
-                        Text("Éditeur LaTeX")
+                        Text("Éditeur")
                             .font(.title2)
                             .foregroundStyle(.secondary)
-                        Text("Ouvrez un fichier .tex depuis l'arborescence\nou utilisez le menu + en haut à droite")
+                        Text("Ouvrez un fichier .tex, .md, .py ou .R depuis l'arborescence\nou utilisez le menu + en haut à droite")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                             .multilineTextAlignment(.center)
@@ -99,10 +98,10 @@ struct LaTeXLandingView: View {
                             Image(systemName: "doc.text")
                                 .font(.system(size: 42))
                                 .foregroundStyle(.tertiary)
-                            Text("Aucun fichier .tex ouvert")
+                            Text("Aucun fichier ouvert")
                                 .font(.title3)
                                 .foregroundStyle(.secondary)
-                            Text("Le panneau LaTeX reste vide.\nTu peux quand même consulter les PDFs de référence.")
+                            Text("Le panneau éditeur reste vide.\nTu peux quand même consulter les PDFs de référence.")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                                 .multilineTextAlignment(.center)
