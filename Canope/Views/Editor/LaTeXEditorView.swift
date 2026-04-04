@@ -370,23 +370,8 @@ struct LaTeXEditorView: View {
     @ViewBuilder
     var workAreaPane: some View {
         Group {
-            if isActive && showTerminal && showPDFPreview && showEditorPane && splitLayout == .horizontal {
+            if isActive && showTerminal {
                 horizontalThreePaneLayout
-            } else if isActive && showTerminal {
-                switch panelArrangement {
-                case .terminalEditorContent:
-                    HSplitView {
-                        embeddedTerminalPane
-                        editorAndPDFPane
-                            .layoutPriority(1)
-                    }
-                case .editorContentTerminal, .contentEditorTerminal:
-                    HSplitView {
-                        editorAndPDFPane
-                            .layoutPriority(1)
-                        embeddedTerminalPane
-                    }
-                }
             } else {
                 editorAndPDFPane
             }
@@ -398,9 +383,10 @@ struct LaTeXEditorView: View {
     }
 
     var horizontalThreePaneLayout: some View {
+        let contentVisible = showPDFPreview && showEditorPane
         let roles = threePaneRoles
         return ThreePaneLayoutView(
-            config: .latex(arrangement: panelArrangement),
+            config: .latex(arrangement: panelArrangement, contentVisible: contentVisible),
             leadingWidth: Binding(get: { threePaneLeftWidth }, set: { threePaneLeftWidth = $0 }),
             trailingWidth: Binding(get: { threePaneRightWidth }, set: { threePaneRightWidth = $0 }),
             leading: { threePaneView(for: roles.0) },

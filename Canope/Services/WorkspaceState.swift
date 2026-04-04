@@ -205,7 +205,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         showPDFPreview = try container.decode(Bool.self, forKey: .showPDFPreview)
         showErrors = try container.decode(Bool.self, forKey: .showErrors)
         splitLayout = try container.decode(String.self, forKey: .splitLayout)
-        panelArrangement = try container.decodeIfPresent(PanelArrangement.self, forKey: .panelArrangement) ?? .editorContentTerminal
+        panelArrangement = try container.decodeIfPresent(PanelArrangement.self, forKey: .panelArrangement) ?? .terminalEditorContent
         threePaneLeadingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneLeadingWidth)
         threePaneTrailingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneTrailingWidth)
         editorFontSize = try container.decode(Double.self, forKey: .editorFontSize)

@@ -34,6 +34,7 @@ struct CodeEditorView: View {
     @State private var pollTimer: Timer?
     @State private var sidebarResizeStartWidth: CGFloat?
     @State private var outputResizeStartWidth: CGFloat?
+    @State private var outputDragTranslation: CGFloat?
     @State private var toolbarStatus: ToolbarStatusState = .idle
     @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
     @State private var fileCreationError: String?
@@ -80,11 +81,6 @@ struct CodeEditorView: View {
     private var isOutputVisible: Bool {
         get { workspaceState.showPDFPreview }
         nonmutating set { workspaceState.showPDFPreview = newValue }
-    }
-
-    private var editorTerminalSplitLayout: LaTeXEditorSplitLayout {
-        get { LaTeXEditorSplitLayout(rawValue: workspaceState.splitLayout) ?? .horizontal }
-        nonmutating set { workspaceState.splitLayout = newValue.rawValue }
     }
 
     private var panelArrangement: PanelArrangement {
@@ -191,30 +187,14 @@ struct CodeEditorView: View {
 
     private var workAreaPane: some View {
         Group {
-            if isActive && showTerminal && editorTerminalSplitLayout != .editorOnly {
-                if editorTerminalSplitLayout == .vertical {
-                    VSplitView {
-                        editorAndOutputPane
-                            .layoutPriority(1)
-                        embeddedTerminalPane
-                            .frame(minHeight: 150, idealHeight: 220, maxHeight: .infinity)
-                    }
-                } else if isOutputVisible && outputPlacement == .right {
-                    horizontalThreePaneWorkspace
-                } else {
-                    HSplitView {
-                        editorAndOutputPane
-                            .layoutPriority(1)
-                        embeddedTerminalPane
-                    }
-                }
+            if isActive && showTerminal {
+                horizontalThreePaneWorkspace
             } else {
                 editorAndOutputPane
             }
         }
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: isOutputVisible)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: editorTerminalSplitLayout)
     }
 
     @ViewBuilder
@@ -297,20 +277,32 @@ struct CodeEditorView: View {
         .layoutPriority(1)
     }
 
+    private func resolveOutputRightWidths(totalWidth: CGFloat) -> (editor: CGFloat, output: CGFloat) {
+        let minEditor: CGFloat = 220
+        let minOutput: CGFloat = 200
+        let maxOutput = max(minOutput, totalWidth - minEditor)
+
+        if let snap = outputResizeStartWidth {
+            let dragged = snap - (outputDragTranslation ?? 0)
+            let clamped = min(max(dragged, minOutput), maxOutput)
+            return (max(minEditor, totalWidth - clamped), clamped)
+        }
+        let seeded = primaryOutputWidth ?? (totalWidth / 2)
+        let clamped = min(max(seeded, minOutput), maxOutput)
+        return (max(minEditor, totalWidth - clamped), clamped)
+    }
+
     private var outputRightPlacementPane: some View {
         GeometryReader { proxy in
             let dividerWidth = LaTeXEditorThreePaneSizing.dividerWidth
             let totalWidth = max(0, proxy.size.width - dividerWidth)
-            let minEditor: CGFloat = 220
-            let minOutput: CGFloat = 240
-            let seededOutput = primaryOutputWidth ?? 380
-            let maxOutput = max(minOutput, totalWidth - minEditor)
-            let outputWidth = min(max(seededOutput, minOutput), maxOutput)
-            let editorWidth = max(minEditor, totalWidth - outputWidth)
+            let widths = resolveOutputRightWidths(totalWidth: totalWidth)
+            let minOutput: CGFloat = 200
+            let maxOutput = max(minOutput, totalWidth - 220)
 
             HStack(spacing: 0) {
                 editorPane
-                    .frame(width: editorWidth)
+                    .frame(width: widths.editor)
 
                 AppChromeResizeHandle(
                     width: dividerWidth,
@@ -320,15 +312,16 @@ struct CodeEditorView: View {
                     dragGesture: AnyGesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
-                                let start = outputResizeStartWidth ?? outputWidth
                                 if outputResizeStartWidth == nil {
-                                    outputResizeStartWidth = outputWidth
+                                    outputResizeStartWidth = widths.output
                                 }
-                                let next = start - value.translation.width
-                                primaryOutputWidth = min(max(next, minOutput), maxOutput)
+                                outputDragTranslation = value.translation.width
+                                let start = outputResizeStartWidth ?? widths.output
+                                primaryOutputWidth = min(max(start - value.translation.width, minOutput), maxOutput)
                             }
                             .onEnded { _ in
                                 outputResizeStartWidth = nil
+                                outputDragTranslation = nil
                                 persistDocumentWorkspaceState()
                             }
                     ),
@@ -336,18 +329,16 @@ struct CodeEditorView: View {
                 )
 
                 contentPane
-                    .frame(width: outputWidth)
-            }
-            .transaction { transaction in
-                transaction.animation = nil
+                    .frame(width: widths.output)
             }
         }
+        .transaction { t in t.animation = nil }
     }
 
     private var horizontalThreePaneWorkspace: some View {
         let roles = codeThreePaneRoles
         return ThreePaneLayoutView(
-            config: .code(arrangement: panelArrangement),
+            config: .code(arrangement: panelArrangement, contentVisible: isOutputVisible),
             leadingWidth: Binding(get: { leadingPaneWidth }, set: { leadingPaneWidth = $0 }),
             trailingWidth: Binding(get: { trailingPaneWidth }, set: { trailingPaneWidth = $0 }),
             leading: { codeThreePaneView(for: roles.0) },
@@ -614,6 +605,154 @@ struct CodeEditorView: View {
         referencePDFDocumentDidChange(id: id)
     }
 
+    // MARK: - Reference Toolbar
+
+    private var activeReferencePDFID: UUID? {
+        if case .reference(let id) = selectedContentTab { return id }
+        return nil
+    }
+
+    private var activeReferencePDFState: ReferencePDFUIState? {
+        guard let id = activeReferencePDFID else { return nil }
+        return workspaceState.referencePDFUIStates[id]
+    }
+
+    private var activeReferencePDFDocument: PDFDocument? {
+        guard let id = activeReferencePDFID else { return nil }
+        return workspaceState.referencePDFs[id]
+    }
+
+    private var activeReferenceAnnotationCount: Int {
+        guard let document = activeReferencePDFDocument else { return 0 }
+        return (0..<document.pageCount).reduce(0) { count, pageIndex in
+            guard let page = document.page(at: pageIndex) else { return count }
+            return count + page.annotations.filter { $0.type != "Link" && $0.type != "Widget" }.count
+        }
+    }
+
+    private func deleteSelectedReferenceAnnotation() {
+        guard let id = activeReferencePDFID,
+              let annotation = activeReferencePDFState?.selectedAnnotation,
+              let page = annotation.page else { return }
+        let state = workspaceState.referencePDFUIStates[id]
+        let wasSelected = state?.selectedAnnotation === annotation
+        state?.pushUndoAction { [weak state] in
+            page.addAnnotation(annotation)
+            if wasSelected { state?.selectedAnnotation = annotation }
+            state?.annotationRefreshToken = UUID()
+            referencePDFDocumentDidChange(id: id)
+        }
+        if wasSelected { state?.selectedAnnotation = nil }
+        page.removeAnnotation(annotation)
+        state?.annotationRefreshToken = UUID()
+        referencePDFDocumentDidChange(id: id)
+    }
+
+    private func deleteAllReferenceAnnotations() {
+        guard let id = activeReferencePDFID,
+              let document = activeReferencePDFDocument else { return }
+        var removed: [(page: PDFPage, annotation: PDFAnnotation)] = []
+        for i in 0..<document.pageCount {
+            guard let page = document.page(at: i) else { continue }
+            for ann in page.annotations where ann.type != "Link" && ann.type != "Widget" {
+                removed.append((page, ann))
+                page.removeAnnotation(ann)
+            }
+        }
+        workspaceState.referencePDFUIStates[id]?.pushUndoAction {
+            for (page, ann) in removed { page.addAnnotation(ann) }
+            workspaceState.referencePDFUIStates[id]?.annotationRefreshToken = UUID()
+            referencePDFDocumentDidChange(id: id)
+        }
+        activeReferencePDFState?.selectedAnnotation = nil
+        workspaceState.referencePDFUIStates[id]?.annotationRefreshToken = UUID()
+        referencePDFDocumentDidChange(id: id)
+    }
+
+    private func changeSelectedReferenceAnnotationColor(_ color: NSColor) {
+        guard let id = activeReferencePDFID,
+              let state = activeReferencePDFState,
+              let annotation = state.selectedAnnotation else { return }
+        let prevCurrent = state.currentColor
+        let prevAnnotation = annotation.isTextBoxAnnotation ? annotation.textBoxFillColor : annotation.color
+        state.pushUndoAction { [weak state] in
+            guard let state else { return }
+            state.currentColor = prevCurrent
+            AnnotationService.applyColor(prevAnnotation, to: annotation)
+            state.selectedAnnotation = annotation
+            state.annotationRefreshToken = UUID()
+            referencePDFDocumentDidChange(id: id)
+        }
+        state.currentColor = color
+        state.selectedAnnotation = annotation
+        AnnotationService.applyColor(color, to: annotation)
+        referencePDFDocumentDidChange(id: id)
+    }
+
+    private func saveCurrentReferencePDF() {
+        guard let id = activeReferencePDFID else { return }
+        saveReferencePDF(id: id)
+    }
+
+    private func refreshCurrentReference() {
+        guard let id = activeReferencePDFID else { return }
+        reloadReferencePDFDocument(id: id)
+    }
+
+    private var activeReferenceToolbarView: some View {
+        ActiveReferenceToolbarView(
+            referenceState: activeReferencePDFState,
+            annotationCount: activeReferenceAnnotationCount,
+            isAnnotationSidebarVisible: false,
+            activeMarkdownFileName: nil,
+            companionExportFileName: activeReferenceCompanionExportFileName,
+            onChangeSelectedColor: changeSelectedReferenceAnnotationColor,
+            onFitToWidth: { fitToWidthTrigger.toggle() },
+            onRefresh: refreshCurrentReference,
+            onSave: saveCurrentReferencePDF,
+            onExportToActiveMarkdown: nil,
+            onExportToCompanionMarkdown: exportActiveReferencePDFAnnotationsToCompanionMarkdown,
+            onExportToChosenMarkdownFile: chooseActiveReferencePDFAnnotationsMarkdownDestination,
+            onDeleteSelected: deleteSelectedReferenceAnnotation,
+            onDeleteAll: deleteAllReferenceAnnotations,
+            onToggleAnnotations: {}
+        )
+    }
+
+    private var activeReferenceCompanionExportFileName: String {
+        guard let id = activeReferencePDFID,
+              let paper = paperFor(id) else { return "annotations.md" }
+        return PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL).lastPathComponent
+    }
+
+    private func exportActiveReferencePDFAnnotationsToCompanionMarkdown() {
+        guard let id = activeReferencePDFID,
+              let document = workspaceState.referencePDFs[id],
+              let paper = paperFor(id) else { return }
+        let companionURL = PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL)
+        try? PDFAnnotationMarkdownExporter.export(
+            document: document,
+            source: .reference(pdfURL: paper.fileURL),
+            target: .companionFile(companionURL)
+        )
+    }
+
+    private func chooseActiveReferencePDFAnnotationsMarkdownDestination() {
+        guard let id = activeReferencePDFID,
+              let document = workspaceState.referencePDFs[id],
+              let paper = paperFor(id) else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
+        panel.nameFieldStringValue = PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL).lastPathComponent
+        panel.directoryURL = paper.fileURL.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? PDFAnnotationMarkdownExporter.export(
+            document: document,
+            source: .reference(pdfURL: paper.fileURL),
+            target: .companionFile(url)
+        )
+    }
+
     private var codeThreePaneRoles: (CodeThreePaneRole, CodeThreePaneRole, CodeThreePaneRole) {
         switch panelArrangement {
         case .editorContentTerminal:
@@ -788,9 +927,12 @@ struct CodeEditorView: View {
                 .help("Ouvrir un article de référence")
             }
 
+            activeReferenceToolbarView
+
             Spacer(minLength: 8)
 
-            toolbarCluster(zone: .trailing, title: "Vue") {
+            // Pane toggles
+            toolbarCluster(zone: .trailing, title: "Panneaux") {
                 Button(action: {
                     AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
                         showSidebar.toggle()
@@ -801,76 +943,36 @@ struct CodeEditorView: View {
                         .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Fichiers")
 
                 Button(action: {
                     AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
                         isOutputVisible.toggle()
                     }
                 }) {
-                    Image(systemName: "chart.xyaxis.line")
+                    Image(systemName: isOutputVisible ? "sidebar.trailing" : "sidebar.trailing")
+                        .symbolVariant(isOutputVisible ? .none : .slash)
                         .foregroundStyle(isOutputVisible ? AppChromePalette.info : .secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Output / PDF")
 
-                Menu {
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            outputPlacement = .right
-                        }
-                    } label: {
-                        Label("Output à droite", systemImage: "rectangle.split.2x1")
-                        if outputPlacement == .right { Image(systemName: "checkmark") }
+                Button(action: {
+                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                        showTerminal.toggle()
                     }
-
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            outputPlacement = .bottom
-                        }
-                    } label: {
-                        Label("Output en bas", systemImage: "rectangle.split.1x2")
-                        if outputPlacement == .bottom { Image(systemName: "checkmark") }
-                    }
-                } label: {
-                    Label("Output", systemImage: outputPlacement == .right ? "rectangle.split.2x1" : "rectangle.split.1x2")
-                        .font(.caption2.weight(.semibold))
+                }) {
+                    Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                        .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Terminal")
+            }
 
+            // Layout menu (regroupe toutes les options de disposition)
+            toolbarCluster(zone: .trailing, title: "Disposition") {
                 Menu {
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            editorTerminalSplitLayout = .horizontal
-                        }
-                    } label: {
-                        Label("Disposition horizontale", systemImage: "rectangle.split.2x1")
-                        if editorTerminalSplitLayout == .horizontal { Image(systemName: "checkmark") }
-                    }
-
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            editorTerminalSplitLayout = .vertical
-                        }
-                    } label: {
-                        Label("Terminal en bas", systemImage: "rectangle.split.1x2")
-                        if editorTerminalSplitLayout == .vertical { Image(systemName: "checkmark") }
-                    }
-
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            editorTerminalSplitLayout = .editorOnly
-                        }
-                    } label: {
-                        Label("Sans terminal", systemImage: "doc.text")
-                        if editorTerminalSplitLayout == .editorOnly { Image(systemName: "checkmark") }
-                    }
-                } label: {
-                    Label("Disposition", systemImage: "slider.horizontal.3")
-                        .font(.caption2.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-
-                if showTerminal && isOutputVisible && outputPlacement == .right && editorTerminalSplitLayout == .horizontal {
-                    Menu {
+                    Section("Ordre des panneaux") {
                         ForEach(PanelArrangement.allCases, id: \.self) { arrangement in
                             Button {
                                 AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
@@ -885,23 +987,32 @@ struct CodeEditorView: View {
                                 }
                             }
                         }
-                    } label: {
-                        Label("Ordre", systemImage: "square.split.3x1")
-                            .font(.caption2.weight(.semibold))
                     }
-                    .buttonStyle(.plain)
-                    .help("Ordre des panneaux")
-                }
 
-                Button(action: {
-                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        showTerminal.toggle()
+                    Section("Output") {
+                        Button {
+                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                                outputPlacement = .right
+                            }
+                        } label: {
+                            Label("Output à droite", systemImage: "rectangle.split.2x1")
+                            if outputPlacement == .right { Image(systemName: "checkmark") }
+                        }
+
+                        Button {
+                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                                outputPlacement = .bottom
+                            }
+                        } label: {
+                            Label("Output en bas", systemImage: "rectangle.split.1x2")
+                            if outputPlacement == .bottom { Image(systemName: "checkmark") }
+                        }
                     }
-                }) {
-                    Image(systemName: showTerminal ? "terminal.fill" : "terminal")
-                        .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
+                } label: {
+                    Image(systemName: "rectangle.3.group")
                 }
                 .buttonStyle(.plain)
+                .help("Disposition des panneaux")
             }
 
             toolbarCluster(zone: .trailing, title: "Ed.") {
