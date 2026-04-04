@@ -1,9 +1,54 @@
 import AppKit
 import PDFKit
+import SwiftUI
+@preconcurrency import SwiftTerm
 import XCTest
 @testable import Canope
 
 final class ServiceParsingTests: XCTestCase {
+    @MainActor
+    private final class TerminalAppearanceTargetSpy: TerminalAppearanceApplying {
+        var font: NSFont = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        var nativeBackgroundColor: NSColor = .black
+        var nativeForegroundColor: NSColor = .white
+        var selectedTextBackgroundColor: NSColor = .clear
+        var caretColor: NSColor = .white
+        var caretTextColor: NSColor?
+        var useBrightColors = true
+        var installedColors: [SwiftTerm.Color] = []
+        var paletteStrategy: Ansi256PaletteStrategy?
+        var scrollbackLines: Int?
+        var cursorStyle: CursorStyle?
+        var baseBackground: SwiftTerm.Color?
+        var baseForeground: SwiftTerm.Color?
+        var scheduledCursorWarmupCount = 0
+
+        func installColors(_ colors: [SwiftTerm.Color]) {
+            installedColors = colors
+        }
+
+        func setAnsi256PaletteStrategy(_ strategy: Ansi256PaletteStrategy) {
+            paletteStrategy = strategy
+        }
+
+        func setTerminalBaseColors(background: SwiftTerm.Color, foreground: SwiftTerm.Color) {
+            baseBackground = background
+            baseForeground = foreground
+        }
+
+        func setScrollbackLines(_ lines: Int?) {
+            scrollbackLines = lines
+        }
+
+        func applyCursorStyle(_ style: CursorStyle) {
+            cursorStyle = style
+        }
+
+        func schedulePreferredCursorWarmup() {
+            scheduledCursorWarmupCount += 1
+        }
+    }
+
     private func assertColorsEqual(_ lhs: NSColor?, _ rhs: NSColor?, file: StaticString = #filePath, line: UInt = #line) {
         guard let lhs, let rhs else {
             return XCTAssertEqual(lhs != nil, rhs != nil, file: file, line: line)
@@ -599,5 +644,96 @@ final class ServiceParsingTests: XCTestCase {
         AnnotationService.applyColor(color, to: annotation)
 
         assertColorsEqual(annotation.textBoxFillColor, AnnotationColor.annotationColor(color, for: "FreeText"))
+    }
+
+    func testTerminalAppearanceStateDefaultsMatchGhosttyBaseline() {
+        let state = TerminalAppearanceState()
+
+        XCTAssertEqual(state.fontFamily, "SF Mono")
+        XCTAssertEqual(state.fontSize, 14)
+        XCTAssertEqual(state.cursorStyle, .blinkBar)
+        XCTAssertEqual(state.darkThemePresetID, TerminalThemePreset.ghosttyDefaultDark.id)
+        XCTAssertEqual(state.lightThemePresetID, TerminalThemePreset.builtinTangoLight.id)
+        XCTAssertEqual(state.dividerColorDark, "#3f3f46")
+        XCTAssertEqual(state.dividerColorLight, "#d4d4d8")
+        XCTAssertEqual(state.inactivePaneOpacity, 0.8)
+        XCTAssertEqual(state.activePaneOpacity, 1)
+        XCTAssertEqual(state.dividerThickness, 3)
+        XCTAssertEqual(state.terminalPadding, 4)
+    }
+
+    func testTerminalAppearanceStateCodableRoundTrip() throws {
+        let state = TerminalAppearanceState(
+            fontFamily: "Menlo",
+            fontSize: 15,
+            cursorStyle: .steadyBlock,
+            useBrightColors: false,
+            darkThemePresetID: TerminalThemePreset.canopeClassic.id,
+            lightThemePresetID: TerminalThemePreset.builtinTangoLight.id,
+            useSeparateLightTheme: true,
+            dividerColorDark: "#101010",
+            dividerColorLight: "#efefef",
+            inactivePaneOpacity: 0.65,
+            activePaneOpacity: 0.95,
+            dividerThickness: 5,
+            terminalPadding: 6,
+            scrollbackLines: 12000
+        )
+
+        let encoded = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(TerminalAppearanceState.self, from: encoded)
+
+        XCTAssertEqual(decoded, state)
+    }
+
+    func testTerminalAppearanceResolvedThemeUsesSeparateLightPresetWhenEnabled() {
+        var state = TerminalAppearanceState()
+        state.useSeparateLightTheme = true
+        state.lightThemePresetID = TerminalThemePreset.builtinTangoLight.id
+        state.darkThemePresetID = TerminalThemePreset.canopeClassic.id
+
+        XCTAssertEqual(state.resolvedThemePresetID(for: .light), TerminalThemePreset.builtinTangoLight.id)
+        XCTAssertEqual(state.resolvedThemePresetID(for: .dark), TerminalThemePreset.canopeClassic.id)
+    }
+
+    func testGhosttyPresetUsesExpectedAnsiColors() {
+        let preset = TerminalThemePreset.ghosttyDefaultDark
+
+        XCTAssertEqual(preset.ansiColors.count, 16)
+        assertColorsEqual(preset.background, NSColor(hex: "#282c34", fallback: .black))
+        assertColorsEqual(preset.selectionBackground, NSColor(hex: "#3e4451", fallback: .black))
+        assertColorsEqual(preset.ansiColors[1], NSColor(hex: "#cc6666", fallback: .red))
+        assertColorsEqual(preset.ansiColors[10], NSColor(hex: "#b9ca4a", fallback: .green))
+        assertColorsEqual(preset.ansiColors[15], NSColor(hex: "#eaeaea", fallback: .white))
+    }
+
+    @MainActor
+    func testTerminalAppearanceApplicatorConfiguresTerminalTarget() {
+        let spy = TerminalAppearanceTargetSpy()
+        var state = TerminalAppearanceState()
+        state.fontFamily = "Menlo"
+        state.fontSize = 15
+        state.cursorStyle = .steadyUnderline
+        state.useBrightColors = false
+        state.scrollbackLines = 9000
+
+        TerminalAppearanceApplicator.apply(appearance: state, colorScheme: .dark, to: spy)
+
+        XCTAssertEqual(spy.font.pointSize, 15, accuracy: 0.1)
+        XCTAssertEqual(spy.paletteStrategy, .base16Lab)
+        XCTAssertFalse(spy.useBrightColors)
+        XCTAssertEqual(spy.scrollbackLines, 9000)
+        XCTAssertEqual(spy.cursorStyle, .steadyUnderline)
+        XCTAssertEqual(spy.installedColors.count, 16)
+        XCTAssertEqual(spy.scheduledCursorWarmupCount, 1)
+        assertColorsEqual(spy.nativeBackgroundColor, TerminalThemePreset.ghosttyDefaultDark.background)
+        assertColorsEqual(spy.caretColor, TerminalThemePreset.ghosttyDefaultDark.cursor)
+    }
+
+    func testAppChromePaletteTabFillTokensPrioritizeSelectionThenHover() {
+        XCTAssertEqual(AppChromePalette.tabFillToken(isSelected: false, isHovered: false), .idle)
+        XCTAssertEqual(AppChromePalette.tabFillToken(isSelected: false, isHovered: true), .hovered)
+        XCTAssertEqual(AppChromePalette.tabFillToken(isSelected: true, isHovered: false), .selected)
+        XCTAssertEqual(AppChromePalette.tabFillToken(isSelected: true, isHovered: true), .selected)
     }
 }

@@ -37,6 +37,7 @@ private final class SplitViewGrabDelegate: NSObject, NSSplitViewDelegate {
 
 struct MainWindow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
     @Query private var allPapers: [Paper]
     @State private var openTabs: [TabItem] = [.library]
     @State private var selectedTab: TabItem = .library
@@ -467,7 +468,11 @@ struct MainWindow: View {
             }
         }
         .onAppear {
-            restoreWorkspaceStateIfNeeded()
+            if !AppRuntime.isRunningTests {
+                restoreWorkspaceStateIfNeeded()
+            } else {
+                didRestoreWorkspace = true
+            }
             makeSplitersEasyToGrab()
         }
         .onChange(of: selectedTab) {
@@ -498,6 +503,9 @@ struct MainWindow: View {
             if selectedTab != .library {
                 isImportingPDF = false
             }
+        }
+        .sheet(isPresented: $terminalAppearanceStore.isPresentingSettings) {
+            TerminalAppearanceSheet(store: terminalAppearanceStore)
         }
         .keyboardShortcut("o", modifiers: .command)
     }
@@ -663,15 +671,11 @@ struct SectionTab: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
-            .background(
-                isSelected ? AppChromePalette.tabSelectedFill
-                : isHovered ? AppChromePalette.tabHoverFill
-                : Color.clear
-            )
+            .background(AppChromePalette.tabFill(isSelected: isSelected, isHovered: isHovered, role: .section))
             .overlay(alignment: .bottom) {
                 if isSelected {
                     Rectangle()
-                        .fill(AppChromePalette.subtleUnderline)
+                        .fill(AppChromePalette.tabIndicator(for: .section))
                         .frame(height: AppChromeMetrics.tabIndicatorHeight)
                         .matchedGeometryEffect(id: "section-tab-indicator", in: indicatorNamespace)
                 }
@@ -727,15 +731,11 @@ struct TabButton: View {
         }
         .padding(.horizontal, 8)
         .frame(maxHeight: .infinity)
-        .background(
-            isSelected ? AppChromePalette.selectedAccentFill
-            : isHovered ? AppChromePalette.tabHoverFill
-            : Color.clear
-        )
+        .background(AppChromePalette.tabFill(isSelected: isSelected, isHovered: isHovered, role: .document))
         .overlay(alignment: .bottom) {
             if isSelected {
                 Rectangle()
-                    .fill(AppChromePalette.selectedAccent)
+                    .fill(AppChromePalette.tabIndicator(for: .document))
                     .frame(height: AppChromeMetrics.tabIndicatorHeight)
                     .matchedGeometryEffect(id: "document-tab-indicator", in: indicatorNamespace)
             }
@@ -971,15 +971,11 @@ struct LaTeXEditorContainer: View {
                         }
                         .padding(.horizontal, 10)
                         .frame(height: AppChromeMetrics.tabBarHeight)
-                        .background(
-                            isCurrent ? AppChromePalette.tabSelectedFill
-                            : isHov ? AppChromePalette.tabHoverFill
-                            : Color.clear
-                        )
+                        .background(AppChromePalette.tabFill(isSelected: isCurrent, isHovered: isHov, role: .terminal))
                         .overlay(alignment: .bottom) {
                             if isCurrent {
                                 Rectangle()
-                                    .fill(Color.green.opacity(0.6))
+                                    .fill(AppChromePalette.tabIndicator(for: .terminal))
                                     .frame(height: AppChromeMetrics.tabIndicatorHeight)
                                     .matchedGeometryEffect(id: "editor-tab-indicator", in: editorTabIndicatorNamespace)
                             }

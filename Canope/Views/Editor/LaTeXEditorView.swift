@@ -12,6 +12,7 @@ extension Notification.Name {
 
 struct LaTeXEditorView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
     private static let threePaneCoordinateSpace = "LaTeXThreePaneLayout"
 
     private enum SidebarSizing {
@@ -539,7 +540,9 @@ struct LaTeXEditorView: View {
             }
         }
         .onAppear {
-            ClaudeIDEBridgeService.shared.startIfNeeded()
+            if !AppRuntime.isRunningTests {
+                ClaudeIDEBridgeService.shared.startIfNeeded()
+            }
             loadFile()
             loadExistingPDF()
             if isActive {
@@ -1563,11 +1566,11 @@ struct LaTeXEditorView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .background(isSelected ? AppChromePalette.selectedAccentFill : Color.clear)
+        .background(AppChromePalette.tabFill(isSelected: isSelected, isHovered: false, role: .reference))
         .overlay(alignment: .bottom) {
             if isSelected {
                 Rectangle()
-                    .fill(AppChromePalette.selectedAccent)
+                    .fill(AppChromePalette.tabIndicator(for: .reference))
                     .frame(height: AppChromeMetrics.tabIndicatorHeight)
                     .matchedGeometryEffect(id: "pdf-tab-indicator", in: pdfTabIndicatorNamespace)
             }
@@ -1834,35 +1837,12 @@ struct LaTeXEditorView: View {
                 .buttonStyle(.plain)
                 .help("Nouveau terminal")
 
-                Menu {
-                    ForEach(0..<TerminalPanel.themes.count, id: \.self) { index in
-                        Button {
-                            applyTerminalTheme(index)
-                        } label: {
-                            Text(TerminalPanel.themes[index].name)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "paintpalette")
+                Button(action: terminalAppearanceStore.presentSettings) {
+                    Image(systemName: "slider.horizontal.3")
                         .foregroundStyle(.green)
                 }
                 .buttonStyle(.plain)
-                .help("Thème du terminal")
-
-                Menu {
-                    ForEach(TerminalPanel.fontSizes, id: \.self) { size in
-                        Button {
-                            applyTerminalFontSize(size)
-                        } label: {
-                            Text("\(size) pt")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "textformat.size")
-                        .foregroundStyle(.green)
-                }
-                .buttonStyle(.plain)
-                .help("Taille de la police du terminal")
+                .help("Réglages du terminal")
             }
         }
     }
@@ -2129,16 +2109,6 @@ struct LaTeXEditorView: View {
 
     private func addTerminalTab() {
         NotificationCenter.default.post(name: .canopeTerminalAddTab, object: nil)
-    }
-
-    private func applyTerminalTheme(_ index: Int) {
-        let userInfo = ["themeIndex": index]
-        NotificationCenter.default.post(name: .canopeTerminalApplyTheme, object: nil, userInfo: userInfo)
-    }
-
-    private func applyTerminalFontSize(_ size: Int) {
-        let userInfo = ["fontSize": CGFloat(size)]
-        NotificationCenter.default.post(name: .canopeTerminalApplyFontSize, object: nil, userInfo: userInfo)
     }
 
     private func annotationPrompt(for resolved: ResolvedLaTeXAnnotation) -> String {

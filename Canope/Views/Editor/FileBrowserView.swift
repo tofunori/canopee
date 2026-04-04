@@ -416,6 +416,10 @@ struct FileBrowserView: View {
 
     private func refresh() {
         childDirectoryCache.removeAll()
+        guard !AppRuntime.isRunningTests else {
+            items = []
+            return
+        }
         items = scanDirectory(currentDir)
     }
 

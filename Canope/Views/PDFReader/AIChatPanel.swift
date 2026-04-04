@@ -6,16 +6,373 @@ import MetalKit
 extension Notification.Name {
     static let canopeSendPromptToTerminal = Notification.Name("canopeSendPromptToTerminal")
     static let canopeTerminalAddTab = Notification.Name("canopeTerminalAddTab")
-    static let canopeTerminalApplyTheme = Notification.Name("canopeTerminalApplyTheme")
-    static let canopeTerminalApplyFontSize = Notification.Name("canopeTerminalApplyFontSize")
 }
 
-private let preferredTerminalCursorStyle: CursorStyle = .blinkBar
+private let defaultTerminalCursorStyle: CursorStyle = .blinkBar
 
-private func makeTerminalFont(size: CGFloat) -> NSFont {
-    NSFont(name: "Menlo", size: size)
-        ?? NSFont.userFixedPitchFont(ofSize: size)
+private func makeTerminalFont(familyName: String, size: CGFloat) -> NSFont {
+    let candidates: [String]
+    switch familyName.lowercased() {
+    case "sf mono", "sfmono", "sf mono regular":
+        candidates = ["SF Mono", "SFMono-Regular", "SF Mono Regular", "Menlo"]
+    case "menlo":
+        candidates = ["Menlo"]
+    case "monaco":
+        candidates = ["Monaco", "Menlo"]
+    default:
+        candidates = [familyName, "SF Mono", "SFMono-Regular", "Menlo"]
+    }
+
+    for name in candidates {
+        if let font = NSFont(name: name, size: size) {
+            return font
+        }
+    }
+
+    return NSFont.userFixedPitchFont(ofSize: size)
         ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+}
+
+private enum TerminalAppearanceCoding {
+    static let defaultsKey = "canope.terminalAppearance.v1"
+}
+
+enum TerminalCursorShape: String, Codable, CaseIterable, Equatable, Identifiable {
+    case bar
+    case block
+    case underline
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .bar:
+            return "Barre"
+        case .block:
+            return "Bloc"
+        case .underline:
+            return "Souligné"
+        }
+    }
+}
+
+enum TerminalCursorStyleOption: String, Codable, CaseIterable, Equatable, Identifiable {
+    case blinkBar
+    case steadyBar
+    case blinkBlock
+    case steadyBlock
+    case blinkUnderline
+    case steadyUnderline
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self.shape {
+        case .bar:
+            return isBlinking ? "Barre clignotante" : "Barre fixe"
+        case .block:
+            return isBlinking ? "Bloc clignotant" : "Bloc fixe"
+        case .underline:
+            return isBlinking ? "Souligné clignotant" : "Souligné fixe"
+        }
+    }
+
+    var shape: TerminalCursorShape {
+        switch self {
+        case .blinkBar, .steadyBar:
+            return .bar
+        case .blinkBlock, .steadyBlock:
+            return .block
+        case .blinkUnderline, .steadyUnderline:
+            return .underline
+        }
+    }
+
+    var isBlinking: Bool {
+        switch self {
+        case .blinkBar, .blinkBlock, .blinkUnderline:
+            return true
+        case .steadyBar, .steadyBlock, .steadyUnderline:
+            return false
+        }
+    }
+
+    func withShape(_ shape: TerminalCursorShape) -> TerminalCursorStyleOption {
+        switch (shape, isBlinking) {
+        case (.bar, true):
+            return .blinkBar
+        case (.bar, false):
+            return .steadyBar
+        case (.block, true):
+            return .blinkBlock
+        case (.block, false):
+            return .steadyBlock
+        case (.underline, true):
+            return .blinkUnderline
+        case (.underline, false):
+            return .steadyUnderline
+        }
+    }
+
+    func withBlinking(_ blinking: Bool) -> TerminalCursorStyleOption {
+        switch (shape, blinking) {
+        case (.bar, true):
+            return .blinkBar
+        case (.bar, false):
+            return .steadyBar
+        case (.block, true):
+            return .blinkBlock
+        case (.block, false):
+            return .steadyBlock
+        case (.underline, true):
+            return .blinkUnderline
+        case (.underline, false):
+            return .steadyUnderline
+        }
+    }
+
+    var swiftTermValue: CursorStyle {
+        CursorStyle.from(string: rawValue) ?? defaultTerminalCursorStyle
+    }
+}
+
+struct TerminalThemePreset: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let background: NSColor
+    let foreground: NSColor
+    let cursor: NSColor
+    let cursorText: NSColor
+    let selectionBackground: NSColor
+    let ansiColors: [NSColor]
+
+    static let ghosttyDefaultDark = TerminalThemePreset(
+        id: "ghostty-default-dark",
+        name: "Ghostty Default Dark",
+        background: NSColor(hex: "#282c34", fallback: NSColor(calibratedWhite: 0.16, alpha: 1)),
+        foreground: NSColor(hex: "#ffffff", fallback: .white),
+        cursor: NSColor(hex: "#ffffff", fallback: .white),
+        cursorText: NSColor(hex: "#282c34", fallback: NSColor(calibratedWhite: 0.16, alpha: 1)),
+        selectionBackground: NSColor(hex: "#3e4451", fallback: NSColor(calibratedWhite: 0.28, alpha: 1)),
+        ansiColors: [
+            "#1d1f21", "#cc6666", "#b5bd68", "#f0c674",
+            "#81a2be", "#b294bb", "#8abeb7", "#c5c8c6",
+            "#666666", "#d54e53", "#b9ca4a", "#e7c547",
+            "#7aa6da", "#c397d8", "#70c0b1", "#eaeaea"
+        ].map { NSColor(hex: $0, fallback: .white) }
+    )
+
+    static let builtinTangoLight = TerminalThemePreset(
+        id: "builtin-tango-light",
+        name: "Builtin Tango Light",
+        background: NSColor(hex: "#ffffff", fallback: .white),
+        foreground: NSColor(hex: "#2e3434", fallback: NSColor(calibratedWhite: 0.18, alpha: 1)),
+        cursor: NSColor(hex: "#2e3434", fallback: NSColor(calibratedWhite: 0.18, alpha: 1)),
+        cursorText: NSColor(hex: "#ffffff", fallback: .white),
+        selectionBackground: NSColor(hex: "#accef7", fallback: NSColor.systemBlue.withAlphaComponent(0.25)),
+        ansiColors: [
+            "#2e3436", "#cc0000", "#4e9a06", "#c4a000",
+            "#3465a4", "#75507b", "#06989a", "#d3d7cf",
+            "#555753", "#ef2929", "#8ae234", "#fce94f",
+            "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec"
+        ].map { NSColor(hex: $0, fallback: .black) }
+    )
+
+    static let canopeClassic = TerminalThemePreset(
+        id: "canope-classic",
+        name: "Canope Classic",
+        background: NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1),
+        foreground: NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1),
+        cursor: NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1),
+        cursorText: NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1),
+        selectionBackground: NSColor(red: 0.184, green: 0.176, blue: 0.235, alpha: 1),
+        ansiColors: [
+            "#16131b", "#df6b79", "#8ed48b", "#f0d48a",
+            "#82b1ff", "#c792ea", "#80cbc4", "#eceff4",
+            "#4c566a", "#ff7a90", "#9ce59e", "#ffe39a",
+            "#97c3ff", "#d6a4ff", "#9be0db", "#ffffff"
+        ].map { NSColor(hex: $0, fallback: .white) }
+    )
+
+    static let all: [TerminalThemePreset] = [
+        .ghosttyDefaultDark,
+        .builtinTangoLight,
+        .canopeClassic
+    ]
+
+    static func preset(id: String) -> TerminalThemePreset {
+        all.first(where: { $0.id == id }) ?? .ghosttyDefaultDark
+    }
+}
+
+struct TerminalAppearanceState: Codable, Equatable {
+    var fontFamily: String = "SF Mono"
+    var fontSize: Double = 14
+    var cursorStyle: TerminalCursorStyleOption = .blinkBar
+    var useBrightColors: Bool = true
+    var darkThemePresetID: String = TerminalThemePreset.ghosttyDefaultDark.id
+    var lightThemePresetID: String = TerminalThemePreset.builtinTangoLight.id
+    var useSeparateLightTheme: Bool = false
+    var dividerColorDark: String = "#3f3f46"
+    var dividerColorLight: String = "#d4d4d8"
+    var inactivePaneOpacity: Double = 0.8
+    var activePaneOpacity: Double = 1.0
+    var dividerThickness: Double = 3
+    var terminalPadding: Double = 4
+    var scrollbackLines: Int = 10_000
+
+    func resolvedThemePreset(for colorScheme: ColorScheme) -> TerminalThemePreset {
+        if colorScheme == .light && useSeparateLightTheme {
+            return .preset(id: lightThemePresetID)
+        }
+        return .preset(id: darkThemePresetID)
+    }
+
+    func resolvedThemePresetID(for colorScheme: ColorScheme) -> String {
+        resolvedThemePreset(for: colorScheme).id
+    }
+
+    func resolvedDividerColor(for colorScheme: ColorScheme) -> NSColor {
+        let hex = colorScheme == .light && useSeparateLightTheme ? dividerColorLight : dividerColorDark
+        let fallback = colorScheme == .light ? NSColor(calibratedWhite: 0.84, alpha: 1) : NSColor(calibratedWhite: 0.25, alpha: 1)
+        return NSColor(hex: hex, fallback: fallback)
+    }
+}
+
+@MainActor
+final class TerminalAppearanceStore: ObservableObject {
+    static let shared = TerminalAppearanceStore()
+
+    @Published var appearance: TerminalAppearanceState {
+        didSet {
+            persist()
+        }
+    }
+
+    @Published var isPresentingSettings = false
+
+    private init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+
+        if let data = defaults.data(forKey: TerminalAppearanceCoding.defaultsKey),
+           let decoded = try? JSONDecoder().decode(TerminalAppearanceState.self, from: data) {
+            appearance = decoded
+        } else {
+            appearance = TerminalAppearanceState()
+        }
+    }
+
+    func presentSettings() {
+        isPresentingSettings = true
+    }
+
+    func binding<Value>(for keyPath: WritableKeyPath<TerminalAppearanceState, Value>) -> Binding<Value> {
+        Binding(
+            get: { self.appearance[keyPath: keyPath] },
+            set: { newValue in
+                var updated = self.appearance
+                updated[keyPath: keyPath] = newValue
+                self.appearance = updated
+            }
+        )
+    }
+
+    private let defaults: UserDefaults
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(appearance) else { return }
+        defaults.set(data, forKey: TerminalAppearanceCoding.defaultsKey)
+    }
+}
+
+@MainActor
+protocol TerminalAppearanceApplying: AnyObject {
+    var font: NSFont { get set }
+    var nativeBackgroundColor: NSColor { get set }
+    var nativeForegroundColor: NSColor { get set }
+    var selectedTextBackgroundColor: NSColor { get set }
+    var caretColor: NSColor { get set }
+    var caretTextColor: NSColor? { get set }
+    var useBrightColors: Bool { get set }
+
+    func installColors(_ colors: [SwiftTerm.Color])
+    func setAnsi256PaletteStrategy(_ strategy: Ansi256PaletteStrategy)
+    func setTerminalBaseColors(background: SwiftTerm.Color, foreground: SwiftTerm.Color)
+    func setScrollbackLines(_ lines: Int?)
+    func applyCursorStyle(_ style: CursorStyle)
+    func schedulePreferredCursorWarmup()
+}
+
+enum TerminalAppearanceApplicator {
+    @MainActor
+    static func apply(
+        appearance: TerminalAppearanceState,
+        colorScheme: ColorScheme,
+        to target: TerminalAppearanceApplying
+    ) {
+        let theme = appearance.resolvedThemePreset(for: colorScheme)
+        let font = makeTerminalFont(familyName: appearance.fontFamily, size: CGFloat(appearance.fontSize))
+        let terminalBackground = theme.background.swiftTermColor
+        let terminalForeground = theme.foreground.swiftTermColor
+
+        target.font = font
+        target.nativeBackgroundColor = theme.background
+        target.nativeForegroundColor = theme.foreground
+        target.selectedTextBackgroundColor = theme.selectionBackground
+        target.caretColor = theme.cursor
+        target.caretTextColor = theme.cursorText
+        target.useBrightColors = appearance.useBrightColors
+        target.setAnsi256PaletteStrategy(.base16Lab)
+        target.setTerminalBaseColors(background: terminalBackground, foreground: terminalForeground)
+        target.installColors(theme.ansiColors.map(\.swiftTermColor))
+        target.setScrollbackLines(appearance.scrollbackLines)
+        target.applyCursorStyle(appearance.cursorStyle.swiftTermValue)
+        target.schedulePreferredCursorWarmup()
+    }
+}
+
+extension NSColor {
+    convenience init(hex: String, fallback: NSColor) {
+        let normalized = hex
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+
+        guard normalized.count == 6,
+              let value = Int(normalized, radix: 16) else {
+            let base = fallback.usingColorSpace(.deviceRGB) ?? fallback
+            self.init(
+                srgbRed: base.redComponent,
+                green: base.greenComponent,
+                blue: base.blueComponent,
+                alpha: base.alphaComponent
+            )
+            return
+        }
+
+        self.init(
+            srgbRed: CGFloat((value >> 16) & 0xff) / 255,
+            green: CGFloat((value >> 8) & 0xff) / 255,
+            blue: CGFloat(value & 0xff) / 255,
+            alpha: 1
+        )
+    }
+
+    var hexString: String {
+        let color = usingColorSpace(.deviceRGB) ?? self
+        let red = Int(round(color.redComponent * 255))
+        let green = Int(round(color.greenComponent * 255))
+        let blue = Int(round(color.blueComponent * 255))
+        return String(format: "#%02X%02X%02X", red, green, blue)
+    }
+
+    var swiftTermColor: SwiftTerm.Color {
+        let color = usingColorSpace(.deviceRGB) ?? self
+        return SwiftTerm.Color(
+            red: UInt16(round(color.redComponent * 65535)),
+            green: UInt16(round(color.greenComponent * 65535)),
+            blue: UInt16(round(color.blueComponent * 65535))
+        )
+    }
 }
 
 // MARK: - Terminal Tab
@@ -31,36 +388,38 @@ final class TerminalWorkspaceState: ObservableObject {
     @Published var tabs: [TerminalTab]
     @Published var selectedTabID: UUID?
     @Published var terminalViews: [UUID: LocalProcessTerminalView]
-    @Published var currentTheme: Int
-    @Published var currentFontSize: CGFloat
     @Published var isSplit: Bool
     @Published var splitTerminalViews: [UUID: LocalProcessTerminalView]
     @Published var splitTabs: [TerminalTab]
     @Published var focusedPane: TerminalPanel.PaneID
+    @Published var splitFraction: CGFloat
 
     init() {
         let initialTab = TerminalTab()
         self.tabs = [initialTab]
         self.selectedTabID = initialTab.id
         self.terminalViews = [:]
-        self.currentTheme = 0
-        self.currentFontSize = 14
         self.isSplit = false
         self.splitTerminalViews = [:]
         self.splitTabs = [TerminalTab()]
         self.focusedPane = .top
+        self.splitFraction = 0.5
     }
 }
 
 // MARK: - Terminal Panel with Tabs (SwiftTerm + Metal GPU)
 
 struct TerminalPanel: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var appearanceStore = TerminalAppearanceStore.shared
     @ObservedObject var workspaceState: TerminalWorkspaceState
     let document: PDFDocument?
     let isVisible: Bool
     let topInset: CGFloat
     let showsInlineControls: Bool
     let startupWorkingDirectory: URL?
+    @State private var splitDragStartFraction: CGFloat?
 
     enum PaneID { case top, bottom }
 
@@ -82,6 +441,14 @@ struct TerminalPanel: View {
 
     private var currentTabID: UUID {
         workspaceState.selectedTabID ?? workspaceState.tabs.first!.id
+    }
+
+    private var appearance: TerminalAppearanceState {
+        appearanceStore.appearance
+    }
+
+    private var resolvedTheme: TerminalThemePreset {
+        appearance.resolvedThemePreset(for: colorScheme)
     }
 
     var body: some View {
@@ -127,43 +494,13 @@ struct TerminalPanel: View {
                     .buttonStyle(.plain)
                     .help("Nouveau terminal")
 
-                    Menu {
-                        ForEach(0..<Self.themes.count, id: \.self) { i in
-                            Button {
-                                applyTheme(i)
-                            } label: {
-                                HStack {
-                                    if i == workspaceState.currentTheme { Image(systemName: "checkmark") }
-                                    Text(Self.themes[i].name)
-                                }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "paintpalette")
+                    Button(action: appearanceStore.presentSettings) {
+                        Image(systemName: "slider.horizontal.3")
                             .font(.caption)
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
-                    .help("Thème du terminal")
-
-                    Menu {
-                        ForEach(Self.fontSizes, id: \.self) { size in
-                            Button {
-                                applyFontSize(CGFloat(size))
-                            } label: {
-                                HStack {
-                                    if Int(workspaceState.currentFontSize) == size { Image(systemName: "checkmark") }
-                                    Text("\(size) pt")
-                                }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "textformat.size")
-                            .font(.caption)
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Taille de la police")
+                    .help("Réglages du terminal")
                     .padding(.trailing, 6)
                 }
             }
@@ -172,56 +509,16 @@ struct TerminalPanel: View {
 
             AppChromeDivider(role: .panel)
 
-            // Terminal views with optional split
-            VSplitView {
-                // Top pane
-                VStack(spacing: 0) {
-                    if workspaceState.isSplit {
-                        paneHeader(.top)
+            Group {
+                if workspaceState.isSplit {
+                    splitTerminalContent
+                } else {
+                    paneContainer(.top) {
+                        topTerminalPane
                     }
-                    ZStack {
-                        ForEach(workspaceState.tabs) { tab in
-                            TerminalViewWrapper(
-                                tabID: tab.id,
-                                terminalViews: $workspaceState.terminalViews,
-                                isActive: tab.id == currentTabID,
-                                optionAsMetaKey: tab.optionAsMetaKey,
-                                fontSize: workspaceState.currentFontSize,
-                                theme: Self.themes[workspaceState.currentTheme],
-                                startupWorkingDirectory: startupWorkingDirectory
-                            )
-                            .opacity(tab.id == currentTabID ? 1 : 0)
-                            .allowsHitTesting(tab.id == currentTabID)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { workspaceState.focusedPane = .top }
                 }
-
-                // Bottom pane
-                VStack(spacing: 0) {
-                    if workspaceState.isSplit {
-                        paneHeader(.bottom)
-                    }
-                    ZStack {
-                        ForEach(workspaceState.splitTabs) { tab in
-                            TerminalViewWrapper(
-                                tabID: tab.id,
-                                terminalViews: $workspaceState.splitTerminalViews,
-                                isActive: workspaceState.isSplit,
-                                optionAsMetaKey: tab.optionAsMetaKey,
-                                fontSize: workspaceState.currentFontSize,
-                                theme: Self.themes[workspaceState.currentTheme],
-                                startupWorkingDirectory: startupWorkingDirectory
-                            )
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { workspaceState.focusedPane = .bottom }
-                }
-                .frame(minHeight: workspaceState.isSplit ? 100 : 0, maxHeight: workspaceState.isSplit ? .infinity : 0)
-                .opacity(workspaceState.isSplit ? 1 : 0)
             }
+            .background(Color(nsColor: resolvedTheme.background))
         }
         .frame(minWidth: 160, maxWidth: .infinity)
         .onAppear {
@@ -242,17 +539,6 @@ struct TerminalPanel: View {
             guard isVisible else { return }
             addTab()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalApplyTheme)) { notification in
-            guard isVisible else { return }
-            guard let index = notification.userInfo?["themeIndex"] as? Int,
-                  Self.themes.indices.contains(index) else { return }
-            applyTheme(index)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalApplyFontSize)) { notification in
-            guard isVisible else { return }
-            guard let size = notification.userInfo?["fontSize"] as? CGFloat else { return }
-            applyFontSize(size)
-        }
         .onChange(of: isVisible) {
             guard isVisible else { return }
             DispatchQueue.main.async {
@@ -265,6 +551,8 @@ struct TerminalPanel: View {
                 focusVisibleTerminal()
             }
         }
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: workspaceState.isSplit)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: appearance)
     }
 
     // MARK: - Tab Button
@@ -274,9 +562,9 @@ struct TerminalPanel: View {
         HStack(spacing: 4) {
             Image(systemName: "terminal")
                 .font(.system(size: 9))
-                .foregroundStyle(.green)
+                .foregroundStyle(AppChromePalette.tabIndicator(for: .terminal))
             Text(tab.title)
-                .font(.caption2)
+                .font(.system(size: 10, weight: tab.id == currentTabID ? .semibold : .regular))
                 .lineLimit(1)
             if workspaceState.tabs.count > 1 {
                 Button(action: { closeTab(tab) }) {
@@ -289,29 +577,18 @@ struct TerminalPanel: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(tab.id == currentTabID ? Color.accentColor.opacity(0.15) : Color.clear)
+        .background(AppChromePalette.tabFill(isSelected: tab.id == currentTabID, isHovered: false, role: .terminal))
         .overlay(alignment: .bottom) {
             if tab.id == currentTabID {
-                Rectangle().fill(Color.green).frame(height: 1.5)
+                Rectangle()
+                    .fill(AppChromePalette.tabIndicator(for: .terminal))
+                    .frame(height: AppChromeMetrics.tabIndicatorHeight)
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.tabCornerRadius, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { workspaceState.selectedTabID = tab.id }
     }
-
-    // MARK: - Themes (Kaku-inspired)
-
-    static let themes: [(name: String, bg: NSColor, fg: NSColor, cursor: NSColor)] = [
-        ("Kaku Dark", NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1), NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1), NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1)),
-        ("Sombre", NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1), .white, .green),
-        ("Dracula", NSColor(red: 0.16, green: 0.16, blue: 0.21, alpha: 1), NSColor(red: 0.97, green: 0.97, blue: 0.95, alpha: 1), NSColor(red: 0.94, green: 0.47, blue: 0.60, alpha: 1)),
-        ("Monokai", NSColor(red: 0.15, green: 0.16, blue: 0.13, alpha: 1), NSColor(red: 0.97, green: 0.97, blue: 0.94, alpha: 1), NSColor(red: 0.65, green: 0.89, blue: 0.18, alpha: 1)),
-        ("Nord", NSColor(red: 0.18, green: 0.20, blue: 0.25, alpha: 1), NSColor(red: 0.85, green: 0.87, blue: 0.91, alpha: 1), NSColor(red: 0.53, green: 0.75, blue: 0.82, alpha: 1)),
-        ("Tokyo Night", NSColor(red: 0.10, green: 0.11, blue: 0.18, alpha: 1), NSColor(red: 0.66, green: 0.70, blue: 0.84, alpha: 1), NSColor(red: 0.48, green: 0.51, blue: 0.93, alpha: 1)),
-        ("Gruvbox", NSColor(red: 0.16, green: 0.15, blue: 0.13, alpha: 1), NSColor(red: 0.92, green: 0.86, blue: 0.70, alpha: 1), NSColor(red: 0.98, green: 0.74, blue: 0.18, alpha: 1)),
-        ("Clair", NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1), NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1), .blue),
-    ]
-    static let fontSizes = [12, 13, 14, 15, 16, 17, 18, 20, 24]
 
     private var focusedPaneUsesOptionAsMeta: Bool {
         switch workspaceState.focusedPane {
@@ -326,38 +603,11 @@ struct TerminalPanel: View {
         }
     }
 
-    // MARK: - Actions
-
-    private func applyTheme(_ index: Int) {
-        workspaceState.currentTheme = index
-        let theme = Self.themes[index]
-        for (_, tv) in workspaceState.terminalViews {
-            tv.nativeBackgroundColor = theme.bg
-            tv.nativeForegroundColor = theme.fg
-            tv.caretColor = theme.cursor
-        }
-        for (_, tv) in workspaceState.splitTerminalViews {
-            tv.nativeBackgroundColor = theme.bg
-            tv.nativeForegroundColor = theme.fg
-            tv.caretColor = theme.cursor
-        }
-    }
-
-    private func applyFontSize(_ size: CGFloat) {
-        workspaceState.currentFontSize = size
-        for (_, tv) in workspaceState.terminalViews {
-            tv.font = makeTerminalFont(size: size)
-        }
-        for (_, tv) in workspaceState.splitTerminalViews {
-            tv.font = makeTerminalFont(size: size)
-        }
-    }
-
     @ViewBuilder
     private func paneHeader(_ pane: PaneID) -> some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(workspaceState.focusedPane == pane ? Color.green : Color.gray.opacity(0.3))
+                .fill(workspaceState.focusedPane == pane ? AppChromePalette.tabIndicator(for: .terminal) : Color.gray.opacity(0.3))
                 .frame(width: 6, height: 6)
             Text(pane == .top ? "Haut" : "Bas")
                 .font(.system(size: 9))
@@ -373,8 +623,123 @@ struct TerminalPanel: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
-        .background(workspaceState.focusedPane == pane ? Color.accentColor.opacity(0.08) : Color.clear)
+        .background(AppChromePalette.tabFill(isSelected: workspaceState.focusedPane == pane, isHovered: false, role: .terminal))
         .onTapGesture { workspaceState.focusedPane = pane }
+    }
+
+    private var terminalPadding: CGFloat {
+        CGFloat(max(0, appearance.terminalPadding))
+    }
+
+    private func paneOpacity(_ pane: PaneID) -> Double {
+        guard workspaceState.isSplit else { return 1 }
+        return workspaceState.focusedPane == pane ? appearance.activePaneOpacity : appearance.inactivePaneOpacity
+    }
+
+    @ViewBuilder
+    private var topTerminalPane: some View {
+        ZStack {
+            ForEach(workspaceState.tabs) { tab in
+                TerminalViewWrapper(
+                    tabID: tab.id,
+                    terminalViews: $workspaceState.terminalViews,
+                    isActive: tab.id == currentTabID,
+                    optionAsMetaKey: tab.optionAsMetaKey,
+                    appearance: appearance,
+                    colorScheme: colorScheme,
+                    startupWorkingDirectory: startupWorkingDirectory
+                )
+                .opacity(tab.id == currentTabID ? 1 : 0)
+                .allowsHitTesting(tab.id == currentTabID)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bottomTerminalPane: some View {
+        ZStack {
+            ForEach(workspaceState.splitTabs) { tab in
+                TerminalViewWrapper(
+                    tabID: tab.id,
+                    terminalViews: $workspaceState.splitTerminalViews,
+                    isActive: workspaceState.isSplit,
+                    optionAsMetaKey: tab.optionAsMetaKey,
+                    appearance: appearance,
+                    colorScheme: colorScheme,
+                    startupWorkingDirectory: startupWorkingDirectory
+                )
+            }
+        }
+    }
+
+    private func paneContainer<Content: View>(_ pane: PaneID, @ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            if workspaceState.isSplit {
+                paneHeader(pane)
+            }
+            content()
+                .padding(terminalPadding)
+                .background(Color(nsColor: resolvedTheme.background))
+        }
+        .opacity(paneOpacity(pane))
+        .contentShape(Rectangle())
+        .onTapGesture { workspaceState.focusedPane = pane }
+    }
+
+    private var splitTerminalContent: some View {
+        GeometryReader { geometry in
+            let dividerHeight = max(CGFloat(appearance.dividerThickness), 1)
+            let minimumPaneHeight: CGFloat = 110
+            let availableHeight = max(geometry.size.height - dividerHeight, minimumPaneHeight * 2)
+            let topHeight = min(
+                max(availableHeight * workspaceState.splitFraction, minimumPaneHeight),
+                availableHeight - minimumPaneHeight
+            )
+            let bottomHeight = max(minimumPaneHeight, availableHeight - topHeight)
+
+            VStack(spacing: 0) {
+                paneContainer(.top) {
+                    topTerminalPane
+                }
+                .frame(height: topHeight)
+
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(height: max(dividerHeight + 6, 12))
+                    .contentShape(Rectangle())
+                    .overlay {
+                        Rectangle()
+                            .fill(Color(nsColor: appearance.resolvedDividerColor(for: colorScheme)))
+                            .frame(height: dividerHeight)
+                    }
+                    .onHover { hovering in
+                        if hovering {
+                            NSCursor.resizeUpDown.push()
+                        } else {
+                            NSCursor.pop()
+                        }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let startingFraction = splitDragStartFraction ?? workspaceState.splitFraction
+                                if splitDragStartFraction == nil {
+                                    splitDragStartFraction = workspaceState.splitFraction
+                                }
+                                let delta = value.translation.height / max(availableHeight, 1)
+                                workspaceState.splitFraction = min(max(startingFraction + delta, 0.22), 0.78)
+                            }
+                            .onEnded { _ in
+                                splitDragStartFraction = nil
+                            }
+                    )
+
+                paneContainer(.bottom) {
+                    bottomTerminalPane
+                }
+                .frame(height: bottomHeight)
+            }
+        }
     }
 
     private func closePane(_ pane: PaneID) {
@@ -404,6 +769,7 @@ struct TerminalPanel: View {
             workspaceState.isSplit = false
         }
         workspaceState.focusedPane = .top
+        workspaceState.splitFraction = 0.5
     }
 
     private func addTab() {
@@ -486,48 +852,43 @@ struct TerminalViewWrapper: NSViewRepresentable {
     @Binding var terminalViews: [UUID: LocalProcessTerminalView]
     let isActive: Bool
     let optionAsMetaKey: Bool
-    let fontSize: CGFloat
-    let theme: (name: String, bg: NSColor, fg: NSColor, cursor: NSColor)
+    let appearance: TerminalAppearanceState
+    let colorScheme: ColorScheme
     let startupWorkingDirectory: URL?
 
     func makeNSView(context: Context) -> FocusAwareLocalProcessTerminalView {
         if let existing = terminalViews[tabID] as? FocusAwareLocalProcessTerminalView {
-            existing.font = makeTerminalFont(size: fontSize)
-            existing.nativeBackgroundColor = theme.bg
-            existing.nativeForegroundColor = theme.fg
-            existing.caretColor = theme.cursor
             existing.shouldCaptureFocusFromClicks = isActive
             existing.optionAsMetaKey = optionAsMetaKey
             existing.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             existing.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            TerminalAppearanceApplicator.apply(appearance: appearance, colorScheme: colorScheme, to: existing)
             return existing
         }
 
         let tv = FocusAwareLocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        tv.font = makeTerminalFont(size: fontSize)
-        tv.getTerminal().setCursorStyle(preferredTerminalCursorStyle)
         tv.optionAsMetaKey = optionAsMetaKey
-        tv.nativeBackgroundColor = theme.bg
-        tv.nativeForegroundColor = theme.fg
-        tv.caretColor = theme.cursor
         tv.shouldCaptureFocusFromClicks = isActive
+        TerminalAppearanceApplicator.apply(appearance: appearance, colorScheme: colorScheme, to: tv)
 
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
-        ClaudeIDEBridgeService.shared.startIfNeeded()
-        env = ClaudeCLIWrapperService.shared.apply(to: env, shellPath: shell)
-        env.append(contentsOf: CanopeContextFiles.terminalEnvironment)
-        tv.startProcess(
-            executable: shell,
-            args: ["-l"],
-            environment: env,
-            execName: shell,
-            currentDirectory: startupWorkingDirectory?.path
-        )
-        tv.schedulePreferredCursorWarmup()
-        ChildProcessRegistry.shared.track(terminalView: tv)
+        if !AppRuntime.isRunningTests {
+            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
+            ClaudeIDEBridgeService.shared.startIfNeeded()
+            env = ClaudeCLIWrapperService.shared.apply(to: env, shellPath: shell)
+            env.append(contentsOf: CanopeContextFiles.terminalEnvironment)
+            tv.startProcess(
+                executable: shell,
+                args: ["-l"],
+                environment: env,
+                execName: shell,
+                currentDirectory: startupWorkingDirectory?.path
+            )
+            tv.schedulePreferredCursorWarmup()
+            ChildProcessRegistry.shared.track(terminalView: tv)
+        }
 
         enableMetalWhenReady(for: tv)
 
@@ -540,11 +901,8 @@ struct TerminalViewWrapper: NSViewRepresentable {
 
     func updateNSView(_ nsView: FocusAwareLocalProcessTerminalView, context: Context) {
         nsView.shouldCaptureFocusFromClicks = isActive
-        nsView.font = makeTerminalFont(size: fontSize)
-        nsView.nativeBackgroundColor = theme.bg
-        nsView.nativeForegroundColor = theme.fg
-        nsView.caretColor = theme.cursor
         nsView.optionAsMetaKey = optionAsMetaKey
+        TerminalAppearanceApplicator.apply(appearance: appearance, colorScheme: colorScheme, to: nsView)
     }
 
     static func dismantleNSView(_ nsView: FocusAwareLocalProcessTerminalView, coordinator: ()) {
@@ -564,7 +922,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
             try tv.setUseMetal(true)
             if tv.isUsingMetalRenderer {
                 tv.metalBufferingMode = .perRowPersistent
-                tv.getTerminal().setCursorStyle(preferredTerminalCursorStyle)
+                tv.applyCursorStyle(appearance.cursorStyle.swiftTermValue)
                 tv.schedulePreferredCursorWarmup()
                 // Ensure MTKView forwards events to terminal
                 for subview in tv.subviews {
@@ -616,6 +974,7 @@ final class EventForwardingView: NSView {
 @MainActor
 final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildProcessTerminable {
     var shouldCaptureFocusFromClicks = true
+    private var preferredCursorStyle: CursorStyle = defaultTerminalCursorStyle
     private var clickMonitor: Any?
     private var keyMonitor: Any?
     private var scrollMonitor: Any?
@@ -623,8 +982,8 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
     private var alternateWheelAccumulator: CGFloat = 0
 
     override func cursorStyleChanged(source: Terminal, newStyle: CursorStyle) {
-        source.options.cursorStyle = preferredTerminalCursorStyle
-        super.cursorStyleChanged(source: source, newStyle: preferredTerminalCursorStyle)
+        source.options.cursorStyle = preferredCursorStyle
+        super.cursorStyleChanged(source: source, newStyle: preferredCursorStyle)
     }
 
     func terminateTrackedProcess() {
@@ -657,7 +1016,7 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
 
     private func applyPreferredCursorAppearance() {
         let terminal = getTerminal()
-        terminal.setCursorStyle(preferredTerminalCursorStyle)
+        terminal.setCursorStyle(preferredCursorStyle)
         terminal.showCursor()
         needsDisplay = true
     }
@@ -859,5 +1218,320 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
             send(data: sequence[...])
         }
         return true
+    }
+}
+
+@MainActor
+extension FocusAwareLocalProcessTerminalView: TerminalAppearanceApplying {
+    func setAnsi256PaletteStrategy(_ strategy: Ansi256PaletteStrategy) {
+        getTerminal().ansi256PaletteStrategy = strategy
+    }
+
+    func setTerminalBaseColors(background: SwiftTerm.Color, foreground: SwiftTerm.Color) {
+        let terminal = getTerminal()
+        terminal.backgroundColor = background
+        terminal.foregroundColor = foreground
+    }
+
+    func setScrollbackLines(_ lines: Int?) {
+        changeScrollback(lines)
+    }
+
+    func applyCursorStyle(_ style: CursorStyle) {
+        preferredCursorStyle = style
+        let terminal = getTerminal()
+        terminal.options.cursorStyle = style
+        terminal.setCursorStyle(style)
+        applyPreferredCursorAppearance()
+    }
+}
+
+struct TerminalAppearanceSheet: View {
+    @ObservedObject var store: TerminalAppearanceStore
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var cursorShapeBinding: Binding<TerminalCursorShape> {
+        Binding(
+            get: { store.appearance.cursorStyle.shape },
+            set: { newShape in
+                var updated = store.appearance
+                updated.cursorStyle = updated.cursorStyle.withShape(newShape)
+                store.appearance = updated
+            }
+        )
+    }
+
+    private var cursorBlinkBinding: Binding<Bool> {
+        Binding(
+            get: { store.appearance.cursorStyle.isBlinking },
+            set: { isBlinking in
+                var updated = store.appearance
+                updated.cursorStyle = updated.cursorStyle.withBlinking(isBlinking)
+                store.appearance = updated
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Réglages du terminal")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Preset Ghostty, séparation plus lisible et apparence commune pour tous les terminaux.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Réinitialiser") {
+                    store.appearance = TerminalAppearanceState()
+                }
+                Button("Fermer") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(AppChromePalette.surfaceBar)
+
+            AppChromeDivider(role: .shell)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    TerminalThemePreview(appearance: store.appearance, colorScheme: colorScheme)
+
+                    GroupBox("Typography") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            LabeledContent("Famille") {
+                                TextField("SF Mono", text: store.binding(for: \.fontFamily))
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 200)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                LabeledContent("Taille") {
+                                    Text("\(Int(store.appearance.fontSize)) pt")
+                                        .monospacedDigit()
+                                        .foregroundStyle(.secondary)
+                                }
+                                Slider(
+                                    value: store.binding(for: \.fontSize),
+                                    in: 10...24,
+                                    step: 1
+                                )
+                            }
+                        }
+                    }
+
+                    GroupBox("Cursor") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Picker("Forme", selection: cursorShapeBinding) {
+                                ForEach(TerminalCursorShape.allCases) { shape in
+                                    Text(shape.title).tag(shape)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            Toggle("Curseur clignotant", isOn: cursorBlinkBinding)
+
+                            Text(store.appearance.cursorStyle.title)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    GroupBox("Pane Styling") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            sliderRow(
+                                title: "Opacité panneau inactif",
+                                value: store.binding(for: \.inactivePaneOpacity),
+                                range: 0.35...1,
+                                step: 0.05,
+                                suffix: String(format: "%.2f", store.appearance.inactivePaneOpacity)
+                            )
+                            sliderRow(
+                                title: "Opacité panneau actif",
+                                value: store.binding(for: \.activePaneOpacity),
+                                range: 0.75...1,
+                                step: 0.05,
+                                suffix: String(format: "%.2f", store.appearance.activePaneOpacity)
+                            )
+                            sliderRow(
+                                title: "Épaisseur du séparateur",
+                                value: store.binding(for: \.dividerThickness),
+                                range: 1...8,
+                                step: 1,
+                                suffix: "\(Int(store.appearance.dividerThickness)) px"
+                            )
+                            sliderRow(
+                                title: "Padding terminal",
+                                value: store.binding(for: \.terminalPadding),
+                                range: 0...12,
+                                step: 1,
+                                suffix: "\(Int(store.appearance.terminalPadding)) px"
+                            )
+                        }
+                    }
+
+                    GroupBox("Themes") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Picker("Thème sombre", selection: store.binding(for: \.darkThemePresetID)) {
+                                ForEach(TerminalThemePreset.all) { preset in
+                                    Text(preset.name).tag(preset.id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+
+                            Toggle("Utiliser un thème séparé en clair", isOn: store.binding(for: \.useSeparateLightTheme))
+
+                            Picker("Thème clair", selection: store.binding(for: \.lightThemePresetID)) {
+                                ForEach(TerminalThemePreset.all) { preset in
+                                    Text(preset.name).tag(preset.id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .disabled(!store.appearance.useSeparateLightTheme)
+
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Divider sombre")
+                                        .font(.system(size: 11, weight: .medium))
+                                    TextField("#3f3f46", text: store.binding(for: \.dividerColorDark))
+                                        .textFieldStyle(.roundedBorder)
+                                }
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Divider clair")
+                                        .font(.system(size: 11, weight: .medium))
+                                    TextField("#d4d4d8", text: store.binding(for: \.dividerColorLight))
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox("Advanced") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Utiliser les bright colors ANSI", isOn: store.binding(for: \.useBrightColors))
+
+                            HStack {
+                                Text("Scrollback")
+                                Spacer()
+                                Stepper(
+                                    "\(store.appearance.scrollbackLines) lignes",
+                                    value: store.binding(for: \.scrollbackLines),
+                                    in: 1000...50000,
+                                    step: 1000
+                                )
+                                .frame(maxWidth: 220, alignment: .trailing)
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            .frame(minWidth: 620, minHeight: 720)
+            .background(AppChromePalette.surfaceSubbar)
+        }
+    }
+
+    @ViewBuilder
+    private func sliderRow(
+        title: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double,
+        suffix: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                Spacer()
+                Text(suffix)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: value, in: range, step: step)
+        }
+    }
+}
+
+struct TerminalThemePreview: View {
+    let appearance: TerminalAppearanceState
+    let colorScheme: ColorScheme
+
+    private var theme: TerminalThemePreset {
+        appearance.resolvedThemePreset(for: colorScheme)
+    }
+
+    private var dividerColor: SwiftUI.Color {
+        SwiftUI.Color(nsColor: appearance.resolvedDividerColor(for: colorScheme))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Preview live")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 0) {
+                previewPane(title: "Actif", opacity: appearance.activePaneOpacity)
+
+                Rectangle()
+                    .fill(dividerColor)
+                    .frame(height: max(CGFloat(appearance.dividerThickness), 1))
+
+                previewPane(title: "Inactif", opacity: appearance.inactivePaneOpacity)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func previewPane(title: String, opacity: Double) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Circle()
+                    .fill(title == "Actif" ? AppChromePalette.tabIndicator(for: .terminal) : Color.gray.opacity(0.35))
+                    .frame(width: 6, height: 6)
+                Text(title)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color(nsColor: theme.foreground).opacity(0.8))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("tofunori@canope % latexmk main.tex")
+                Text("Terminal preset: \(theme.name)")
+                Text("Cursor: \(appearance.cursorStyle.title)")
+                    .foregroundStyle(Color(nsColor: theme.ansiColors[4]))
+            }
+            .font(.custom(appearance.fontFamily, size: appearance.fontSize))
+            .foregroundStyle(Color(nsColor: theme.foreground))
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 8), spacing: 6) {
+                ForEach(Array(theme.ansiColors.enumerated()), id: \.offset) { index, color in
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color(nsColor: color))
+                        .frame(height: 14)
+                        .overlay(alignment: .center) {
+                            Text("\(index)")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(index < 8 ? Color.black.opacity(0.65) : Color.white.opacity(0.75))
+                        }
+                }
+            }
+        }
+        .padding(CGFloat(max(0, appearance.terminalPadding)))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: theme.background))
+        .opacity(opacity)
     }
 }

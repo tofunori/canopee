@@ -18,26 +18,105 @@ enum AppChromeMetrics {
     static let hoverHintDelay: TimeInterval = 0.08
 }
 
+enum AppChromeTabRole {
+    case section
+    case document
+    case terminal
+    case reference
+}
+
+enum AppChromeTabFillToken: Equatable {
+    case idle
+    case hovered
+    case selected
+}
+
 enum AppChromePalette {
-    static let dividerStrong = Color.white.opacity(0.07)
-    static let dividerSoft = Color.white.opacity(0.04)
-    static let dividerInset = Color.white.opacity(0.03)
-    static let surfaceBar = Color(nsColor: .controlBackgroundColor).opacity(0.72)
-    static let surfaceSubbar = Color(nsColor: .controlBackgroundColor).opacity(0.48)
-    static let clusterFill = Color.white.opacity(0.04)
-    static let clusterStroke = Color.white.opacity(0.05)
-    static let hoverFill = Color.white.opacity(0.08)
-    static let tabHoverFill = Color.white.opacity(0.03)
-    static let tabSelectedFill = Color.white.opacity(0.06)
-    static let selectedAccentFill = Color.accentColor.opacity(0.14)
-    static let selectedAccentStroke = Color.accentColor.opacity(0.32)
-    static let selectedAccent = Color.accentColor
-    static let subtleUnderline = Color.white.opacity(0.3)
-    static let handleFill = Color.white.opacity(0.035)
-    static let handleHoverFill = Color.white.opacity(0.12)
-    static let success = Color.green
-    static let info = Color.blue
-    static let danger = Color.red
+    private static func adaptive(light: NSColor, dark: NSColor) -> Color {
+        Color(
+            nsColor: NSColor(name: nil) { appearance in
+                let bestMatch = appearance.bestMatch(from: [.darkAqua, .aqua])
+                return bestMatch == .darkAqua ? dark : light
+            }
+        )
+    }
+
+    static let dividerStrong = adaptive(
+        light: NSColor(hex: "#d4d4d8", fallback: .separatorColor),
+        dark: NSColor(hex: "#3f3f46", fallback: NSColor(calibratedWhite: 0.25, alpha: 1))
+    )
+    static let dividerSoft = adaptive(
+        light: NSColor(hex: "#e4e4e7", fallback: .separatorColor),
+        dark: NSColor(hex: "#27272a", fallback: NSColor(calibratedWhite: 0.15, alpha: 1))
+    )
+    static let dividerInset = adaptive(
+        light: NSColor(hex: "#ededf0", fallback: .separatorColor),
+        dark: NSColor(hex: "#1f2023", fallback: NSColor(calibratedWhite: 0.11, alpha: 1))
+    )
+    static let surfaceBar = adaptive(
+        light: NSColor(hex: "#f8f8f9", fallback: .windowBackgroundColor),
+        dark: NSColor(hex: "#111214", fallback: NSColor(calibratedWhite: 0.07, alpha: 1))
+    )
+    static let surfaceSubbar = adaptive(
+        light: NSColor(hex: "#f1f1f3", fallback: .controlBackgroundColor),
+        dark: NSColor(hex: "#16181b", fallback: NSColor(calibratedWhite: 0.09, alpha: 1))
+    )
+    static let clusterFill = adaptive(
+        light: NSColor(hex: "#ffffff", fallback: .white).withAlphaComponent(0.9),
+        dark: NSColor(hex: "#1c1f23", fallback: NSColor(calibratedWhite: 0.12, alpha: 1)).withAlphaComponent(0.92)
+    )
+    static let clusterStroke = adaptive(
+        light: NSColor(hex: "#e5e7eb", fallback: .separatorColor),
+        dark: NSColor(hex: "#31343a", fallback: NSColor(calibratedWhite: 0.2, alpha: 1))
+    )
+    static let hoverFill = adaptive(
+        light: NSColor(hex: "#eceef2", fallback: .quaternaryLabelColor),
+        dark: NSColor(hex: "#23262b", fallback: NSColor(calibratedWhite: 0.16, alpha: 1))
+    )
+    static let tabHoverFill = adaptive(
+        light: NSColor(hex: "#eceef2", fallback: .quaternaryLabelColor),
+        dark: NSColor(hex: "#202329", fallback: NSColor(calibratedWhite: 0.15, alpha: 1))
+    )
+    static let tabSelectedFill = adaptive(
+        light: NSColor(hex: "#e5e7eb", fallback: .selectedContentBackgroundColor),
+        dark: NSColor(hex: "#262a31", fallback: NSColor(calibratedWhite: 0.18, alpha: 1))
+    )
+    static let selectedAccentFill = adaptive(
+        light: NSColor(hex: "#e2e8f0", fallback: .selectedContentBackgroundColor),
+        dark: NSColor(hex: "#272b32", fallback: NSColor(calibratedWhite: 0.19, alpha: 1))
+    )
+    static let selectedAccentStroke = adaptive(
+        light: NSColor(hex: "#cbd5e1", fallback: .separatorColor),
+        dark: NSColor(hex: "#3b4250", fallback: NSColor(calibratedWhite: 0.25, alpha: 1))
+    )
+    static let selectedAccent = adaptive(
+        light: NSColor(hex: "#475569", fallback: .labelColor),
+        dark: NSColor(hex: "#cbd5e1", fallback: NSColor(calibratedWhite: 0.85, alpha: 1))
+    )
+    static let subtleUnderline = adaptive(
+        light: NSColor(hex: "#9ca3af", fallback: .secondaryLabelColor),
+        dark: NSColor(hex: "#71717a", fallback: NSColor(calibratedWhite: 0.45, alpha: 1))
+    )
+    static let handleFill = adaptive(
+        light: NSColor(hex: "#cbd5e1", fallback: .separatorColor).withAlphaComponent(0.7),
+        dark: NSColor(hex: "#3f3f46", fallback: NSColor(calibratedWhite: 0.25, alpha: 1))
+    )
+    static let handleHoverFill = adaptive(
+        light: NSColor(hex: "#94a3b8", fallback: .secondaryLabelColor),
+        dark: NSColor(hex: "#71717a", fallback: NSColor(calibratedWhite: 0.45, alpha: 1))
+    )
+    static let success = adaptive(
+        light: NSColor(hex: "#15803d", fallback: .systemGreen),
+        dark: NSColor(hex: "#86efac", fallback: .systemGreen)
+    )
+    static let info = adaptive(
+        light: NSColor(hex: "#2563eb", fallback: .systemBlue),
+        dark: NSColor(hex: "#93c5fd", fallback: .systemBlue)
+    )
+    static let danger = adaptive(
+        light: NSColor(hex: "#dc2626", fallback: .systemRed),
+        dark: NSColor(hex: "#fca5a5", fallback: .systemRed)
+    )
     static let neutral = Color.secondary
 
     static func divider(for role: AppChromeDividerRole) -> Color {
@@ -48,6 +127,34 @@ enum AppChromePalette {
             return dividerSoft
         case .inset:
             return dividerInset
+        }
+    }
+
+    static func tabFillToken(isSelected: Bool, isHovered: Bool) -> AppChromeTabFillToken {
+        if isSelected { return .selected }
+        if isHovered { return .hovered }
+        return .idle
+    }
+
+    static func tabFill(isSelected: Bool, isHovered: Bool, role: AppChromeTabRole) -> Color {
+        switch tabFillToken(isSelected: isSelected, isHovered: isHovered) {
+        case .idle:
+            return .clear
+        case .hovered:
+            return role == .section ? tabHoverFill : hoverFill
+        case .selected:
+            return role == .section ? tabSelectedFill : selectedAccentFill
+        }
+    }
+
+    static func tabIndicator(for role: AppChromeTabRole) -> Color {
+        switch role {
+        case .section:
+            return subtleUnderline
+        case .terminal:
+            return success
+        case .document, .reference:
+            return selectedAccent
         }
     }
 }
@@ -396,6 +503,10 @@ struct AppChromeResizeHandle: View {
     let width: CGFloat
     let onHoverChanged: ((Bool) -> Void)?
     let dragGesture: AnyGesture<DragGesture.Value>
+    var axis: Axis = .vertical
+    var lineThickness: CGFloat = AppChromeMetrics.dividerThickness
+    var lineColor: Color = AppChromePalette.handleFill
+    var hoverLineColor: Color = AppChromePalette.handleHoverFill
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
@@ -403,12 +514,15 @@ struct AppChromeResizeHandle: View {
     var body: some View {
         Rectangle()
             .fill(Color.clear)
-            .frame(width: width)
+            .frame(width: axis == .vertical ? width : nil, height: axis == .horizontal ? width : nil)
             .contentShape(Rectangle())
             .overlay {
                 Rectangle()
-                    .fill(isHovered ? AppChromePalette.handleHoverFill : AppChromePalette.handleFill)
-                    .frame(width: AppChromeMetrics.dividerThickness)
+                    .fill(isHovered ? hoverLineColor : lineColor)
+                    .frame(
+                        width: axis == .vertical ? lineThickness : nil,
+                        height: axis == .horizontal ? lineThickness : nil
+                    )
             }
             .onHover { hovering in
                 isHovered = hovering

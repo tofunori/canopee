@@ -1,6 +1,24 @@
 import SwiftUI
 import SwiftData
 
+enum AppRuntime {
+    static var isRunningTests: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        if environment.keys.contains("XCTestConfigurationFilePath")
+            || environment.keys.contains("XCTestBundlePath")
+            || environment.keys.contains("XCTestSessionIdentifier") {
+            return true
+        }
+
+        if let injectedLibraries = environment["DYLD_INSERT_LIBRARIES"],
+           injectedLibraries.contains("libXCTestBundleInject") {
+            return true
+        }
+
+        return NSClassFromString("XCTestCase") != nil
+    }
+}
+
 @main
 struct CanopeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -23,9 +41,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Prefer classic key repeat over the macOS accent popup inside the app,
         // which makes terminal input behave like a real terminal.
         UserDefaults.standard.register(defaults: ["ApplePressAndHoldEnabled": false])
-        ClaudeIDEBridgeService.shared.startIfNeeded()
-        _ = ClaudeCLIWrapperService.shared.prepareWrapperIfNeeded()
-        _ = ClaudeCLIWrapperService.shared.prepareCodexWrapperIfNeeded()
+        if !AppRuntime.isRunningTests {
+            ClaudeIDEBridgeService.shared.startIfNeeded()
+            _ = ClaudeCLIWrapperService.shared.prepareWrapperIfNeeded()
+            _ = ClaudeCLIWrapperService.shared.prepareCodexWrapperIfNeeded()
+        }
 
         NotificationCenter.default.addObserver(
             self,
@@ -69,6 +89,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+@MainActor
 private final class WindowChromeDoubleClickMonitor {
     private weak var window: NSWindow?
     private var monitor: Any?
