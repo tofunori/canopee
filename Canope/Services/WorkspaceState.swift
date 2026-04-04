@@ -114,6 +114,8 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var showErrors: Bool
     var splitLayout: String
     var panelArrangement: LaTeXPanelArrangement
+    var threePaneLeadingWidth: Double?
+    var threePaneTrailingWidth: Double?
     var editorFontSize: Double
     var editorTheme: Int
     var referencePaperIDs: [UUID]
@@ -129,6 +131,8 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         case showErrors
         case splitLayout
         case panelArrangement
+        case threePaneLeadingWidth
+        case threePaneTrailingWidth
         case editorFontSize
         case editorTheme
         case referencePaperIDs
@@ -145,6 +149,8 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         showErrors: Bool,
         splitLayout: String,
         panelArrangement: LaTeXPanelArrangement,
+        threePaneLeadingWidth: Double?,
+        threePaneTrailingWidth: Double?,
         editorFontSize: Double,
         editorTheme: Int,
         referencePaperIDs: [UUID],
@@ -159,6 +165,8 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         self.showErrors = showErrors
         self.splitLayout = splitLayout
         self.panelArrangement = panelArrangement
+        self.threePaneLeadingWidth = threePaneLeadingWidth
+        self.threePaneTrailingWidth = threePaneTrailingWidth
         self.editorFontSize = editorFontSize
         self.editorTheme = editorTheme
         self.referencePaperIDs = referencePaperIDs
@@ -176,6 +184,8 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         showErrors = try container.decode(Bool.self, forKey: .showErrors)
         splitLayout = try container.decode(String.self, forKey: .splitLayout)
         panelArrangement = try container.decodeIfPresent(LaTeXPanelArrangement.self, forKey: .panelArrangement) ?? .editorPDFTerminal
+        threePaneLeadingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneLeadingWidth)
+        threePaneTrailingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneTrailingWidth)
         editorFontSize = try container.decode(Double.self, forKey: .editorFontSize)
         editorTheme = try container.decode(Int.self, forKey: .editorTheme)
         referencePaperIDs = try container.decode([UUID].self, forKey: .referencePaperIDs)
@@ -193,6 +203,8 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         try container.encode(showErrors, forKey: .showErrors)
         try container.encode(splitLayout, forKey: .splitLayout)
         try container.encode(panelArrangement, forKey: .panelArrangement)
+        try container.encodeIfPresent(threePaneLeadingWidth, forKey: .threePaneLeadingWidth)
+        try container.encodeIfPresent(threePaneTrailingWidth, forKey: .threePaneTrailingWidth)
         try container.encode(editorFontSize, forKey: .editorFontSize)
         try container.encode(editorTheme, forKey: .editorTheme)
         try container.encode(referencePaperIDs, forKey: .referencePaperIDs)

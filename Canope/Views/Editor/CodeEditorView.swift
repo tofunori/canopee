@@ -3,9 +3,16 @@ import PDFKit
 import SwiftUI
 import WebKit
 
+private enum CodeEditorThreePaneRole {
+    case terminal
+    case editor
+    case output
+}
+
 struct CodeEditorView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
+    private static let threePaneCoordinateSpace = "CodeThreePaneLayout"
 
     let fileURL: URL
     var isActive: Bool = true
@@ -22,6 +29,9 @@ struct CodeEditorView: View {
     @State private var lastModified: Date?
     @State private var pollTimer: Timer?
     @State private var sidebarResizeStartWidth: CGFloat?
+    @State private var threePaneDragStartLeftWidth: CGFloat?
+    @State private var threePaneDragStartRightWidth: CGFloat?
+    @State private var isDraggingThreePaneDivider = false
     @State private var toolbarStatus: ToolbarStatusState = .idle
     @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
     @State private var fileCreationError: String?
@@ -69,6 +79,43 @@ struct CodeEditorView: View {
         return "Run \(index + 1)/\(documentState.runHistory.count) · \(time) · \(selectedRun.artifacts.count) artefact\(selectedRun.artifacts.count > 1 ? "s" : "")"
     }
 
+    private var showOutputPane: Bool {
+        get { workspaceState.showPDFPreview }
+        nonmutating set {
+            workspaceState.showPDFPreview = newValue
+            documentState.showOutputPane = newValue
+        }
+    }
+
+    private var splitLayout: LaTeXEditorSplitLayout {
+        get { LaTeXEditorSplitLayout(rawValue: workspaceState.splitLayout) ?? .editorOnly }
+        nonmutating set {
+            workspaceState.splitLayout = newValue.rawValue
+            let shouldShowOutput = newValue != .editorOnly
+            workspaceState.showPDFPreview = shouldShowOutput
+            documentState.showOutputPane = shouldShowOutput
+        }
+    }
+
+    private var panelArrangement: LaTeXPanelArrangement {
+        get { workspaceState.panelArrangement }
+        nonmutating set { workspaceState.panelArrangement = newValue }
+    }
+
+    private var isOutputLeadingInLayout: Bool {
+        panelArrangement == .pdfEditorTerminal
+    }
+
+    private var threePaneLeftWidth: CGFloat? {
+        get { workspaceState.threePaneLeadingWidth.map { CGFloat($0) } }
+        nonmutating set { workspaceState.threePaneLeadingWidth = newValue.map { Double($0) } }
+    }
+
+    private var threePaneRightWidth: CGFloat? {
+        get { workspaceState.threePaneTrailingWidth.map { CGFloat($0) } }
+        nonmutating set { workspaceState.threePaneTrailingWidth = newValue.map { Double($0) } }
+    }
+
     private var showSidebar: Bool {
         get { workspaceState.showSidebar }
         nonmutating set { workspaceState.showSidebar = newValue }
@@ -105,6 +152,7 @@ struct CodeEditorView: View {
         }
         .onAppear {
             loadFile()
+            syncOutputPaneVisibilityFromWorkspace()
             if isActive {
                 startFileWatcher()
             }
@@ -116,6 +164,7 @@ struct CodeEditorView: View {
         .onChange(of: isActive) {
             if isActive {
                 loadFile()
+                syncOutputPaneVisibilityFromWorkspace()
                 startFileWatcher()
             } else {
                 stopFileWatcher()
@@ -126,41 +175,258 @@ struct CodeEditorView: View {
             stopFileWatcher()
             toolbarStatus = .idle
             loadFile()
+            syncOutputPaneVisibilityFromWorkspace()
             if isActive {
                 startFileWatcher()
             }
         }
-        .onChange(of: documentState.showOutputPane) { persistDocumentWorkspaceState() }
+        .onChange(of: documentState.showOutputPane) {
+            if workspaceState.showPDFPreview != documentState.showOutputPane {
+                workspaceState.showPDFPreview = documentState.showOutputPane
+                onPersistWorkspaceState?()
+            }
+            persistDocumentWorkspaceState()
+        }
+        .onChange(of: workspaceState.showPDFPreview) {
+            if documentState.showOutputPane != workspaceState.showPDFPreview {
+                documentState.showOutputPane = workspaceState.showPDFPreview
+            }
+            onPersistWorkspaceState?()
+        }
         .onChange(of: documentState.showLogs) { persistDocumentWorkspaceState() }
         .onChange(of: documentState.selectedRunID) { persistDocumentWorkspaceState() }
         .onChange(of: documentState.selectedArtifactPath) { persistDocumentWorkspaceState() }
         .onChange(of: showSidebar) { onPersistWorkspaceState?() }
         .onChange(of: workspaceState.sidebarWidth) { onPersistWorkspaceState?() }
         .onChange(of: workspaceState.editorFontSize) { onPersistWorkspaceState?() }
+        .onChange(of: workspaceState.splitLayout) { onPersistWorkspaceState?() }
+        .onChange(of: workspaceState.panelArrangement) {
+            threePaneLeftWidth = nil
+            threePaneRightWidth = nil
+            onPersistWorkspaceState?()
+        }
     }
 
     private var workAreaPane: some View {
         Group {
-            if isActive && showTerminal {
-                HSplitView {
-                    editorAndOutputPane
-                        .layoutPriority(1)
-                    embeddedTerminalPane
+            if isActive && showTerminal && showOutputPane && splitLayout == .horizontal {
+                horizontalThreePaneLayout
+            } else if isActive && showTerminal {
+                switch panelArrangement {
+                case .terminalEditorPDF:
+                    HSplitView {
+                        embeddedTerminalPane
+                        editorAndOutputPane
+                            .layoutPriority(1)
+                    }
+                case .editorPDFTerminal, .pdfEditorTerminal:
+                    HSplitView {
+                        editorAndOutputPane
+                            .layoutPriority(1)
+                        embeddedTerminalPane
+                    }
                 }
             } else {
                 editorAndOutputPane
             }
         }
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: documentState.showOutputPane)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showOutputPane)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: splitLayout)
+    }
+
+    @ViewBuilder
+    private var horizontalThreePaneLayout: some View {
+        GeometryReader { proxy in
+            let roles = threePaneRoles
+            let totalContentWidth = max(0, proxy.size.width - (LaTeXEditorThreePaneSizing.dividerWidth * 2))
+            let widths = resolvedThreePaneWidths(for: roles, totalContentWidth: totalContentWidth)
+
+            HStack(spacing: 0) {
+                threePaneView(for: roles.0)
+                    .frame(width: widths.left)
+
+                threePaneResizeHandle {
+                    guard !isDraggingThreePaneDivider else { return }
+                    NSCursor.resizeLeftRight.set()
+                } onExit: {
+                    guard !isDraggingThreePaneDivider else { return }
+                    NSCursor.arrow.set()
+                } drag: {
+                    AnyGesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.threePaneCoordinateSpace))
+                            .onChanged { value in
+                                if !isDraggingThreePaneDivider {
+                                    isDraggingThreePaneDivider = true
+                                    NSCursor.resizeLeftRight.set()
+                                }
+                                if threePaneDragStartLeftWidth == nil {
+                                    threePaneDragStartLeftWidth = widths.left
+                                }
+                                let startLeft = threePaneDragStartLeftWidth ?? widths.left
+                                let leftMin = paneMinWidth(for: roles.0)
+                                let middleMin = paneMinWidth(for: roles.1)
+                                let maxLeft = max(leftMin, totalContentWidth - widths.right - middleMin)
+                                threePaneLeftWidth = min(max(startLeft + value.translation.width, leftMin), maxLeft)
+                            }
+                            .onEnded { _ in
+                                threePaneDragStartLeftWidth = nil
+                                isDraggingThreePaneDivider = false
+                                NSCursor.arrow.set()
+                            }
+                    )
+                }
+
+                threePaneView(for: roles.1)
+                    .frame(width: widths.middle)
+
+                threePaneResizeHandle {
+                    guard !isDraggingThreePaneDivider else { return }
+                    NSCursor.resizeLeftRight.set()
+                } onExit: {
+                    guard !isDraggingThreePaneDivider else { return }
+                    NSCursor.arrow.set()
+                } drag: {
+                    AnyGesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.threePaneCoordinateSpace))
+                            .onChanged { value in
+                                if !isDraggingThreePaneDivider {
+                                    isDraggingThreePaneDivider = true
+                                    NSCursor.resizeLeftRight.set()
+                                }
+                                if threePaneDragStartRightWidth == nil {
+                                    threePaneDragStartRightWidth = widths.right
+                                }
+                                let startRight = threePaneDragStartRightWidth ?? widths.right
+                                let middleMin = paneMinWidth(for: roles.1)
+                                let rightMin = paneMinWidth(for: roles.2)
+                                let maxRight = max(rightMin, totalContentWidth - widths.left - middleMin)
+                                threePaneRightWidth = min(max(startRight - value.translation.width, rightMin), maxRight)
+                            }
+                            .onEnded { _ in
+                                threePaneDragStartRightWidth = nil
+                                isDraggingThreePaneDivider = false
+                                NSCursor.arrow.set()
+                            }
+                    )
+                }
+
+                threePaneView(for: roles.2)
+                    .frame(width: widths.right)
+            }
+            .coordinateSpace(name: Self.threePaneCoordinateSpace)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+        }
+    }
+
+    private var threePaneRoles: (CodeEditorThreePaneRole, CodeEditorThreePaneRole, CodeEditorThreePaneRole) {
+        switch panelArrangement {
+        case .terminalEditorPDF:
+            return (.terminal, .editor, .output)
+        case .editorPDFTerminal:
+            return (.editor, .output, .terminal)
+        case .pdfEditorTerminal:
+            return (.output, .editor, .terminal)
+        }
+    }
+
+    @ViewBuilder
+    private func threePaneView(for role: CodeEditorThreePaneRole) -> some View {
+        switch role {
+        case .terminal:
+            embeddedTerminalPane
+        case .editor:
+            editorPane
+        case .output:
+            outputPane
+        }
+    }
+
+    private func paneMinWidth(for role: CodeEditorThreePaneRole) -> CGFloat {
+        switch role {
+        case .terminal:
+            return 160
+        case .editor:
+            return 200
+        case .output:
+            return 220
+        }
+    }
+
+    private func paneIdealWidth(for role: CodeEditorThreePaneRole) -> CGFloat {
+        switch role {
+        case .terminal:
+            return 320
+        case .editor:
+            return 620
+        case .output:
+            return 360
+        }
+    }
+
+    private func resolvedThreePaneWidths(
+        for roles: (CodeEditorThreePaneRole, CodeEditorThreePaneRole, CodeEditorThreePaneRole),
+        totalContentWidth: CGFloat
+    ) -> (left: CGFloat, middle: CGFloat, right: CGFloat) {
+        let leftMin = paneMinWidth(for: roles.0)
+        let middleMin = paneMinWidth(for: roles.1)
+        let rightMin = paneMinWidth(for: roles.2)
+        let minimumTotal = leftMin + middleMin + rightMin
+        let availableWidth = max(totalContentWidth, minimumTotal)
+
+        let seededLeft = threePaneLeftWidth ?? paneIdealWidth(for: roles.0)
+        let seededRight = threePaneRightWidth ?? paneIdealWidth(for: roles.2)
+
+        let leftMaxBeforeRightClamp = max(leftMin, availableWidth - middleMin - rightMin)
+        let left = min(max(seededLeft, leftMin), leftMaxBeforeRightClamp)
+
+        let rightMaxBeforeLeftClamp = max(rightMin, availableWidth - left - middleMin)
+        let right = min(max(seededRight, rightMin), rightMaxBeforeLeftClamp)
+
+        let leftMax = max(leftMin, availableWidth - right - middleMin)
+        let clampedLeft = min(left, leftMax)
+        let rightMax = max(rightMin, availableWidth - clampedLeft - middleMin)
+        let clampedRight = min(right, rightMax)
+        let middle = max(middleMin, availableWidth - clampedLeft - clampedRight)
+
+        return (clampedLeft, middle, clampedRight)
+    }
+
+    private func threePaneResizeHandle(
+        onEnter: @escaping () -> Void,
+        onExit: @escaping () -> Void,
+        drag: @escaping () -> AnyGesture<DragGesture.Value>
+    ) -> some View {
+        AppChromeResizeHandle(
+            width: LaTeXEditorThreePaneSizing.dividerWidth,
+            onHoverChanged: { hovering in
+                if hovering {
+                    onEnter()
+                } else {
+                    onExit()
+                }
+            },
+            dragGesture: drag()
+        )
     }
 
     @ViewBuilder
     private var editorAndOutputPane: some View {
-        if documentState.showOutputPane {
+        if !showOutputPane {
+            editorPane
+        } else if splitLayout == .horizontal {
             HSplitView {
+                if isOutputLeadingInLayout { outputPane }
                 editorPane
-                outputPane
+                if !isOutputLeadingInLayout { outputPane }
+            }
+        } else if splitLayout == .vertical {
+            VSplitView {
+                if isOutputLeadingInLayout { outputPane }
+                editorPane
+                if !isOutputLeadingInLayout { outputPane }
             }
         } else {
             editorPane
@@ -493,11 +759,63 @@ struct CodeEditorView: View {
 
                 Button(action: {
                     AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        documentState.showOutputPane.toggle()
+                        showOutputPane.toggle()
                     }
                 }) {
-                    Image(systemName: documentState.showOutputPane ? "chart.xyaxis.line" : "chart.xyaxis.line")
-                        .foregroundStyle(documentState.showOutputPane ? AppChromePalette.info : .secondary)
+                    Image(systemName: "chart.xyaxis.line")
+                        .foregroundStyle(showOutputPane ? AppChromePalette.info : .secondary)
+                }
+                .buttonStyle(.plain)
+
+                Menu {
+                    Button {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            splitLayout = .horizontal
+                        }
+                    } label: {
+                        Label("Côte à côte", systemImage: "rectangle.split.2x1")
+                        if splitLayout == .horizontal { Image(systemName: "checkmark") }
+                    }
+
+                    Button {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            splitLayout = .vertical
+                        }
+                    } label: {
+                        Label("Haut / Bas", systemImage: "rectangle.split.1x2")
+                        if splitLayout == .vertical { Image(systemName: "checkmark") }
+                    }
+
+                    Button {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            splitLayout = .editorOnly
+                        }
+                    } label: {
+                        Label("Éditeur seul", systemImage: "doc.text")
+                        if splitLayout == .editorOnly { Image(systemName: "checkmark") }
+                    }
+                } label: {
+                    Image(systemName: "rectangle.split.2x1")
+                }
+                .buttonStyle(.plain)
+
+                Menu {
+                    ForEach(LaTeXPanelArrangement.allCases, id: \.self) { arrangement in
+                        Button {
+                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                                panelArrangement = arrangement
+                            }
+                        } label: {
+                            HStack {
+                                if panelArrangement == arrangement {
+                                    Image(systemName: "checkmark")
+                                }
+                                Text(arrangement.title)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
                 }
                 .buttonStyle(.plain)
 
@@ -703,6 +1021,12 @@ struct CodeEditorView: View {
 
     private func persistDocumentWorkspaceState() {
         onPersistWorkspaceState?()
+    }
+
+    private func syncOutputPaneVisibilityFromWorkspace() {
+        if documentState.showOutputPane != workspaceState.showPDFPreview {
+            documentState.showOutputPane = workspaceState.showPDFPreview
+        }
     }
 
     private func startFileWatcher() {

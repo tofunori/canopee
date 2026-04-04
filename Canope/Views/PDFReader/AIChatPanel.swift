@@ -978,6 +978,7 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
     private var clickMonitor: Any?
     private var keyMonitor: Any?
     private var scrollMonitor: Any?
+    private weak var focusClickGesture: NSClickGestureRecognizer?
     private var mouseWheelAccumulator: CGFloat = 0
     private var alternateWheelAccumulator: CGFloat = 0
 
@@ -995,6 +996,7 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
         if window == nil {
             removeEventMonitors()
         } else {
+            installFocusClickGestureIfNeeded()
             installClickMonitorIfNeeded()
             installKeyMonitorIfNeeded()
             installScrollMonitorIfNeeded()
@@ -1004,6 +1006,21 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
                 self?.schedulePreferredCursorWarmup()
             }
         }
+    }
+
+    @objc private func handleFocusClickGesture(_ recognizer: NSClickGestureRecognizer) {
+        guard shouldCaptureFocusFromClicks else { return }
+        guard recognizer.state == .ended else { return }
+        activateInputFocus()
+    }
+
+    private func installFocusClickGestureIfNeeded() {
+        guard focusClickGesture == nil else { return }
+        let recognizer = NSClickGestureRecognizer(target: self, action: #selector(handleFocusClickGesture(_:)))
+        recognizer.buttonMask = 0x1
+        recognizer.delaysPrimaryMouseButtonEvents = false
+        addGestureRecognizer(recognizer)
+        focusClickGesture = recognizer
     }
 
     func activateInputFocus() {

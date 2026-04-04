@@ -69,6 +69,8 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var showErrors = false
     @Published var splitLayout = "editorOnly"
     @Published var panelArrangement: LaTeXPanelArrangement = .editorPDFTerminal
+    @Published var threePaneLeadingWidth: Double?
+    @Published var threePaneTrailingWidth: Double?
     @Published var editorFontSize: Double = 14
     @Published var editorTheme = 0
     @Published var referencePaperIDs: [UUID] = []

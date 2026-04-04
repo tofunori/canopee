@@ -58,6 +58,8 @@ struct LaTeXEditorContainer: View {
             showErrors: workspaceState.showErrors,
             splitLayout: workspaceState.splitLayout,
             panelArrangement: workspaceState.panelArrangement,
+            threePaneLeadingWidth: workspaceState.threePaneLeadingWidth,
+            threePaneTrailingWidth: workspaceState.threePaneTrailingWidth,
             editorFontSize: workspaceState.editorFontSize,
             editorTheme: workspaceState.editorTheme,
             referencePaperIDs: workspaceState.referencePaperIDs,
@@ -85,6 +87,8 @@ struct LaTeXEditorContainer: View {
         workspaceState.splitLayout = snapshot.splitLayout
         workspaceState.showPDFPreview = snapshot.showPDFPreview
         workspaceState.panelArrangement = snapshot.panelArrangement
+        workspaceState.threePaneLeadingWidth = snapshot.threePaneLeadingWidth
+        workspaceState.threePaneTrailingWidth = snapshot.threePaneTrailingWidth
         workspaceState.editorFontSize = snapshot.editorFontSize
         workspaceState.editorTheme = snapshot.editorTheme
         workspaceState.layoutBeforeReference = snapshot.layoutBeforeReference

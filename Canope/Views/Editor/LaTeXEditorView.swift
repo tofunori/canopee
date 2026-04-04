@@ -40,8 +40,6 @@ struct LaTeXEditorView: View {
     @State private var selectedEditorRange: NSRange?
     @State private var pendingAnnotation: LaTeXEditorPendingAnnotation?
     @State var sidebarResizeStartWidth: CGFloat?
-    @State private var threePaneLeftWidth: CGFloat?
-    @State private var threePaneRightWidth: CGFloat?
     @State private var threePaneDragStartLeftWidth: CGFloat?
     @State private var threePaneDragStartRightWidth: CGFloat?
     @State private var isDraggingThreePaneDivider = false
@@ -223,6 +221,16 @@ struct LaTeXEditorView: View {
     var panelArrangement: LaTeXPanelArrangement {
         get { workspaceState.panelArrangement }
         nonmutating set { workspaceState.panelArrangement = newValue }
+    }
+
+    var threePaneLeftWidth: CGFloat? {
+        get { workspaceState.threePaneLeadingWidth.map { CGFloat($0) } }
+        nonmutating set { workspaceState.threePaneLeadingWidth = newValue.map { Double($0) } }
+    }
+
+    var threePaneRightWidth: CGFloat? {
+        get { workspaceState.threePaneTrailingWidth.map { CGFloat($0) } }
+        nonmutating set { workspaceState.threePaneTrailingWidth = newValue.map { Double($0) } }
     }
 
     var isPDFLeadingInLayout: Bool {

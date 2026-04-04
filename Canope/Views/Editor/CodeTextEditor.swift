@@ -12,7 +12,7 @@ struct CodeTextEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.appearance = NSAppearance(named: .darkAqua)
@@ -48,14 +48,14 @@ struct CodeTextEditor: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.gutterWidth = 42
         textView.textContainerInset = NSSize(width: textView.gutterWidth + 8, height: 8)
-        textView.autoresizingMask = []
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.autoresizingMask = [.width]
+        textView.maxSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = true
-        textContainer.widthTracksTextView = false
-        textContainer.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textContainer.lineBreakMode = .byClipping
-        textView.minSize = NSSize(width: 0, height: scrollView.contentSize.height)
+        textView.isHorizontallyResizable = false
+        textContainer.widthTracksTextView = true
+        textContainer.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        textContainer.lineBreakMode = .byCharWrapping
+        textView.minSize = NSSize(width: 0, height: 0)
         textView.delegate = context.coordinator
         context.coordinator.textView = textView
         context.coordinator.parent = self
@@ -72,6 +72,8 @@ struct CodeTextEditor: NSViewRepresentable {
         guard let textView = scrollView.documentView as? CodeTextView else { return }
         context.coordinator.parent = self
         context.coordinator.textView = textView
+        textView.maxSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.frame.size.width = scrollView.contentSize.width
 
         if textView.string != text {
             let selectedRange = textView.selectedRange()
