@@ -15,195 +15,7 @@ struct LaTeXEditorView: View {
     @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
     private static let threePaneCoordinateSpace = "LaTeXThreePaneLayout"
 
-    private enum SidebarSizing {
-        static let minWidth: CGFloat = 160
-        static let maxWidth: CGFloat = 320
-        static let defaultWidth: CGFloat = 220
-        static let activityBarWidth: CGFloat = 44
-        static let resizeHandleWidth: CGFloat = 8
-    }
-
-    private enum ThreePaneSizing {
-        static let dividerWidth: CGFloat = 10
-    }
-
-    private enum ThreePaneRole {
-        case terminal
-        case editor
-        case pdf
-    }
-
-    private struct PendingAnnotation: Identifiable {
-        let id = UUID()
-        var draft: LaTeXAnnotationDraft
-        var existingAnnotationID: UUID?
-    }
-
-    private struct DiffGroup: Identifiable, Equatable {
-        let review: ReviewDiffBlock
-
-        var id: String { review.id }
-        var block: TextDiffBlock { review.block }
-        var rows: [ReviewDiffRow] { review.rows }
-        var startLine: Int { review.block.startLine }
-        var endLine: Int { review.block.endLine }
-        var preferredRevealLine: Int { review.preferredRevealLine }
-        var preferredRevealColumn: Int { review.preferredRevealColumn }
-        var preferredRevealLength: Int { review.preferredRevealLength }
-        var kind: TextDiffBlockKind { review.block.kind }
-
-        static func == (lhs: DiffGroup, rhs: DiffGroup) -> Bool {
-            lhs.review == rhs.review
-        }
-    }
-
-    private enum SidebarSection: String {
-        case files
-        case annotations
-        case diff
-    }
-
-    private enum NewEditorFileKind {
-        case latex
-        case markdown
-
-        var defaultFileName: String {
-            switch self {
-            case .latex:
-                return "untitled.tex"
-            case .markdown:
-                return "notes.md"
-            }
-        }
-
-        var contentType: UTType {
-            switch self {
-            case .latex:
-                return UTType(filenameExtension: "tex") ?? .plainText
-            case .markdown:
-                return UTType(filenameExtension: "md") ?? .plainText
-            }
-        }
-
-        var title: String {
-            switch self {
-            case .latex:
-                return "Nouveau fichier LaTeX"
-            case .markdown:
-                return "Nouveau fichier Markdown"
-            }
-        }
-
-        var message: String {
-            switch self {
-            case .latex:
-                return "Crée un nouveau fichier .tex dans le dossier courant"
-            case .markdown:
-                return "Crée un nouveau fichier .md dans le dossier courant"
-            }
-        }
-
-        var template: String {
-            switch self {
-            case .latex:
-                return """
-                \\documentclass{article}
-
-                \\begin{document}
-
-                \\end{document}
-                """
-            case .markdown:
-                return ""
-            }
-        }
-    }
-
-    private enum EditorDocumentMode {
-        case latex
-        case markdown
-
-        init(fileURL: URL) {
-            switch fileURL.pathExtension.lowercased() {
-            case "md":
-                self = .markdown
-            default:
-                self = .latex
-            }
-        }
-
-        var fileIconTint: Color {
-            switch self {
-            case .latex:
-                return .green
-            case .markdown:
-                return .blue
-            }
-        }
-
-        var primaryClusterTitle: String {
-            switch self {
-            case .latex:
-                return "LaTeX"
-            case .markdown:
-                return "Markdown"
-            }
-        }
-
-        var compiledTabTitle: String {
-            switch self {
-            case .latex:
-                return "PDF compilé"
-            case .markdown:
-                return "PDF aperçu"
-            }
-        }
-
-        var emptyPreviewTitle: String {
-            switch self {
-            case .latex:
-                return "Pas encore compilé"
-            case .markdown:
-                return "Pas encore rendu"
-            }
-        }
-
-        var emptyPreviewDescription: String {
-            switch self {
-            case .latex:
-                return "⌘B pour compiler"
-            case .markdown:
-                return "Clique sur Rendre le PDF"
-            }
-        }
-
-        var runningStatus: ToolbarStatusState {
-            switch self {
-            case .latex:
-                return .compiling
-            case .markdown:
-                return .rendering
-            }
-        }
-
-        var successStatus: ToolbarStatusState {
-            switch self {
-            case .latex:
-                return .saved
-            case .markdown:
-                return .previewReady
-            }
-        }
-
-        var outputSuccessTitle: String {
-            switch self {
-            case .latex:
-                return "Compilation réussie"
-            case .markdown:
-                return "PDF prêt"
-            }
-        }
-    }
+    // Types extracted to LaTeXEditorTypes.swift
 
     let fileURL: URL
     var isActive: Bool = true
@@ -226,7 +38,7 @@ struct LaTeXEditorView: View {
     @State private var latexAnnotations: [LaTeXAnnotation] = []
     @State private var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] = []
     @State private var selectedEditorRange: NSRange?
-    @State private var pendingAnnotation: PendingAnnotation?
+    @State private var pendingAnnotation: LaTeXEditorPendingAnnotation?
     @State private var sidebarResizeStartWidth: CGFloat?
     @State private var threePaneLeftWidth: CGFloat?
     @State private var threePaneRightWidth: CGFloat?
@@ -238,21 +50,13 @@ struct LaTeXEditorView: View {
     @State private var fileCreationError: String?
     @State private var annotationExportError: String?
 
-    // PDF pane tabs (compiled + reference articles)
-    enum PdfPaneTab: Hashable {
-        case compiled
-        case reference(UUID)
-    }
-    @Query private var allPapers: [Paper]
-    @State private var fitToWidthTrigger = false
-    @State private var referenceContextWriteID = UUID()
-    @Namespace private var pdfTabIndicatorNamespace
+    // PDF pane tabs — type extracted to LaTeXEditorTypes.swift
+    @Query var allPapers: [Paper]
+    @State var fitToWidthTrigger = false
+    @State var referenceContextWriteID = UUID()
+    @Namespace var pdfTabIndicatorNamespace
 
-    enum SplitLayout: String {
-        case horizontal
-        case vertical
-        case editorOnly
-    }
+    // LaTeXEditorSplitLayout extracted to LaTeXEditorTypes.swift
 
     static let editorThemes: [(name: String, bg: NSColor, fg: NSColor, comment: NSColor, command: NSColor, math: NSColor, env: NSColor, brace: NSColor)] = [
         ("Kaku Dark",
@@ -297,13 +101,13 @@ struct LaTeXEditorView: View {
          NSColor(red: 0.80, green: 0.29, blue: 0.09, alpha: 1)),
     ]
 
-    private var projectRoot: URL { fileURL.deletingLastPathComponent() }
-    private var documentMode: EditorDocumentMode { EditorDocumentMode(fileURL: fileURL) }
-    private var previewPDFURL: URL { MarkdownPreviewRenderer.previewURL(for: fileURL) }
-    private var errorLines: Set<Int> {
+    var projectRoot: URL { fileURL.deletingLastPathComponent() }
+    var documentMode: EditorDocumentMode { EditorDocumentMode(fileURL: fileURL) }
+    var previewPDFURL: URL { MarkdownPreviewRenderer.previewURL(for: fileURL) }
+    var errorLines: Set<Int> {
         Set(errors.filter { !$0.isWarning && $0.line > 0 }.map { $0.line })
     }
-    private var canCreateAnnotationFromSelection: Bool {
+    var canCreateAnnotationFromSelection: Bool {
         guard let range = selectedEditorRange, range.location != NSNotFound, range.length > 0 else {
             return false
         }
@@ -313,11 +117,11 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private var canAnnotateCurrentDocument: Bool {
+    var canAnnotateCurrentDocument: Bool {
         documentMode == .latex && canCreateAnnotationFromSelection
     }
 
-    private var isFileBrowserCreateMenuVisible: Bool {
+    var isFileBrowserCreateMenuVisible: Bool {
         showSidebar && selectedSidebarSection == .files
     }
 
@@ -376,7 +180,7 @@ struct LaTeXEditorView: View {
         return "\(errors.filter { !$0.isWarning }.count) erreur(s), \(errors.filter { $0.isWarning }.count) avertissement(s)"
     }
 
-    private var sidebarAnnotations: [ResolvedLaTeXAnnotation] {
+    var sidebarAnnotations: [ResolvedLaTeXAnnotation] {
         resolvedLaTeXAnnotations.sorted { lhs, rhs in
             switch (lhs.resolvedRange, rhs.resolvedRange) {
             case let (left?, right?):
@@ -391,90 +195,90 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private var diffGroups: [DiffGroup] {
-        DiffEngine.reviewBlocks(old: savedText, new: text).map { DiffGroup(review: $0) }
+    var diffGroups: [LaTeXEditorDiffGroup] {
+        DiffEngine.reviewBlocks(old: savedText, new: text).map { LaTeXEditorDiffGroup(review: $0) }
     }
 
-    private var showSidebar: Bool {
+    var showSidebar: Bool {
         get { workspaceState.showSidebar }
         nonmutating set { workspaceState.showSidebar = newValue }
     }
 
-    private var selectedSidebarSection: SidebarSection {
-        get { SidebarSection(rawValue: workspaceState.selectedSidebarSection) ?? .files }
+    var selectedSidebarSection: LaTeXEditorSidebarSection {
+        get { LaTeXEditorSidebarSection(rawValue: workspaceState.selectedSidebarSection) ?? .files }
         nonmutating set { workspaceState.selectedSidebarSection = newValue.rawValue }
     }
 
-    private var sidebarWidth: CGFloat {
+    var sidebarWidth: CGFloat {
         get {
             let stored = CGFloat(workspaceState.sidebarWidth)
-            guard stored.isFinite, stored > 0 else { return SidebarSizing.defaultWidth }
-            return min(max(stored, SidebarSizing.minWidth), SidebarSizing.maxWidth)
+            guard stored.isFinite, stored > 0 else { return LaTeXEditorSidebarSizing.defaultWidth }
+            return min(max(stored, LaTeXEditorSidebarSizing.minWidth), LaTeXEditorSidebarSizing.maxWidth)
         }
         nonmutating set {
-            workspaceState.sidebarWidth = Double(min(max(newValue, SidebarSizing.minWidth), SidebarSizing.maxWidth))
+            workspaceState.sidebarWidth = Double(min(max(newValue, LaTeXEditorSidebarSizing.minWidth), LaTeXEditorSidebarSizing.maxWidth))
         }
     }
 
-    private var isCompactDiffSidebar: Bool {
+    var isCompactDiffSidebar: Bool {
         sidebarWidth < 220
     }
 
-    private var showPDFPreview: Bool {
+    var showPDFPreview: Bool {
         get { workspaceState.showPDFPreview }
         nonmutating set { workspaceState.showPDFPreview = newValue }
     }
 
-    private var showEditorPane: Bool {
+    var showEditorPane: Bool {
         get { workspaceState.showEditorPane }
         nonmutating set { workspaceState.showEditorPane = newValue }
     }
 
-    private var showErrors: Bool {
+    var showErrors: Bool {
         get { workspaceState.showErrors }
         nonmutating set { workspaceState.showErrors = newValue }
     }
 
-    private var splitLayout: SplitLayout {
-        get { SplitLayout(rawValue: workspaceState.splitLayout) ?? .editorOnly }
+    var splitLayout: LaTeXEditorSplitLayout {
+        get { LaTeXEditorSplitLayout(rawValue: workspaceState.splitLayout) ?? .editorOnly }
         nonmutating set {
             workspaceState.splitLayout = newValue.rawValue
             workspaceState.showPDFPreview = newValue != .editorOnly
         }
     }
 
-    private var panelArrangement: LaTeXPanelArrangement {
+    var panelArrangement: LaTeXPanelArrangement {
         get { workspaceState.panelArrangement }
         nonmutating set { workspaceState.panelArrangement = newValue }
     }
 
-    private var isPDFLeadingInLayout: Bool {
+    var isPDFLeadingInLayout: Bool {
         panelArrangement == .pdfEditorTerminal
     }
 
-    private var editorFontSize: CGFloat {
+    var editorFontSize: CGFloat {
         get { CGFloat(workspaceState.editorFontSize) }
         nonmutating set { workspaceState.editorFontSize = Double(newValue) }
     }
 
-    private var editorTheme: Int {
+    var editorTheme: Int {
         get { min(max(workspaceState.editorTheme, 0), Self.editorThemes.count - 1) }
         nonmutating set { workspaceState.editorTheme = newValue }
     }
 
-    private var pdfPaneTabs: [PdfPaneTab] {
+    var pdfPaneTabs: [LaTeXEditorPdfPaneTab] {
         [.compiled] + workspaceState.referencePaperIDs.map { .reference($0) }
     }
 
-    private var selectedPdfTab: PdfPaneTab {
+    var selectedPdfTab: LaTeXEditorPdfPaneTab {
         if let id = workspaceState.selectedReferencePaperID {
             return .reference(id)
         }
         return .compiled
     }
 
-    private var layoutBeforeReference: SplitLayout? {
-        get { workspaceState.layoutBeforeReference.flatMap(SplitLayout.init(rawValue:)) }
+    var layoutBeforeReference: LaTeXEditorSplitLayout? {
+        get { workspaceState.layoutBeforeReference.flatMap(LaTeXEditorSplitLayout.init(rawValue:)) }
         nonmutating set { workspaceState.layoutBeforeReference = newValue?.rawValue }
     }
 
@@ -504,10 +308,10 @@ struct LaTeXEditorView: View {
                     pendingAnnotation = nil
                 },
                 onSave: { note in
-                    savePendingAnnotation(note: note)
+                    saveLaTeXEditorPendingAnnotation(note: note)
                 },
                 onSaveAndSend: { note in
-                    savePendingAnnotation(note: note, sendToClaude: true)
+                    saveLaTeXEditorPendingAnnotation(note: note, sendToClaude: true)
                 }
             )
         }
@@ -587,7 +391,7 @@ struct LaTeXEditorView: View {
     // MARK: - Panes
 
     @ViewBuilder
-    private var workAreaPane: some View {
+    var workAreaPane: some View {
         Group {
             if isActive && showTerminal && showPDFPreview && showEditorPane && splitLayout == .horizontal {
                 horizontalThreePaneLayout
@@ -617,10 +421,10 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private var horizontalThreePaneLayout: some View {
+    var horizontalThreePaneLayout: some View {
         GeometryReader { proxy in
             let roles = threePaneRoles
-            let totalContentWidth = max(0, proxy.size.width - (ThreePaneSizing.dividerWidth * 2))
+            let totalContentWidth = max(0, proxy.size.width - (LaTeXEditorThreePaneSizing.dividerWidth * 2))
             let widths = resolvedThreePaneWidths(for: roles, totalContentWidth: totalContentWidth)
 
             HStack(spacing: 0) {
@@ -702,7 +506,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private var threePaneRoles: (ThreePaneRole, ThreePaneRole, ThreePaneRole) {
+    var threePaneRoles: (LaTeXEditorThreePaneRole, LaTeXEditorThreePaneRole, LaTeXEditorThreePaneRole) {
         switch panelArrangement {
         case .terminalEditorPDF:
             return (.terminal, .editor, .pdf)
@@ -714,7 +518,7 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private func threePaneView(for role: ThreePaneRole) -> some View {
+    func threePaneView(for role: LaTeXEditorThreePaneRole) -> some View {
         switch role {
         case .terminal:
             embeddedTerminalPane
@@ -725,7 +529,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func paneMinWidth(for role: ThreePaneRole) -> CGFloat {
+    func paneMinWidth(for role: LaTeXEditorThreePaneRole) -> CGFloat {
         switch role {
         case .terminal:
             return 160
@@ -736,7 +540,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func paneIdealWidth(for role: ThreePaneRole) -> CGFloat {
+    func paneIdealWidth(for role: LaTeXEditorThreePaneRole) -> CGFloat {
         switch role {
         case .terminal:
             return 320
@@ -747,8 +551,8 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func resolvedThreePaneWidths(
-        for roles: (ThreePaneRole, ThreePaneRole, ThreePaneRole),
+    func resolvedThreePaneWidths(
+        for roles: (LaTeXEditorThreePaneRole, LaTeXEditorThreePaneRole, LaTeXEditorThreePaneRole),
         totalContentWidth: CGFloat
     ) -> (left: CGFloat, middle: CGFloat, right: CGFloat) {
         let leftMin = paneMinWidth(for: roles.0)
@@ -775,13 +579,13 @@ struct LaTeXEditorView: View {
         return (clampedLeft, middle, clampedRight)
     }
 
-    private func threePaneResizeHandle(
+    func threePaneResizeHandle(
         onEnter: @escaping () -> Void,
         onExit: @escaping () -> Void,
         drag: @escaping () -> AnyGesture<DragGesture.Value>
     ) -> some View {
         AppChromeResizeHandle(
-            width: ThreePaneSizing.dividerWidth,
+            width: LaTeXEditorThreePaneSizing.dividerWidth,
             onHoverChanged: { hovering in
                 if hovering {
                     onEnter()
@@ -794,7 +598,7 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private var editorAndPDFPane: some View {
+    var editorAndPDFPane: some View {
         if !showEditorPane && !showPDFPreview {
             hiddenEditorPlaceholderPane
         } else if !showEditorPane {
@@ -818,7 +622,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private var hiddenEditorPlaceholderPane: some View {
+    var hiddenEditorPlaceholderPane: some View {
         ContentUnavailableView(
             "Panneau LaTeX fermé",
             systemImage: "doc.text",
@@ -827,7 +631,7 @@ struct LaTeXEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var embeddedTerminalPane: some View {
+    var embeddedTerminalPane: some View {
         TerminalPanel(
             workspaceState: terminalWorkspaceState,
             document: nil,
@@ -839,7 +643,7 @@ struct LaTeXEditorView: View {
         .frame(minWidth: 160, idealWidth: 320, maxWidth: .infinity)
     }
 
-    private var sidebarPane: some View {
+    var sidebarPane: some View {
         HStack(spacing: 0) {
             sidebarActivityBar
             AppChromeDivider(role: .panel, axis: .vertical)
@@ -868,15 +672,15 @@ struct LaTeXEditorView: View {
         }
         .frame(
             width: showSidebar
-                ? SidebarSizing.activityBarWidth + sidebarWidth + SidebarSizing.resizeHandleWidth + AppChromeMetrics.dividerThickness
-                : SidebarSizing.activityBarWidth
+                ? LaTeXEditorSidebarSizing.activityBarWidth + sidebarWidth + LaTeXEditorSidebarSizing.resizeHandleWidth + AppChromeMetrics.dividerThickness
+                : LaTeXEditorSidebarSizing.activityBarWidth
         )
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showSidebar)
     }
 
-    private var sidebarResizeHandle: some View {
+    var sidebarResizeHandle: some View {
         AppChromeResizeHandle(
-            width: SidebarSizing.resizeHandleWidth,
+            width: LaTeXEditorSidebarSizing.resizeHandleWidth,
             onHoverChanged: { hovering in
                 if hovering {
                     NSCursor.resizeLeftRight.push()
@@ -900,7 +704,7 @@ struct LaTeXEditorView: View {
         )
     }
 
-    private var sidebarActivityBar: some View {
+    var sidebarActivityBar: some View {
         VStack(spacing: 8) {
             sidebarButton(for: .files, systemImage: "folder")
             sidebarButton(for: .annotations, systemImage: "note.text")
@@ -912,7 +716,7 @@ struct LaTeXEditorView: View {
         .background(AppChromePalette.surfaceSubbar)
     }
 
-    private var fileBrowserSidebar: some View {
+    var fileBrowserSidebar: some View {
         FileBrowserView(rootURL: projectRoot, showsCreateFileMenu: true) { url in
             let ext = url.pathExtension.lowercased()
             if ext == "pdf" {
@@ -925,7 +729,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private var annotationSidebar: some View {
+    var annotationSidebar: some View {
         Group {
             if let referenceID = activeReferencePDFID,
                let document = activeReferencePDFDocument,
@@ -937,7 +741,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private var latexAnnotationSidebar: some View {
+    var latexAnnotationSidebar: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Label("Annotations", systemImage: "note.text")
@@ -996,7 +800,7 @@ struct LaTeXEditorView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private func referenceAnnotationSidebar(
+    func referenceAnnotationSidebar(
         referenceID: UUID,
         document: PDFDocument,
         state: ReferencePDFUIState
@@ -1045,7 +849,7 @@ struct LaTeXEditorView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var diffSidebar: some View {
+    var diffSidebar: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Label("Diff", systemImage: "arrow.left.arrow.right.square")
@@ -1128,7 +932,7 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private func diffBatchActionButton(
+    func diffBatchActionButton(
         title: String,
         systemImage: String,
         tint: Color,
@@ -1157,7 +961,7 @@ struct LaTeXEditorView: View {
         .help(title)
     }
 
-    private var editorPane: some View {
+    var editorPane: some View {
         VStack(spacing: 0) {
             if let editorTabBar {
                 editorTabBar
@@ -1217,7 +1021,7 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private func diffRow(_ group: DiffGroup) -> some View {
+    func diffRow(_ group: LaTeXEditorDiffGroup) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(diffLabel(for: group))
@@ -1229,7 +1033,7 @@ struct LaTeXEditorView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
-                    rejectDiffGroup(group)
+                    rejectLaTeXEditorDiffGroup(group)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption2.weight(.semibold))
@@ -1239,7 +1043,7 @@ struct LaTeXEditorView: View {
                 .help("Rejeter ce bloc")
 
                 Button {
-                    acceptDiffGroup(group)
+                    acceptLaTeXEditorDiffGroup(group)
                 } label: {
                     Image(systemName: "checkmark")
                         .font(.caption2.weight(.semibold))
@@ -1270,7 +1074,7 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private func reviewRow(_ row: ReviewDiffRow) -> some View {
+    func reviewRow(_ row: ReviewDiffRow) -> some View {
         switch row.kind {
         case .added:
             compactDiffSnippet(
@@ -1300,7 +1104,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func compactDiffSnippet(
+    func compactDiffSnippet(
         prefix: String,
         text: Text,
         accent: Color
@@ -1322,7 +1126,7 @@ struct LaTeXEditorView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
-    private func reviewText(from spans: [ReviewInlineSpan], accent: Color) -> Text {
+    func reviewText(from spans: [ReviewInlineSpan], accent: Color) -> Text {
         guard !spans.isEmpty else { return Text(" ") }
 
         return spans.reduce(Text("")) { partial, span in
@@ -1330,7 +1134,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func reviewSpanText(_ span: ReviewInlineSpan, accent: Color) -> Text {
+    func reviewSpanText(_ span: ReviewInlineSpan, accent: Color) -> Text {
         let text = Text(verbatim: span.text.isEmpty ? " " : span.text)
         switch span.kind {
         case .equal:
@@ -1345,7 +1149,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func diffLabel(for group: DiffGroup) -> String {
+    func diffLabel(for group: LaTeXEditorDiffGroup) -> String {
         switch group.kind {
         case .added:
             return "Ajout"
@@ -1356,14 +1160,14 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func diffLineLabel(for group: DiffGroup) -> String {
+    func diffLineLabel(for group: LaTeXEditorDiffGroup) -> String {
         if group.startLine == group.endLine {
             return "Ligne \(group.startLine)"
         }
         return "Lignes \(group.startLine)-\(group.endLine)"
     }
 
-    private func diffAccentColor(for group: DiffGroup) -> Color {
+    func diffAccentColor(for group: LaTeXEditorDiffGroup) -> Color {
         switch group.kind {
         case .added:
             return .green
@@ -1374,54 +1178,54 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func acceptDiffGroup(_ group: DiffGroup) {
+    func acceptLaTeXEditorDiffGroup(_ group: LaTeXEditorDiffGroup) {
         savedText = DiffEngine.replacingOldBlock(in: savedText, with: group.block)
     }
 
-    private func rejectDiffGroup(_ group: DiffGroup) {
+    func rejectLaTeXEditorDiffGroup(_ group: LaTeXEditorDiffGroup) {
         text = DiffEngine.replacingNewBlock(in: text, with: group.block)
         reconcileAnnotations()
     }
 
-    private func acceptAllDiffs() {
+    func acceptAllDiffs() {
         savedText = text
         reconcileAnnotations()
     }
 
-    private func rejectAllDiffs() {
+    func rejectAllDiffs() {
         text = savedText
         reconcileAnnotations()
     }
 
     /// The PDF document for the currently selected pane tab
-    private var displayedPDF: PDFDocument? {
+    var displayedPDF: PDFDocument? {
         switch selectedPdfTab {
         case .compiled: return compiledPDF
         case .reference(let id): return workspaceState.referencePDFs[id]
         }
     }
 
-    private var activeReferencePDFID: UUID? {
+    var activeReferencePDFID: UUID? {
         if case .reference(let id) = selectedPdfTab { return id }
         return nil
     }
 
-    private var activeReferencePDFDocument: PDFDocument? {
+    var activeReferencePDFDocument: PDFDocument? {
         guard let id = activeReferencePDFID else { return nil }
         return workspaceState.referencePDFs[id]
     }
 
-    private var activeReferencePDFState: ReferencePDFUIState? {
+    var activeReferencePDFState: ReferencePDFUIState? {
         guard let id = activeReferencePDFID else { return nil }
         return workspaceState.referencePDFUIStates[id]
     }
 
-    private var isShowingReference: Bool {
+    var isShowingReference: Bool {
         if case .reference = selectedPdfTab { return true }
         return false
     }
 
-    private var activeReferenceAnnotationCount: Int {
+    var activeReferenceAnnotationCount: Int {
         guard let document = activeReferencePDFDocument else { return 0 }
         return (0..<document.pageCount).reduce(0) { count, pageIndex in
             guard let page = document.page(at: pageIndex) else { return count }
@@ -1431,15 +1235,15 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private var activeErrorCount: Int {
+    var activeErrorCount: Int {
         errors.filter { !$0.isWarning }.count
     }
 
-    private func paperFor(_ id: UUID) -> Paper? {
+    func paperFor(_ id: UUID) -> Paper? {
         allPapers.first { $0.id == id }
     }
 
-    private var pdfPane: some View {
+    var pdfPane: some View {
         VStack(spacing: 0) {
             // Tab bar (only shown when more than just compiled)
             if pdfPaneTabs.count > 1 {
@@ -1525,7 +1329,7 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private func pdfTabButton(_ tab: PdfPaneTab) -> some View {
+    func pdfTabButton(_ tab: LaTeXEditorPdfPaneTab) -> some View {
         let isSelected = tab == selectedPdfTab
         HStack(spacing: 4) {
             Button {
@@ -1581,7 +1385,7 @@ struct LaTeXEditorView: View {
 
     // MARK: - Toolbar
 
-    private var editorToolbar: some View {
+    var editorToolbar: some View {
         HStack(spacing: 8) {
             fileToolbarClusterView
             documentToolbarClusterView
@@ -1847,7 +1651,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func toolbarCluster<Content: View>(
+    func toolbarCluster<Content: View>(
         zone: ToolbarZone,
         title: String? = nil,
         @ViewBuilder content: @escaping () -> Content
@@ -1855,7 +1659,7 @@ struct LaTeXEditorView: View {
         AppChromeToolbarCluster(zone: zone, title: title, content: content)
     }
 
-    private func setToolbarStatus(_ status: ToolbarStatusState, autoClearAfter delay: TimeInterval? = nil) {
+    func setToolbarStatus(_ status: ToolbarStatusState, autoClearAfter delay: TimeInterval? = nil) {
         toolbarStatusClearWorkItem?.cancel()
         toolbarStatusClearWorkItem = nil
         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
@@ -1874,7 +1678,7 @@ struct LaTeXEditorView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
-    private func toggleSidebar(section: SidebarSection? = nil) {
+    func toggleSidebar(section: LaTeXEditorSidebarSection? = nil) {
         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
             if let section {
                 if showSidebar && selectedSidebarSection == section {
@@ -1889,26 +1693,26 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func toggleEditorPaneVisibility() {
+    func toggleEditorPaneVisibility() {
         guard !(showEditorPane && !showTerminal && !showPDFPreview) else { return }
         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
             showEditorPane.toggle()
         }
     }
 
-    private func toggleTerminalVisibility() {
+    func toggleTerminalVisibility() {
         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
             showTerminal.toggle()
         }
     }
 
-    private func toggleReferenceAnnotationSidebar() {
+    func toggleReferenceAnnotationSidebar() {
         toggleSidebar(section: .annotations)
     }
 
     // MARK: - File Operations
 
-    private func loadFile(useAsBaseline: Bool = true) {
+    func loadFile(useAsBaseline: Bool = true) {
         guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
         text = content
         if useAsBaseline {
@@ -1919,7 +1723,7 @@ struct LaTeXEditorView: View {
         lastModified = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
     }
 
-    private func saveFile() {
+    func saveFile() {
         if documentMode == .latex {
             compile()
         } else {
@@ -1927,7 +1731,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func createNewEditorFile(_ kind: NewEditorFileKind) {
+    func createNewEditorFile(_ kind: NewEditorFileKind) {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.directoryURL = projectRoot
@@ -1949,7 +1753,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func openFile(_ url: URL) {
+    func openFile(_ url: URL) {
         let fileExtension = url.pathExtension.lowercased()
         if fileExtension == "tex" || fileExtension == "md" || fileExtension == "bib" || fileExtension == "txt" {
             try? text.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -1964,7 +1768,7 @@ struct LaTeXEditorView: View {
 
     /// Reflow: join paragraph lines into single lines. Visual word wrap handles display.
     /// Preserves blank lines and LaTeX structural commands.
-    private func reflowParagraphs() {
+    func reflowParagraphs() {
         let lines = text.components(separatedBy: "\n")
         var result: [String] = []
         var currentParagraph: [String] = []
@@ -2013,7 +1817,7 @@ struct LaTeXEditorView: View {
         lastModified = modificationDate()
     }
 
-    private func reconcileAnnotations() {
+    func reconcileAnnotations() {
         guard documentMode == .latex else {
             resolvedLaTeXAnnotations = []
             return
@@ -2021,7 +1825,7 @@ struct LaTeXEditorView: View {
         resolvedLaTeXAnnotations = LaTeXAnnotationStore.resolve(latexAnnotations, in: text)
     }
 
-    private func persistAnnotations() {
+    func persistAnnotations() {
         guard documentMode == .latex else { return }
         if latexAnnotations.isEmpty {
             try? LaTeXAnnotationStore.deleteSidecar(for: fileURL)
@@ -2030,7 +1834,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func beginAnnotationFromSelection() {
+    func beginAnnotationFromSelection() {
         guard documentMode == .latex else { return }
         guard let range = selectedEditorRange,
               canAnnotateCurrentDocument,
@@ -2044,10 +1848,10 @@ struct LaTeXEditorView: View {
             }
             selectedSidebarSection = .annotations
         }
-        pendingAnnotation = PendingAnnotation(draft: draft, existingAnnotationID: nil)
+        pendingAnnotation = LaTeXEditorPendingAnnotation(draft: draft, existingAnnotationID: nil)
     }
 
-    private func savePendingAnnotation(note: String, sendToClaude: Bool = false) {
+    func saveLaTeXEditorPendingAnnotation(note: String, sendToClaude: Bool = false) {
         guard var draft = pendingAnnotation?.draft else { return }
         draft.note = note
 
@@ -2071,18 +1875,18 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func deleteAnnotation(_ annotationID: UUID) {
+    func deleteAnnotation(_ annotationID: UUID) {
         latexAnnotations.removeAll { $0.id == annotationID }
         persistAnnotations()
         reconcileAnnotations()
     }
 
-    private func sendAnnotationToClaude(_ resolved: ResolvedLaTeXAnnotation) {
+    func sendAnnotationToClaude(_ resolved: ResolvedLaTeXAnnotation) {
         let prompt = annotationPrompt(for: resolved)
         sendPromptToClaudeTerminal(prompt, selectionContent: resolved.annotation.selectedText)
     }
 
-    private func sendAllAnnotationsToClaude() {
+    func sendAllAnnotationsToClaude() {
         let prompt = batchAnnotationPrompt(for: sidebarAnnotations)
         let selectionContent = sidebarAnnotations
             .map(\.annotation.selectedText)
@@ -2090,7 +1894,7 @@ struct LaTeXEditorView: View {
         sendPromptToClaudeTerminal(prompt, selectionContent: selectionContent)
     }
 
-    private func sendPromptToClaudeTerminal(_ prompt: String, selectionContent: String) {
+    func sendPromptToClaudeTerminal(_ prompt: String, selectionContent: String) {
         CanopeContextFiles.writeAnnotationPrompt(prompt)
         CanopeContextFiles.writeIDESelectionState(
             ClaudeIDESelectionState.makeSnapshot(
@@ -2107,7 +1911,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func addTerminalTab() {
+    func addTerminalTab() {
         NotificationCenter.default.post(name: .canopeTerminalAddTab, object: nil)
     }
 
@@ -2131,7 +1935,7 @@ struct LaTeXEditorView: View {
         """
     }
 
-    private func batchAnnotationPrompt(for annotations: [ResolvedLaTeXAnnotation]) -> String {
+    func batchAnnotationPrompt(for annotations: [ResolvedLaTeXAnnotation]) -> String {
         let blocks = annotations.enumerated().map { index, resolved in
             let annotation = resolved.annotation
             let status = resolved.isDetached ? "detached" : "anchored"
@@ -2162,18 +1966,18 @@ struct LaTeXEditorView: View {
         """
     }
 
-    private func beginEditingAnnotation(_ annotationID: UUID) {
+    func beginEditingAnnotation(_ annotationID: UUID) {
         guard let resolved = resolvedLaTeXAnnotations.first(where: { $0.annotation.id == annotationID }) else {
             return
         }
 
         if let range = resolved.resolvedRange,
            let draft = LaTeXAnnotationStore.makeDraft(from: range, in: text, note: resolved.annotation.note) {
-            pendingAnnotation = PendingAnnotation(draft: draft, existingAnnotationID: annotationID)
+            pendingAnnotation = LaTeXEditorPendingAnnotation(draft: draft, existingAnnotationID: annotationID)
             return
         }
 
-        pendingAnnotation = PendingAnnotation(
+        pendingAnnotation = LaTeXEditorPendingAnnotation(
             draft: LaTeXAnnotationDraft(
                 selectedText: resolved.annotation.selectedText,
                 note: resolved.annotation.note,
@@ -2186,7 +1990,7 @@ struct LaTeXEditorView: View {
     }
 
     @ViewBuilder
-    private func sidebarButton(for section: SidebarSection, systemImage: String) -> some View {
+    func sidebarButton(for section: LaTeXEditorSidebarSection, systemImage: String) -> some View {
         let isActive = showSidebar && selectedSidebarSection == section
 
         Button {
@@ -2203,7 +2007,7 @@ struct LaTeXEditorView: View {
         .help(section == .files ? "Fichiers" : "Annotations")
     }
 
-    private func annotationRow(_ resolved: ResolvedLaTeXAnnotation) -> some View {
+    func annotationRow(_ resolved: ResolvedLaTeXAnnotation) -> some View {
         let annotation = resolved.annotation
 
         return VStack(alignment: .leading, spacing: 6) {
@@ -2270,7 +2074,7 @@ struct LaTeXEditorView: View {
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
-    private func loadExistingPDF() {
+    func loadExistingPDF() {
         if FileManager.default.fileExists(atPath: previewPDFURL.path) {
             compiledPDF = PDFDocument(url: previewPDFURL)
         } else {
@@ -2278,7 +2082,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func reloadActiveFileState() {
+    func reloadActiveFileState() {
         stopFileWatcher()
         pendingAnnotation = nil
         selectedEditorRange = nil
@@ -2295,18 +2099,18 @@ struct LaTeXEditorView: View {
         refreshSplitGrabAreas()
     }
 
-    private func refreshSplitGrabAreas() {
+    func refreshSplitGrabAreas() {
         for delay in [0.05, 0.2, 0.45] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 for window in NSApp.windows {
                     guard let contentView = window.contentView else { continue }
-                    MainWindow.thickenSplitViews(contentView)
+                    SplitViewHelper.thickenSplitViews(contentView)
                 }
             }
         }
     }
 
-    private func scrollEditorToLine(_ lineNumber: Int, selectingLine: Bool = true) {
+    func scrollEditorToLine(_ lineNumber: Int, selectingLine: Bool = true) {
         let lines = text.components(separatedBy: "\n")
         guard lineNumber > 0 && lineNumber <= lines.count else { return }
         var charOffset = 0
@@ -2325,7 +2129,7 @@ struct LaTeXEditorView: View {
         )
     }
 
-    private func scrollEditorToInverseSyncResult(_ result: SyncTeXInverseResult) {
+    func scrollEditorToInverseSyncResult(_ result: SyncTeXInverseResult) {
         let lines = text.components(separatedBy: "\n")
         guard result.line > 0 && result.line <= lines.count else { return }
 
@@ -2340,7 +2144,7 @@ struct LaTeXEditorView: View {
         )
     }
 
-    private func resolvedInverseSyncColumn(in lineText: String, result: SyncTeXInverseResult) -> Int {
+    func resolvedInverseSyncColumn(in lineText: String, result: SyncTeXInverseResult) -> Int {
         let lineNSString = lineText as NSString
         if let column = result.column, column >= 0 {
             return min(column, lineNSString.length)
@@ -2369,7 +2173,7 @@ struct LaTeXEditorView: View {
         return 0
     }
 
-    private func syncHintAnchor(in context: String, offset: Int) -> String {
+    func syncHintAnchor(in context: String, offset: Int) -> String {
         let nsContext = context as NSString
         let length = nsContext.length
         guard length > 0 else { return "" }
@@ -2392,7 +2196,7 @@ struct LaTeXEditorView: View {
         return nsContext.substring(with: NSRange(location: start, length: max(0, end - start)))
     }
 
-    private func inverseSyncHighlightLength(in lineText: String, result: SyncTeXInverseResult) -> Int {
+    func inverseSyncHighlightLength(in lineText: String, result: SyncTeXInverseResult) -> Int {
         guard let context = result.context?
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2411,7 +2215,7 @@ struct LaTeXEditorView: View {
         return max(1, NSRange(anchorRange, in: lineText).length)
     }
 
-    private func revealEditorLocation(for group: DiffGroup) {
+    func revealEditorLocation(for group: LaTeXEditorDiffGroup) {
         revealEditorLocationForLine(
             max(group.preferredRevealLine, 1),
             columnOffset: group.preferredRevealColumn,
@@ -2419,7 +2223,7 @@ struct LaTeXEditorView: View {
         )
     }
 
-    private func revealEditorLocationForLine(
+    func revealEditorLocationForLine(
         _ lineNumber: Int,
         columnOffset: Int = 0,
         highlightLength: Int = 1
@@ -2444,7 +2248,7 @@ struct LaTeXEditorView: View {
 
     // MARK: - SyncTeX
 
-    private func forwardSync(line: Int) {
+    func forwardSync(line: Int) {
         guard documentMode == .latex else { return }
         let pdfPath = previewPDFURL.path
         guard FileManager.default.fileExists(atPath: pdfPath) else { return }
@@ -2465,8 +2269,8 @@ struct LaTeXEditorView: View {
 
     // MARK: - PDF Pane Tabs
 
-    private func openReference(_ paper: Paper) {
-        let tab = PdfPaneTab.reference(paper.id)
+    func openReference(_ paper: Paper) {
+        let tab = LaTeXEditorPdfPaneTab.reference(paper.id)
         if pdfPaneTabs.contains(tab) {
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
                 workspaceState.selectedReferencePaperID = paper.id
@@ -2494,7 +2298,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func selectPdfTab(_ tab: PdfPaneTab) {
+    func selectPdfTab(_ tab: LaTeXEditorPdfPaneTab) {
         switch tab {
         case .compiled:
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
@@ -2509,7 +2313,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func closePdfTab(_ tab: PdfPaneTab) {
+    func closePdfTab(_ tab: LaTeXEditorPdfPaneTab) {
         guard case .reference(let id) = tab else { return }
         let pendingSave = workspaceState.referencePDFUIStates[id]?.hasUnsavedChanges == true
         let documentToSave = workspaceState.referencePDFs[id]
@@ -2550,30 +2354,30 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func fitToWidth() {
+    func fitToWidth() {
         fitToWidthTrigger.toggle()
     }
 
-    private func refreshCurrentReference() {
+    func refreshCurrentReference() {
         guard let id = activeReferencePDFID else { return }
         reloadReferencePDFDocument(id: id)
     }
 
-    private func referencePDFDocumentDidChange(id: UUID) {
+    func referencePDFDocumentDidChange(id: UUID) {
         guard let state = workspaceState.referencePDFUIStates[id] else { return }
         state.hasUnsavedChanges = true
         state.annotationRefreshToken = UUID()
         scheduleReferencePDFAutoSave(for: id, delay: preferredReferencePDFAutoSaveDelay(for: state))
     }
 
-    private func preferredReferencePDFAutoSaveDelay(for state: ReferencePDFUIState) -> TimeInterval {
+    func preferredReferencePDFAutoSaveDelay(for state: ReferencePDFUIState) -> TimeInterval {
         if state.selectedAnnotation?.isTextBoxAnnotation == true || state.currentTool == .textBox {
             return 0.9
         }
         return 0.25
     }
 
-    private func scheduleReferencePDFAutoSave(for id: UUID, delay: TimeInterval) {
+    func scheduleReferencePDFAutoSave(for id: UUID, delay: TimeInterval) {
         guard let state = workspaceState.referencePDFUIStates[id] else { return }
         state.pendingSaveWorkItem?.cancel()
 
@@ -2586,7 +2390,7 @@ struct LaTeXEditorView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
-    private func saveCurrentReferencePDF() {
+    func saveCurrentReferencePDF() {
         guard let id = activeReferencePDFID else { return }
         saveReferencePDF(id: id)
     }
@@ -2746,7 +2550,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func reloadReferencePDFDocument(id: UUID) {
+    func reloadReferencePDFDocument(id: UUID) {
         guard let paper = paperFor(id) else { return }
         let state = workspaceState.referencePDFUIStates[id]
         state?.selectedAnnotation = nil
@@ -2772,7 +2576,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func writeReferencePaperContext(for id: UUID) {
+    func writeReferencePaperContext(for id: UUID) {
         guard let paper = paperFor(id) else { return }
         let title = paper.title
         let authors = paper.authors
@@ -2820,17 +2624,17 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func invalidateReferencePaperContextWrites() {
+    func invalidateReferencePaperContextWrites() {
         referenceContextWriteID = UUID()
     }
 
-    private func deleteSelectedReferenceAnnotation() {
+    func deleteSelectedReferenceAnnotation() {
         guard let id = activeReferencePDFID,
               let annotation = activeReferencePDFState?.selectedAnnotation else { return }
         deleteReferenceAnnotation(annotation, in: id)
     }
 
-    private func deleteReferenceAnnotation(_ annotation: PDFAnnotation, in id: UUID) {
+    func deleteReferenceAnnotation(_ annotation: PDFAnnotation, in id: UUID) {
         guard let page = annotation.page else { return }
         let state = workspaceState.referencePDFUIStates[id]
         let wasSelected = state?.selectedAnnotation === annotation
@@ -2852,7 +2656,7 @@ struct LaTeXEditorView: View {
         referencePDFDocumentDidChange(id: id)
     }
 
-    private func deleteAllReferenceAnnotations() {
+    func deleteAllReferenceAnnotations() {
         guard let id = activeReferencePDFID,
               let document = activeReferencePDFDocument else { return }
 
@@ -2879,7 +2683,7 @@ struct LaTeXEditorView: View {
         referencePDFDocumentDidChange(id: id)
     }
 
-    private func changeSelectedReferenceAnnotationColor(_ color: NSColor) {
+    func changeSelectedReferenceAnnotationColor(_ color: NSColor) {
         guard let id = activeReferencePDFID,
               let state = activeReferencePDFState else { return }
 
@@ -2887,7 +2691,7 @@ struct LaTeXEditorView: View {
         changeReferenceAnnotationColor(annotation, to: color, in: id)
     }
 
-    private func changeReferenceAnnotationColor(_ annotation: PDFAnnotation, to color: NSColor, in id: UUID) {
+    func changeReferenceAnnotationColor(_ annotation: PDFAnnotation, to color: NSColor, in id: UUID) {
         guard let state = workspaceState.referencePDFUIStates[id] else { return }
 
         let previousCurrentColor = state.currentColor
@@ -2908,14 +2712,14 @@ struct LaTeXEditorView: View {
         referencePDFDocumentDidChange(id: id)
     }
 
-    private func beginEditingReferenceAnnotationNote(_ annotation: PDFAnnotation, in id: UUID) {
+    func beginEditingReferenceAnnotationNote(_ annotation: PDFAnnotation, in id: UUID) {
         guard let state = workspaceState.referencePDFUIStates[id] else { return }
         state.selectedAnnotation = annotation
         state.editingNoteText = annotation.contents ?? ""
         state.isEditingNote = true
     }
 
-    private func saveReferenceAnnotationNote(for id: UUID) {
+    func saveReferenceAnnotationNote(for id: UUID) {
         guard let state = workspaceState.referencePDFUIStates[id],
               let annotation = state.selectedAnnotation else { return }
         let previousContents = annotation.contents ?? ""
@@ -2935,13 +2739,13 @@ struct LaTeXEditorView: View {
         referencePDFDocumentDidChange(id: id)
     }
 
-    private func cancelReferenceAnnotationNoteEdit(for id: UUID) {
+    func cancelReferenceAnnotationNoteEdit(for id: UUID) {
         workspaceState.referencePDFUIStates[id]?.isEditingNote = false
     }
 
     // MARK: - Compilation
 
-    private func runPrimaryDocumentAction() {
+    func runPrimaryDocumentAction() {
         switch documentMode {
         case .latex:
             compile()
@@ -2951,7 +2755,7 @@ struct LaTeXEditorView: View {
     }
 
     @discardableResult
-    private func writeCurrentTextToDisk() -> Bool {
+    func writeCurrentTextToDisk() -> Bool {
         do {
             try text.write(to: fileURL, atomically: true, encoding: .utf8)
             savedText = text
@@ -2974,7 +2778,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func compile() {
+    func compile() {
         guard documentMode == .latex, !isCompiling else { return }
         guard writeCurrentTextToDisk() else { return }
         isCompiling = true
@@ -2998,7 +2802,7 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func renderMarkdownPreview() {
+    func renderMarkdownPreview() {
         guard documentMode == .markdown, !isCompiling else { return }
         guard writeCurrentTextToDisk() else { return }
         isCompiling = true
@@ -3026,9 +2830,9 @@ struct LaTeXEditorView: View {
 
     // MARK: - File Watching (polling-based for reliability with external editors)
 
-    @State private var pollTimer: Timer?
+    @State var pollTimer: Timer?
 
-    private func startFileWatcher() {
+    func startFileWatcher() {
         guard pollTimer == nil else { return }
         lastModified = modificationDate()
         let watchedURL = fileURL
@@ -3044,1032 +2848,16 @@ struct LaTeXEditorView: View {
         }
     }
 
-    private func stopFileWatcher() {
+    func stopFileWatcher() {
         pollTimer?.invalidate()
         pollTimer = nil
     }
 
-    private func modificationDate() -> Date? {
+    func modificationDate() -> Date? {
         Self.modificationDate(for: fileURL)
     }
 
-    nonisolated private static func modificationDate(for url: URL) -> Date? {
+    nonisolated static func modificationDate(for url: URL) -> Date? {
         try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
-    }
-}
-
-// MARK: - PDF Preview with SyncTeX inverse sync
-
-struct PDFPreviewView: NSViewRepresentable {
-    let document: PDFDocument
-    var syncTarget: SyncTeXForwardResult?
-    var onInverseSync: ((SyncTeXInverseResult) -> Void)?
-    var allowsInverseSync: Bool = true
-    var fitToWidthTrigger: Bool = false
-
-    func makeNSView(context: Context) -> NSView {
-        let container = PDFPreviewContainerView()
-        let pdfView = container.pdfView
-        pdfView.document = document
-        pdfView.autoScales = true
-        pdfView.displayMode = .singlePageContinuous
-        let deselectionOverlay = container.deselectionOverlay
-        deselectionOverlay.shouldConsumeClick = { [weak coordinator = context.coordinator, weak pdfView] point, event in
-            guard let coordinator, let pdfView else { return false }
-            return coordinator.shouldConsumeDeselectionClick(at: point, event: event, in: pdfView)
-        }
-        deselectionOverlay.onConsumeClick = { [weak coordinator = context.coordinator, weak pdfView] point, event in
-            guard let coordinator, let pdfView else { return }
-            coordinator.consumeDeselectionClick(at: point, event: event, in: pdfView)
-        }
-
-        // Enable pinch-to-zoom: auto-scale sets the initial fit,
-        // then we disable it so manual zoom gestures work.
-        DispatchQueue.main.async {
-            pdfView.autoScales = false
-        }
-
-        // Add ⌘+click gesture for inverse sync
-        let clickGesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleClick(_:)))
-        clickGesture.numberOfClicksRequired = 1
-        pdfView.addGestureRecognizer(clickGesture)
-        context.coordinator.configureSelectionObservation(for: pdfView)
-
-        return container
-    }
-
-    func updateNSView(_ container: NSView, context: Context) {
-        guard let container = container as? PDFPreviewContainerView else { return }
-        let pdfView = container.pdfView
-        if pdfView.document !== document {
-            pdfView.document = document
-            // Fit to view first, then allow manual zoom
-            pdfView.autoScales = true
-            DispatchQueue.main.async {
-                pdfView.autoScales = false
-            }
-        }
-        context.coordinator.onInverseSync = onInverseSync
-        context.coordinator.allowsInverseSync = allowsInverseSync
-        context.coordinator.configureSelectionObservation(for: pdfView)
-
-        // Fit to width
-        if fitToWidthTrigger != context.coordinator.lastFitTrigger {
-            context.coordinator.lastFitTrigger = fitToWidthTrigger
-            pdfView.autoScales = true
-            DispatchQueue.main.async {
-                pdfView.autoScales = false
-            }
-        }
-
-        // Forward sync: scroll to target
-        if let target = syncTarget,
-           let page = document.page(at: target.page - 1) {
-            let displayBox = pdfView.displayBox
-            let pageBounds = page.bounds(for: displayBox)
-            let pdfKitX = pageBounds.minX + target.h
-            let pdfKitY = pageBounds.maxY - target.v
-            let rect = CGRect(
-                x: pdfKitX,
-                y: pdfKitY,
-                width: max(target.width, 100),
-                height: max(target.height, 14)
-            )
-            pdfView.go(to: rect, on: page)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    @MainActor
-    class Coordinator: NSObject {
-        private static let selectionFileQueue = DispatchQueue(label: "canope.pdf-preview-selection", qos: .utility)
-
-        weak var pdfView: PDFView?
-        weak var observedSelectionPDFView: PDFView?
-        var onInverseSync: ((SyncTeXInverseResult) -> Void)?
-        var allowsInverseSync = true
-        var lastFitTrigger: Bool = false
-        private var hadSelectionAtMouseDown = false
-        private var clickedInsideSelectionAtMouseDown = false
-
-        func shouldConsumeDeselectionClick(at locationInView: NSPoint, event: NSEvent, in pdfView: PDFView) -> Bool {
-            guard event.type == .leftMouseDown,
-                  event.modifierFlags.contains(.command) == false,
-                  pdfView.currentSelection != nil else {
-                return false
-            }
-
-            return isPointInsideCurrentSelection(locationInView, in: pdfView) == false
-        }
-
-        func consumeDeselectionClick(at locationInView: NSPoint, event: NSEvent, in pdfView: PDFView) {
-            guard shouldConsumeDeselectionClick(at: locationInView, event: event, in: pdfView) else { return }
-            clearSelection(in: pdfView)
-            hadSelectionAtMouseDown = false
-            clickedInsideSelectionAtMouseDown = false
-        }
-
-        func configureSelectionObservation(for pdfView: PDFView) {
-            self.pdfView = pdfView
-            guard observedSelectionPDFView !== pdfView else { return }
-
-            if let observedSelectionPDFView {
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: Notification.Name.PDFViewSelectionChanged,
-                    object: observedSelectionPDFView
-                )
-            }
-
-            observedSelectionPDFView = pdfView
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleSelectionChangedNotification(_:)),
-                name: Notification.Name.PDFViewSelectionChanged,
-                object: pdfView
-            )
-        }
-
-        @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
-            guard let pdfView = pdfView,
-                  allowsInverseSync,
-                  NSApp.currentEvent?.modifierFlags.contains(.command) == true else { return }
-
-            let locationInView = gesture.location(in: pdfView)
-            guard let page = pdfView.page(for: locationInView, nearest: true),
-                  let pageIndex = pdfView.document?.index(for: page) else { return }
-
-            let pagePoint = pdfView.convert(locationInView, to: page)
-            let displayBox = pdfView.displayBox
-            let pageBounds = page.bounds(for: displayBox)
-
-            let synctexX = pagePoint.x - pageBounds.minX
-            let synctexY = pageBounds.maxY - pagePoint.y
-
-            let pdfPath = pdfView.document?.documentURL?.path ?? ""
-            guard !pdfPath.isEmpty else { return }
-            let pg = pageIndex + 1
-
-            let hint = syncTeXHint(for: page, point: pagePoint)
-            if let result = SyncTeXService.inverseSync(page: pg, x: synctexX, y: synctexY, pdfPath: pdfPath, hint: hint) {
-                onInverseSync?(result)
-            }
-        }
-
-        private func syncTeXHint(for page: PDFPage, point: CGPoint) -> SyncTeXHint? {
-            func normalized(_ string: String?) -> String {
-                (string ?? "")
-                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-
-            let lineText = normalized(page.selectionForLine(at: point)?.string)
-            guard lineText.isEmpty == false else { return nil }
-
-            let wordText = normalized(page.selectionForWord(at: point)?.string)
-            guard wordText.isEmpty == false else {
-                return SyncTeXHint(offset: 0, context: lineText)
-            }
-
-            let nsLine = lineText as NSString
-            let wordRange = nsLine.range(of: wordText)
-            guard wordRange.location != NSNotFound else {
-                return SyncTeXHint(offset: 0, context: lineText)
-            }
-
-            let contextPadding = 24
-            let contextStart = max(0, wordRange.location - contextPadding)
-            let contextEnd = min(nsLine.length, wordRange.location + wordRange.length + contextPadding)
-            let contextRange = NSRange(location: contextStart, length: contextEnd - contextStart)
-            let context = nsLine.substring(with: contextRange)
-            let offset = wordRange.location - contextStart
-
-            return SyncTeXHint(offset: offset, context: context)
-        }
-
-        @objc
-        private func handleSelectionChangedNotification(_ notification: Notification) {
-            guard let pdfView,
-                  let fileURL = pdfView.document?.documentURL else {
-                return
-            }
-
-            let selectedText = pdfView.currentSelection?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let state = ClaudeIDESelectionState.makeSnapshot(selectedText: selectedText, fileURL: fileURL)
-
-            Self.selectionFileQueue.async {
-                CanopeContextFiles.writeIDESelectionState(state)
-                CanopeContextFiles.clearLegacySelectionMirror()
-            }
-        }
-
-        func handlePreMouseDown(event: NSEvent, at locationInView: NSPoint, in pdfView: SelectablePDFPreviewView) -> Bool {
-            let canHandleDeselection = event.modifierFlags.contains(.command) == false && pdfView.currentSelection != nil
-            let clickedInsideSelection = canHandleDeselection && isPointInsideCurrentSelection(locationInView, in: pdfView)
-
-            hadSelectionAtMouseDown = canHandleDeselection
-            clickedInsideSelectionAtMouseDown = clickedInsideSelection
-
-            guard canHandleDeselection, clickedInsideSelection == false else {
-                return false
-            }
-
-            clearSelection(in: pdfView)
-            hadSelectionAtMouseDown = false
-            clickedInsideSelectionAtMouseDown = false
-            return true
-        }
-
-        func handlePostMouseUp(
-            event: NSEvent,
-            at locationInView: NSPoint,
-            didDrag: Bool,
-            in pdfView: SelectablePDFPreviewView
-        ) {
-            defer {
-                hadSelectionAtMouseDown = false
-                clickedInsideSelectionAtMouseDown = false
-            }
-
-            guard event.modifierFlags.contains(.command) == false,
-                  event.clickCount == 1,
-                  hadSelectionAtMouseDown,
-                  clickedInsideSelectionAtMouseDown == false,
-                  didDrag == false else {
-                return
-            }
-            let clickedPoint = locationInView
-            DispatchQueue.main.async { [weak self, weak pdfView] in
-                guard let self, let pdfView else { return }
-                if self.isPointInsideCurrentSelection(clickedPoint, in: pdfView) {
-                    return
-                }
-                self.clearSelection(in: pdfView)
-            }
-        }
-
-        private func isPointInsideCurrentSelection(_ locationInView: NSPoint, in pdfView: PDFView) -> Bool {
-            guard let selection = pdfView.currentSelection else { return false }
-
-            for lineSelection in selection.selectionsByLine() {
-                for page in lineSelection.pages {
-                    let pageBounds = lineSelection.bounds(for: page)
-                    guard pageBounds.isNull == false, pageBounds.isEmpty == false else { continue }
-                    let selectionRect = pdfView.convert(pageBounds, from: page).insetBy(dx: -4, dy: -4)
-                    if selectionRect.contains(locationInView) {
-                        return true
-                    }
-                }
-            }
-
-            return false
-        }
-
-        private func clearSelection(in pdfView: PDFView) {
-            if let selection = pdfView.currentSelection?.copy() as? PDFSelection {
-                selection.color = .clear
-                pdfView.setCurrentSelection(selection, animate: false)
-                pdfView.documentView?.displayIfNeeded()
-                pdfView.displayIfNeeded()
-            }
-
-            pdfView.clearSelection()
-            pdfView.setCurrentSelection(nil, animate: false)
-            pdfView.documentView?.needsDisplay = true
-            pdfView.needsDisplay = true
-
-            guard let fileURL = pdfView.document?.documentURL else { return }
-            let state = ClaudeIDESelectionState.makeSnapshot(selectedText: "", fileURL: fileURL)
-            Self.selectionFileQueue.async {
-                CanopeContextFiles.writeIDESelectionState(state)
-                CanopeContextFiles.clearLegacySelectionMirror()
-            }
-        }
-    }
-}
-
-final class PDFPreviewContainerView: NSView {
-    let pdfView = SelectablePDFPreviewView()
-    let deselectionOverlay = PDFPreviewDeselectionOverlayView()
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-
-        wantsLayer = true
-        translatesAutoresizingMaskIntoConstraints = false
-
-        pdfView.translatesAutoresizingMaskIntoConstraints = false
-        deselectionOverlay.translatesAutoresizingMaskIntoConstraints = false
-
-        addSubview(pdfView)
-        addSubview(deselectionOverlay)
-
-        NSLayoutConstraint.activate([
-            pdfView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            pdfView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            pdfView.topAnchor.constraint(equalTo: topAnchor),
-            pdfView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            deselectionOverlay.leadingAnchor.constraint(equalTo: leadingAnchor),
-            deselectionOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
-            deselectionOverlay.topAnchor.constraint(equalTo: topAnchor),
-            deselectionOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-}
-
-final class SelectablePDFPreviewView: PDFView {
-    var onPreMouseDown: ((NSEvent, NSPoint, SelectablePDFPreviewView) -> Bool)?
-    var onPostMouseUp: ((NSEvent, NSPoint, Bool, SelectablePDFPreviewView) -> Void)?
-    private var didDragDuringMouseSession = false
-
-    override func mouseDown(with event: NSEvent) {
-        didDragDuringMouseSession = false
-        let location = convert(event.locationInWindow, from: nil)
-        if onPreMouseDown?(event, location, self) == true {
-            return
-        }
-        super.mouseDown(with: event)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        didDragDuringMouseSession = true
-        super.mouseDragged(with: event)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-        let location = convert(event.locationInWindow, from: nil)
-        onPostMouseUp?(event, location, didDragDuringMouseSession, self)
-        didDragDuringMouseSession = false
-    }
-}
-
-final class PDFPreviewDeselectionOverlayView: NSView {
-    var shouldConsumeClick: ((NSPoint, NSEvent) -> Bool)?
-    var onConsumeClick: ((NSPoint, NSEvent) -> Void)?
-
-    override var isOpaque: Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let event = window?.currentEvent ?? NSApp.currentEvent,
-              shouldConsumeClick?(point, event) == true else {
-            return nil
-        }
-
-        return self
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        let location = convert(event.locationInWindow, from: nil)
-        onConsumeClick?(location, event)
-    }
-}
-
-private struct ReferencePDFAnnotationPane: View {
-    let document: PDFDocument
-    let fileURL: URL
-    let fitToWidthTrigger: Bool
-    let isBridgeCommandTargetActive: Bool
-    @ObservedObject var state: ReferencePDFUIState
-    let onDocumentChanged: () -> Void
-    let onMarkupAppearanceNeedsRefresh: () -> Void
-    let onSaveNote: () -> Void
-    let onCancelNote: () -> Void
-    let onAutoSave: () -> Void
-
-    var body: some View {
-        PDFKitView(
-            document: document,
-            fileURL: fileURL,
-            currentTool: $state.currentTool,
-            currentColor: $state.currentColor,
-            selectedAnnotation: $state.selectedAnnotation,
-            selectedText: $state.selectedText,
-            restoredPageIndex: state.requestedRestorePageIndex,
-            onDocumentChanged: {
-                onDocumentChanged()
-            },
-            onCurrentPageChanged: { pageIndex in
-                state.lastKnownPageIndex = pageIndex
-            },
-            onMarkupAppearanceNeedsRefresh: {
-                onMarkupAppearanceNeedsRefresh()
-            },
-            clearSelectionAction: $state.clearSelectionAction,
-            undoAction: Binding(
-                get: { state.undoAction },
-                set: { state.setPDFViewUndoAction($0) }
-            ),
-            applyBridgeAnnotation: Binding(
-                get: { state.applyBridgeAnnotationAction },
-                set: { state.setPDFViewApplyBridgeAnnotation($0) }
-            ),
-            onUserInteraction: {
-                BridgeCommandRouter.shared.setPreferredHandler(id: bridgeCommandTargetID)
-            }
-        )
-        .id(state.pdfViewRefreshToken)
-        .onKeyPress(phases: .down) { press in
-            handleKeyPress(press)
-        }
-        .onAppear {
-            refreshBridgeCommandTarget()
-        }
-        .onChange(of: state.selectedAnnotation) {
-            guard let annotation = state.selectedAnnotation, annotation.type == "Text" else { return }
-            state.editingNoteText = annotation.contents ?? ""
-            state.isEditingNote = true
-        }
-        .onChange(of: fitToWidthTrigger) {
-            state.requestedRestorePageIndex = state.lastKnownPageIndex
-            state.pdfViewRefreshToken = UUID()
-        }
-        .onChange(of: isBridgeCommandTargetActive) {
-            refreshBridgeCommandTarget()
-        }
-        .onChange(of: state.bridgeCommandRegistrationToken) {
-            refreshBridgeCommandTarget()
-        }
-        .onDisappear {
-            BridgeCommandRouter.shared.removeActiveHandler(id: bridgeCommandTargetID)
-            if state.hasUnsavedChanges {
-                onAutoSave()
-            }
-        }
-        .sheet(isPresented: $state.isEditingNote) {
-            NoteEditorSheet(
-                text: $state.editingNoteText,
-                onSave: onSaveNote,
-                onCancel: onCancelNote
-            )
-        }
-    }
-
-    private var bridgeCommandTargetID: String {
-        "reference-pdf:\(fileURL.path)"
-    }
-
-    private func refreshBridgeCommandTarget() {
-        guard isBridgeCommandTargetActive else {
-            BridgeCommandRouter.shared.removeActiveHandler(id: bridgeCommandTargetID)
-            return
-        }
-
-        BridgeCommandRouter.shared.setActiveHandler(id: bridgeCommandTargetID) { command in
-            _ = BridgeCommandWatcher.handleCommand(
-                command,
-                document: document,
-                applyBridgeAnnotation: state.applyBridgeAnnotationAction
-            )
-        }
-        BridgeCommandRouter.shared.setPreferredHandler(id: bridgeCommandTargetID)
-    }
-
-    private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        if press.key == KeyEquivalent("z") && press.modifiers.contains(.command) {
-            state.undoAction?()
-            return .handled
-        }
-
-        if press.key == .escape {
-            if !state.selectedText.isEmpty {
-                state.clearSelectionAction?()
-            } else if state.selectedAnnotation != nil {
-                state.selectedAnnotation = nil
-            } else {
-                state.currentTool = .pointer
-            }
-            return .handled
-        }
-
-        return .ignored
-    }
-}
-
-private struct ReferencePDFToolCluster: View {
-    let title: String
-    @ObservedObject var state: ReferencePDFUIState
-
-    var body: some View {
-        AppChromeToolbarCluster(zone: .primary, title: title) {
-            HStack(spacing: 6) {
-                ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
-                    ReferencePDFToolbarIconButton(
-                        systemName: tool.icon,
-                        isActive: state.currentTool == tool,
-                        help: tool.displayName,
-                        action: {
-                            state.currentTool = tool
-                        }
-                    )
-                }
-            }
-        }
-    }
-}
-
-private struct ReferencePDFActionsCluster: View {
-    @State private var showDeleteAllConfirm = false
-    let title: String
-    @ObservedObject var state: ReferencePDFUIState
-    let annotationCount: Int
-    let isAnnotationSidebarVisible: Bool
-    let activeMarkdownFileName: String?
-    let companionExportFileName: String
-    let onChangeSelectedColor: (NSColor) -> Void
-    let onFitToWidth: () -> Void
-    let onRefresh: () -> Void
-    let onSave: () -> Void
-    let onExportToActiveMarkdown: (() -> Void)?
-    let onExportToCompanionMarkdown: () -> Void
-    let onExportToChosenMarkdownFile: () -> Void
-    let onDeleteSelected: () -> Void
-    let onDeleteAll: () -> Void
-    let onToggleAnnotations: () -> Void
-
-    var body: some View {
-        AppChromeToolbarCluster(zone: .primary, title: title) {
-            HStack(spacing: 6) {
-                Menu {
-                    ForEach(AnnotationColor.all, id: \.name) { item in
-                        Button {
-                            onChangeSelectedColor(item.color)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(nsImage: annotationColorSwatchImage(item.color))
-                                    .renderingMode(.original)
-
-                                Text(item.name)
-
-                                if colorsMatch(item.color, state.currentColor) {
-                                    Spacer(minLength: 8)
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    ReferencePDFToolbarIconLabel(systemName: "paintpalette", isActive: false)
-                }
-                .buttonStyle(.plain)
-                .help("Couleur d’annotation")
-
-                AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
-
-                ReferencePDFToolbarIconButton(
-                    systemName: "arrow.left.and.right.square",
-                    isActive: false,
-                    help: "Ajuster à la largeur",
-                    action: onFitToWidth
-                )
-
-                ReferencePDFToolbarIconButton(
-                    systemName: "arrow.clockwise",
-                    isActive: false,
-                    help: "Actualiser le PDF de référence",
-                    action: onRefresh
-                )
-
-                ReferencePDFToolbarIconButton(
-                    systemName: "square.and.arrow.down",
-                    isActive: state.hasUnsavedChanges,
-                    help: "Enregistrer les annotations du PDF",
-                    action: onSave
-                )
-
-                Menu {
-                    AppChromeAnnotationExportMenuItems(
-                        activeMarkdownFileName: activeMarkdownFileName,
-                        companionFileName: companionExportFileName,
-                        onExportToActiveMarkdown: onExportToActiveMarkdown,
-                        onExportToCompanion: onExportToCompanionMarkdown,
-                        onChooseDestination: onExportToChosenMarkdownFile
-                    )
-                } label: {
-                    ReferencePDFToolbarIconLabel(
-                        systemName: "square.and.arrow.up.on.square",
-                        isActive: false,
-                        helpText: "Exporter les annotations en Markdown"
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("Exporter les annotations en Markdown")
-
-                AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
-
-                if state.selectedAnnotation != nil {
-                    ReferencePDFToolbarIconButton(
-                        systemName: "trash",
-                        isActive: true,
-                        activeTint: AppChromePalette.danger,
-                        help: "Supprimer l’annotation sélectionnée",
-                        action: onDeleteSelected
-                    )
-                }
-
-                ReferencePDFToolbarIconButton(
-                    systemName: "trash.slash",
-                    isActive: false,
-                    help: "Effacer toutes les annotations du PDF",
-                    action: { showDeleteAllConfirm = true }
-                )
-                .confirmationDialog(
-                    "Effacer toutes les annotations du PDF?",
-                    isPresented: $showDeleteAllConfirm,
-                    titleVisibility: .visible
-                ) {
-                    Button("Tout effacer", role: .destructive, action: onDeleteAll)
-                    Button("Annuler", role: .cancel) {}
-                }
-                .disabled(annotationCount == 0)
-
-                AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
-
-                ReferencePDFToolbarIconButton(
-                    systemName: "sidebar.right",
-                    symbolVariant: isAnnotationSidebarVisible ? .none : .slash,
-                    isActive: isAnnotationSidebarVisible,
-                    activeTint: AppChromePalette.info,
-                    help: "Afficher les annotations PDF",
-                    action: onToggleAnnotations
-                )
-            }
-        }
-    }
-}
-
-private func colorsMatch(_ a: NSColor, _ b: NSColor) -> Bool {
-    let ac = AnnotationColor.normalized(a)
-    let bc = AnnotationColor.normalized(b)
-    return abs(ac.redComponent - bc.redComponent) < 0.01 &&
-           abs(ac.greenComponent - bc.greenComponent) < 0.01 &&
-           abs(ac.blueComponent - bc.blueComponent) < 0.01 &&
-           abs(ac.alphaComponent - bc.alphaComponent) < 0.01
-}
-
-private func annotationColorSwatchImage(_ color: NSColor) -> NSImage {
-    let image = NSImage(size: NSSize(width: 12, height: 12))
-    image.lockFocus()
-    AnnotationColor.normalized(color).setFill()
-    NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: 12, height: 12)).fill()
-    image.unlockFocus()
-    return image
-}
-
-private struct EditorDocumentToolbarClusterView: View {
-    let title: String
-    let showsLatexActions: Bool
-    let isCompiling: Bool
-    let compiledPDFAvailable: Bool
-    let activeMarkdownExportFileName: String?
-    let companionExportFileName: String
-    let canAnnotateCurrentDocument: Bool
-    let showErrors: Bool
-    let hasCompilationErrors: Bool
-    let primaryActionHelpText: String
-    let outputLogHelpText: String
-    let shortcutIdentity: String
-    let onRunPrimaryAction: () -> Void
-    let onSave: () -> Void
-    let onExportToActiveMarkdown: (() -> Void)?
-    let onExportToCompanionMarkdown: () -> Void
-    let onChooseExportDestination: () -> Void
-    let onBeginAnnotation: () -> Void
-    let onReflow: () -> Void
-    let onToggleErrors: () -> Void
-
-    var body: some View {
-        AppChromeToolbarCluster(zone: .primary, title: title) {
-            Button(action: onRunPrimaryAction) {
-                if isCompiling {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "play.fill")
-                }
-            }
-            .buttonStyle(.plain)
-            .appChromeSystemHelp(primaryActionHelpText)
-            .appChromeQuickHelp(primaryActionHelpText)
-            .keyboardShortcut("b", modifiers: .command)
-            .disabled(isCompiling)
-
-            Button(action: onSave) {
-                Image(systemName: "square.and.arrow.down")
-            }
-            .buttonStyle(.plain)
-            .appChromeSystemHelp("Sauvegarder (⌘S)")
-            .appChromeQuickHelp("Sauvegarder (⌘S)")
-            .keyboardShortcut("s", modifiers: .command)
-
-            if compiledPDFAvailable {
-                Menu {
-                    AppChromeAnnotationExportMenuItems(
-                        activeMarkdownFileName: activeMarkdownExportFileName,
-                        companionFileName: companionExportFileName,
-                        onExportToActiveMarkdown: onExportToActiveMarkdown,
-                        onExportToCompanion: onExportToCompanionMarkdown,
-                        onChooseDestination: onChooseExportDestination
-                    )
-                } label: {
-                    ReferencePDFToolbarIconLabel(
-                        systemName: "square.and.arrow.up.on.square",
-                        isActive: false,
-                        helpText: "Exporter les annotations du PDF en Markdown"
-                    )
-                }
-                .buttonStyle(.plain)
-                .appChromeSystemHelp("Exporter les annotations du PDF en Markdown")
-                .appChromeQuickHelp("Exporter les annotations du PDF en Markdown")
-            }
-
-            if showsLatexActions {
-                Button(action: onBeginAnnotation) {
-                    Image(systemName: "highlighter")
-                }
-                .buttonStyle(.plain)
-                .appChromeSystemHelp("Annoter la sélection (⇧⌘A)")
-                .appChromeQuickHelp("Annoter la sélection (⇧⌘A)")
-                .keyboardShortcut("a", modifiers: [.command, .shift])
-                .disabled(!canAnnotateCurrentDocument)
-
-                Button(action: onReflow) {
-                    Image(systemName: "text.justify.leading")
-                }
-                .buttonStyle(.plain)
-                .appChromeSystemHelp("Reflow paragraphes (⌘⇧W)")
-                .appChromeQuickHelp("Reflow paragraphes (⌘⇧W)")
-                .keyboardShortcut("w", modifiers: [.command, .shift])
-            }
-
-            Button(action: onToggleErrors) {
-                Image(systemName: "doc.text.below.ecg")
-                    .foregroundStyle(showErrors ? .green : hasCompilationErrors ? .red : .secondary)
-            }
-            .buttonStyle(.plain)
-            .appChromeSystemHelp(outputLogHelpText)
-            .appChromeQuickHelp(outputLogHelpText)
-        }
-        .id("document-toolbar-shortcuts:\(shortcutIdentity)")
-    }
-}
-
-private struct ActiveReferenceToolbarSections: View {
-    @ObservedObject var referenceState: ReferencePDFUIState
-    let annotationCount: Int
-    let isAnnotationSidebarVisible: Bool
-    let activeMarkdownFileName: String?
-    let companionExportFileName: String
-    let onChangeSelectedColor: (NSColor) -> Void
-    let onFitToWidth: () -> Void
-    let onRefresh: () -> Void
-    let onSave: () -> Void
-    let onExportToActiveMarkdown: (() -> Void)?
-    let onExportToCompanionMarkdown: () -> Void
-    let onExportToChosenMarkdownFile: () -> Void
-    let onDeleteSelected: () -> Void
-    let onDeleteAll: () -> Void
-    let onToggleAnnotations: () -> Void
-
-    var body: some View {
-        Group {
-            ReferencePDFToolCluster(title: "Outils", state: referenceState)
-
-            ReferencePDFActionsCluster(
-                title: "Actions",
-                state: referenceState,
-                annotationCount: annotationCount,
-                isAnnotationSidebarVisible: isAnnotationSidebarVisible,
-                activeMarkdownFileName: activeMarkdownFileName,
-                companionExportFileName: companionExportFileName,
-                onChangeSelectedColor: onChangeSelectedColor,
-                onFitToWidth: onFitToWidth,
-                onRefresh: onRefresh,
-                onSave: onSave,
-                onExportToActiveMarkdown: onExportToActiveMarkdown,
-                onExportToCompanionMarkdown: onExportToCompanionMarkdown,
-                onExportToChosenMarkdownFile: onExportToChosenMarkdownFile,
-                onDeleteSelected: onDeleteSelected,
-                onDeleteAll: onDeleteAll,
-                onToggleAnnotations: onToggleAnnotations
-            )
-        }
-    }
-}
-
-private struct ActiveReferenceToolbarView: View {
-    let referenceState: ReferencePDFUIState?
-    let annotationCount: Int
-    let isAnnotationSidebarVisible: Bool
-    let activeMarkdownFileName: String?
-    let companionExportFileName: String
-    let onChangeSelectedColor: (NSColor) -> Void
-    let onFitToWidth: () -> Void
-    let onRefresh: () -> Void
-    let onSave: () -> Void
-    let onExportToActiveMarkdown: (() -> Void)?
-    let onExportToCompanionMarkdown: () -> Void
-    let onExportToChosenMarkdownFile: () -> Void
-    let onDeleteSelected: () -> Void
-    let onDeleteAll: () -> Void
-    let onToggleAnnotations: () -> Void
-
-    var body: some View {
-        Group {
-            if let referenceState {
-                ActiveReferenceToolbarSections(
-                    referenceState: referenceState,
-                    annotationCount: annotationCount,
-                    isAnnotationSidebarVisible: isAnnotationSidebarVisible,
-                    activeMarkdownFileName: activeMarkdownFileName,
-                    companionExportFileName: companionExportFileName,
-                    onChangeSelectedColor: onChangeSelectedColor,
-                    onFitToWidth: onFitToWidth,
-                    onRefresh: onRefresh,
-                    onSave: onSave,
-                    onExportToActiveMarkdown: onExportToActiveMarkdown,
-                    onExportToCompanionMarkdown: onExportToCompanionMarkdown,
-                    onExportToChosenMarkdownFile: onExportToChosenMarkdownFile,
-                    onDeleteSelected: onDeleteSelected,
-                    onDeleteAll: onDeleteAll,
-                    onToggleAnnotations: onToggleAnnotations
-                )
-            }
-        }
-    }
-}
-
-private struct ReferencePDFToolbarIconButton: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let systemName: String
-    var symbolVariant: SymbolVariants = .none
-    let isActive: Bool
-    var activeTint: Color = .accentColor
-    let help: String
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .symbolVariant(symbolVariant)
-                .foregroundStyle(iconTint)
-                .frame(width: AppChromeMetrics.toolbarCompactIconSize, height: AppChromeMetrics.toolbarCompactIconSize)
-                .frame(width: AppChromeMetrics.toolbarButtonSize, height: AppChromeMetrics.toolbarButtonSize)
-                .background(
-                    RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
-                        .fill(backgroundTint)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
-                        .stroke(borderTint, lineWidth: borderTint == .clear ? 0 : 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .appChromeQuickHelp(help)
-        .onHover { isHovered = $0 }
-        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
-        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isActive)
-    }
-
-    private var iconTint: Color {
-        if isActive { return activeTint }
-        if isHovered { return .primary }
-        return .secondary
-    }
-
-    private var backgroundTint: Color {
-        if isActive { return activeTint.opacity(0.18) }
-        if isHovered { return AppChromePalette.hoverFill }
-        return .clear
-    }
-
-    private var borderTint: Color {
-        if isActive { return activeTint.opacity(0.32) }
-        if isHovered { return AppChromePalette.clusterStroke }
-        return .clear
-    }
-}
-
-private struct ReferencePDFToolbarIconLabel: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let systemName: String
-    let isActive: Bool
-    var helpText: String? = nil
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Image(systemName: systemName)
-            .foregroundStyle(isActive ? AppChromePalette.selectedAccent : (isHovered ? Color.primary : Color.secondary))
-            .frame(width: AppChromeMetrics.toolbarCompactIconSize, height: AppChromeMetrics.toolbarCompactIconSize)
-            .frame(width: AppChromeMetrics.toolbarButtonSize, height: AppChromeMetrics.toolbarButtonSize)
-            .background(
-                RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
-                    .fill(isActive ? AppChromePalette.selectedAccentFill : (isHovered ? AppChromePalette.hoverFill : .clear))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
-                    .stroke(isActive ? AppChromePalette.selectedAccentStroke : (isHovered ? AppChromePalette.clusterStroke : .clear), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous))
-            .appChromeSystemHelp(helpText)
-            .appChromeQuickHelp(helpText)
-            .onHover { isHovered = $0 }
-            .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
-            .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isActive)
-    }
-}
-
-private struct LaTeXAnnotationNoteSheet: View {
-    let title: String
-    let selectedText: String
-    let initialNote: String
-    let onCancel: () -> Void
-    let onSave: (String) -> Void
-    let onSaveAndSend: (String) -> Void
-
-    @State private var note: String
-
-    init(
-        title: String,
-        selectedText: String,
-        initialNote: String,
-        onCancel: @escaping () -> Void,
-        onSave: @escaping (String) -> Void,
-        onSaveAndSend: @escaping (String) -> Void
-    ) {
-        self.title = title
-        self.selectedText = selectedText
-        self.initialNote = initialNote
-        self.onCancel = onCancel
-        self.onSave = onSave
-        self.onSaveAndSend = onSaveAndSend
-        _note = State(initialValue: initialNote)
-    }
-
-    private var trimmedNote: String {
-        note.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.headline)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Extrait")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                ScrollView {
-                    Text(selectedText)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                }
-                .frame(minHeight: 90, maxHeight: 140)
-                .background(Color.yellow.opacity(0.14))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Note")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                TextEditor(text: $note)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 140)
-                    .padding(6)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-
-            HStack {
-                Button("Annuler", action: onCancel)
-                Spacer()
-                Button(initialNote.isEmpty ? "Ajouter et envoyer" : "Enregistrer et envoyer") {
-                    onSaveAndSend(trimmedNote)
-                }
-                .disabled(trimmedNote.isEmpty)
-
-                Button(initialNote.isEmpty ? "Ajouter" : "Enregistrer") {
-                    onSave(trimmedNote)
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(trimmedNote.isEmpty)
-            }
-        }
-        .padding(18)
-        .frame(minWidth: 480, idealWidth: 540)
     }
 }
