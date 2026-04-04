@@ -13,7 +13,6 @@ extension Notification.Name {
 struct LaTeXEditorView: View {
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
-    private static let threePaneCoordinateSpace = "LaTeXThreePaneLayout"
 
     // Types extracted to LaTeXEditorTypes.swift
 
@@ -40,9 +39,6 @@ struct LaTeXEditorView: View {
     @State private var selectedEditorRange: NSRange?
     @State private var pendingAnnotation: LaTeXEditorPendingAnnotation?
     @State var sidebarResizeStartWidth: CGFloat?
-    @State private var threePaneDragStartLeftWidth: CGFloat?
-    @State private var threePaneDragStartRightWidth: CGFloat?
-    @State private var isDraggingThreePaneDivider = false
     @State private var toolbarStatus: ToolbarStatusState = .idle
     @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
     @State private var fileCreationError: String?
@@ -234,7 +230,7 @@ struct LaTeXEditorView: View {
     }
 
     var isPDFLeadingInLayout: Bool {
-        panelArrangement == .pdfEditorTerminal
+        panelArrangement == .contentEditorTerminal
     }
 
     var editorFontSize: CGFloat {
@@ -378,13 +374,13 @@ struct LaTeXEditorView: View {
                 horizontalThreePaneLayout
             } else if isActive && showTerminal {
                 switch panelArrangement {
-                case .terminalEditorPDF:
+                case .terminalEditorContent:
                     HSplitView {
                         embeddedTerminalPane
                         editorAndPDFPane
                             .layoutPriority(1)
                     }
-                case .editorPDFTerminal, .pdfEditorTerminal:
+                case .editorContentTerminal, .contentEditorTerminal:
                     HSplitView {
                         editorAndPDFPane
                             .layoutPriority(1)
@@ -401,99 +397,25 @@ struct LaTeXEditorView: View {
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: splitLayout)
     }
 
-    @ViewBuilder
     var horizontalThreePaneLayout: some View {
-        GeometryReader { proxy in
-            let roles = threePaneRoles
-            let totalContentWidth = max(0, proxy.size.width - (LaTeXEditorThreePaneSizing.dividerWidth * 2))
-            let widths = resolvedThreePaneWidths(for: roles, totalContentWidth: totalContentWidth)
-
-            HStack(spacing: 0) {
-                threePaneView(for: roles.0)
-                    .frame(width: widths.left)
-
-                threePaneResizeHandle {
-                    guard !isDraggingThreePaneDivider else { return }
-                    NSCursor.resizeLeftRight.set()
-                } onExit: {
-                    guard !isDraggingThreePaneDivider else { return }
-                    NSCursor.arrow.set()
-                } drag: {
-                    AnyGesture(
-                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.threePaneCoordinateSpace))
-                        .onChanged { value in
-                            if !isDraggingThreePaneDivider {
-                                isDraggingThreePaneDivider = true
-                                NSCursor.resizeLeftRight.set()
-                            }
-                            if threePaneDragStartLeftWidth == nil {
-                                threePaneDragStartLeftWidth = widths.left
-                            }
-                            let startLeft = threePaneDragStartLeftWidth ?? widths.left
-                            let leftMin = paneMinWidth(for: roles.0)
-                            let middleMin = paneMinWidth(for: roles.1)
-                            let maxLeft = max(leftMin, totalContentWidth - widths.right - middleMin)
-                            threePaneLeftWidth = min(max(startLeft + value.translation.width, leftMin), maxLeft)
-                        }
-                        .onEnded { _ in
-                            threePaneDragStartLeftWidth = nil
-                            isDraggingThreePaneDivider = false
-                            NSCursor.arrow.set()
-                        }
-                    )
-                }
-
-                threePaneView(for: roles.1)
-                    .frame(width: widths.middle)
-
-                threePaneResizeHandle {
-                    guard !isDraggingThreePaneDivider else { return }
-                    NSCursor.resizeLeftRight.set()
-                } onExit: {
-                    guard !isDraggingThreePaneDivider else { return }
-                    NSCursor.arrow.set()
-                } drag: {
-                    AnyGesture(
-                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.threePaneCoordinateSpace))
-                        .onChanged { value in
-                            if !isDraggingThreePaneDivider {
-                                isDraggingThreePaneDivider = true
-                                NSCursor.resizeLeftRight.set()
-                            }
-                            if threePaneDragStartRightWidth == nil {
-                                threePaneDragStartRightWidth = widths.right
-                            }
-                            let startRight = threePaneDragStartRightWidth ?? widths.right
-                            let middleMin = paneMinWidth(for: roles.1)
-                            let rightMin = paneMinWidth(for: roles.2)
-                            let maxRight = max(rightMin, totalContentWidth - widths.left - middleMin)
-                            threePaneRightWidth = min(max(startRight - value.translation.width, rightMin), maxRight)
-                        }
-                        .onEnded { _ in
-                            threePaneDragStartRightWidth = nil
-                            isDraggingThreePaneDivider = false
-                            NSCursor.arrow.set()
-                        }
-                    )
-                }
-
-                threePaneView(for: roles.2)
-                    .frame(width: widths.right)
-            }
-            .coordinateSpace(name: Self.threePaneCoordinateSpace)
-            .transaction { transaction in
-                transaction.animation = nil
-            }
-        }
+        let roles = threePaneRoles
+        return ThreePaneLayoutView(
+            config: .latex(arrangement: panelArrangement),
+            leadingWidth: Binding(get: { threePaneLeftWidth }, set: { threePaneLeftWidth = $0 }),
+            trailingWidth: Binding(get: { threePaneRightWidth }, set: { threePaneRightWidth = $0 }),
+            leading: { threePaneView(for: roles.0) },
+            middle: { threePaneView(for: roles.1) },
+            trailing: { threePaneView(for: roles.2) }
+        )
     }
 
     var threePaneRoles: (LaTeXEditorThreePaneRole, LaTeXEditorThreePaneRole, LaTeXEditorThreePaneRole) {
         switch panelArrangement {
-        case .terminalEditorPDF:
+        case .terminalEditorContent:
             return (.terminal, .editor, .pdf)
-        case .editorPDFTerminal:
+        case .editorContentTerminal:
             return (.editor, .pdf, .terminal)
-        case .pdfEditorTerminal:
+        case .contentEditorTerminal:
             return (.pdf, .editor, .terminal)
         }
     }
@@ -508,74 +430,6 @@ struct LaTeXEditorView: View {
         case .pdf:
             pdfPane
         }
-    }
-
-    func paneMinWidth(for role: LaTeXEditorThreePaneRole) -> CGFloat {
-        switch role {
-        case .terminal:
-            return 160
-        case .editor:
-            return 160
-        case .pdf:
-            return 180
-        }
-    }
-
-    func paneIdealWidth(for role: LaTeXEditorThreePaneRole) -> CGFloat {
-        switch role {
-        case .terminal:
-            return 320
-        case .editor:
-            return 620
-        case .pdf:
-            return 320
-        }
-    }
-
-    func resolvedThreePaneWidths(
-        for roles: (LaTeXEditorThreePaneRole, LaTeXEditorThreePaneRole, LaTeXEditorThreePaneRole),
-        totalContentWidth: CGFloat
-    ) -> (left: CGFloat, middle: CGFloat, right: CGFloat) {
-        let leftMin = paneMinWidth(for: roles.0)
-        let middleMin = paneMinWidth(for: roles.1)
-        let rightMin = paneMinWidth(for: roles.2)
-        let minimumTotal = leftMin + middleMin + rightMin
-        let availableWidth = max(totalContentWidth, minimumTotal)
-
-        let seededLeft = threePaneLeftWidth ?? paneIdealWidth(for: roles.0)
-        let seededRight = threePaneRightWidth ?? paneIdealWidth(for: roles.2)
-
-        let leftMaxBeforeRightClamp = max(leftMin, availableWidth - middleMin - rightMin)
-        let left = min(max(seededLeft, leftMin), leftMaxBeforeRightClamp)
-
-        let rightMaxBeforeLeftClamp = max(rightMin, availableWidth - left - middleMin)
-        let right = min(max(seededRight, rightMin), rightMaxBeforeLeftClamp)
-
-        let leftMax = max(leftMin, availableWidth - right - middleMin)
-        let clampedLeft = min(left, leftMax)
-        let rightMax = max(rightMin, availableWidth - clampedLeft - middleMin)
-        let clampedRight = min(right, rightMax)
-        let middle = max(middleMin, availableWidth - clampedLeft - clampedRight)
-
-        return (clampedLeft, middle, clampedRight)
-    }
-
-    func threePaneResizeHandle(
-        onEnter: @escaping () -> Void,
-        onExit: @escaping () -> Void,
-        drag: @escaping () -> AnyGesture<DragGesture.Value>
-    ) -> some View {
-        AppChromeResizeHandle(
-            width: LaTeXEditorThreePaneSizing.dividerWidth,
-            onHoverChanged: { hovering in
-                if hovering {
-                    onEnter()
-                } else {
-                    onExit()
-                }
-            },
-            dragGesture: drag()
-        )
     }
 
     @ViewBuilder
@@ -892,7 +746,7 @@ struct LaTeXEditorView: View {
                             if panelArrangement == arrangement {
                                 Image(systemName: "checkmark")
                             }
-                            Text(arrangement.title)
+                            Text(arrangement.title(contentLabel: "PDF"))
                         }
                     }
                 }

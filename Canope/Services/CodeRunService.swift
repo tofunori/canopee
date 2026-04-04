@@ -48,20 +48,82 @@ struct CodeRunResult {
 }
 
 struct CodeDocumentWorkspaceState: Codable, Equatable {
-    var showOutputPane: Bool
     var showLogs: Bool
     var selectedRunID: UUID?
     var lastArtifactPath: String?
+    var outputLayout: CodeOutputLayoutState
+    var secondaryArtifactPath: String?
+    var primaryManualPreviewPath: String?
+    var secondaryManualPreviewPath: String?
+
+    init(
+        showLogs: Bool,
+        selectedRunID: UUID?,
+        lastArtifactPath: String?,
+        outputLayout: CodeOutputLayoutState = CodeOutputLayoutState(),
+        secondaryArtifactPath: String? = nil,
+        primaryManualPreviewPath: String? = nil,
+        secondaryManualPreviewPath: String? = nil
+    ) {
+        self.showLogs = showLogs
+        self.selectedRunID = selectedRunID
+        self.lastArtifactPath = lastArtifactPath
+        self.outputLayout = outputLayout
+        self.secondaryArtifactPath = secondaryArtifactPath
+        self.primaryManualPreviewPath = primaryManualPreviewPath
+        self.secondaryManualPreviewPath = secondaryManualPreviewPath
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case showLogs
+        case selectedRunID
+        case lastArtifactPath
+        case outputLayout
+        case secondaryArtifactPath
+        case primaryManualPreviewPath
+        case secondaryManualPreviewPath
+        case showOutputPane
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        showLogs = try container.decodeIfPresent(Bool.self, forKey: .showLogs) ?? false
+        selectedRunID = try container.decodeIfPresent(UUID.self, forKey: .selectedRunID)
+        lastArtifactPath = try container.decodeIfPresent(String.self, forKey: .lastArtifactPath)
+        secondaryArtifactPath = try container.decodeIfPresent(String.self, forKey: .secondaryArtifactPath)
+        primaryManualPreviewPath = try container.decodeIfPresent(String.self, forKey: .primaryManualPreviewPath)
+        secondaryManualPreviewPath = try container.decodeIfPresent(String.self, forKey: .secondaryManualPreviewPath)
+        if let decodedLayout = try container.decodeIfPresent(CodeOutputLayoutState.self, forKey: .outputLayout) {
+            outputLayout = decodedLayout
+        } else {
+            outputLayout = CodeOutputLayoutState(
+                isOutputVisible: try container.decodeIfPresent(Bool.self, forKey: .showOutputPane) ?? true
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(showLogs, forKey: .showLogs)
+        try container.encodeIfPresent(selectedRunID, forKey: .selectedRunID)
+        try container.encodeIfPresent(lastArtifactPath, forKey: .lastArtifactPath)
+        try container.encode(outputLayout, forKey: .outputLayout)
+        try container.encodeIfPresent(secondaryArtifactPath, forKey: .secondaryArtifactPath)
+        try container.encodeIfPresent(primaryManualPreviewPath, forKey: .primaryManualPreviewPath)
+        try container.encodeIfPresent(secondaryManualPreviewPath, forKey: .secondaryManualPreviewPath)
+    }
 }
 
 @MainActor
 final class CodeDocumentUIState: ObservableObject {
-    @Published var showOutputPane: Bool
     @Published var showLogs: Bool
     @Published var runHistory: [CodeRunRecord]
     @Published var selectedRunID: UUID?
     @Published var selectedArtifactPath: String?
     @Published var manualPreviewArtifact: ArtifactDescriptor?
+    @Published var outputLayout: CodeOutputLayoutState
+    @Published var secondaryArtifactPath: String?
+    @Published var secondaryManualPreviewArtifact: ArtifactDescriptor?
     @Published var isRunning = false
     @Published var outputLog = ""
     @Published var lastRunID: UUID?
@@ -70,12 +132,18 @@ final class CodeDocumentUIState: ObservableObject {
     private let fileURL: URL
 
     init(snapshot: CodeDocumentWorkspaceState?, fileURL: URL) {
+        let loadedHistory = CodeRunService.loadRunHistory(for: fileURL)
+        let restoredSelectedRunID = snapshot?.selectedRunID ?? loadedHistory.first?.runID
+
         self.fileURL = fileURL
-        self.showOutputPane = snapshot?.showOutputPane ?? true
         self.showLogs = snapshot?.showLogs ?? false
-        self.runHistory = CodeRunService.loadRunHistory(for: fileURL)
-        self.selectedRunID = snapshot?.selectedRunID ?? runHistory.first?.runID
+        self.runHistory = loadedHistory
+        self.selectedRunID = restoredSelectedRunID
         self.selectedArtifactPath = snapshot?.lastArtifactPath
+        self.outputLayout = snapshot?.outputLayout ?? CodeOutputLayoutState()
+        self.secondaryArtifactPath = snapshot?.secondaryArtifactPath
+        self.manualPreviewArtifact = Self.restoreManualArtifact(from: snapshot?.primaryManualPreviewPath, sourceDocumentPath: fileURL.path)
+        self.secondaryManualPreviewArtifact = Self.restoreManualArtifact(from: snapshot?.secondaryManualPreviewPath, sourceDocumentPath: fileURL.path)
 
         if let selectedRunID, !runHistory.contains(where: { $0.runID == selectedRunID }) {
             self.selectedRunID = runHistory.first?.runID
@@ -87,6 +155,7 @@ final class CodeDocumentUIState: ObservableObject {
 
         refreshOutputLogFromSelectedRun()
         sanitizeArtifactSelection()
+        sanitizeSecondaryArtifactSelection()
     }
 
     var selectedRun: CodeRunRecord? {
@@ -112,6 +181,23 @@ final class CodeDocumentUIState: ObservableObject {
         return activeArtifacts.first
     }
 
+    var availableSecondaryArtifacts: [ArtifactDescriptor] {
+        guard manualPreviewArtifact == nil else { return [] }
+        let primaryPath = activeArtifact?.url.path
+        return (selectedRun?.artifacts ?? []).filter { $0.url.path != primaryPath }
+    }
+
+    var secondaryActiveArtifact: ArtifactDescriptor? {
+        if let secondaryManualPreviewArtifact {
+            return secondaryManualPreviewArtifact
+        }
+        if let secondaryArtifactPath,
+           let match = availableSecondaryArtifacts.first(where: { $0.url.path == secondaryArtifactPath }) {
+            return match
+        }
+        return availableSecondaryArtifacts.first
+    }
+
     var canSelectPreviousRun: Bool {
         guard manualPreviewArtifact == nil,
               let selectedRun,
@@ -132,10 +218,13 @@ final class CodeDocumentUIState: ObservableObject {
 
     var persistedState: CodeDocumentWorkspaceState {
         CodeDocumentWorkspaceState(
-            showOutputPane: showOutputPane,
             showLogs: showLogs,
             selectedRunID: selectedRun?.runID,
-            lastArtifactPath: manualPreviewArtifact == nil ? activeArtifact?.url.path : selectedRun?.artifacts.first?.url.path
+            lastArtifactPath: manualPreviewArtifact == nil ? activeArtifact?.url.path : selectedRun?.artifacts.first?.url.path,
+            outputLayout: outputLayout,
+            secondaryArtifactPath: secondaryManualPreviewArtifact == nil ? secondaryActiveArtifact?.url.path : nil,
+            primaryManualPreviewPath: manualPreviewArtifact?.url.path,
+            secondaryManualPreviewPath: secondaryManualPreviewArtifact?.url.path
         )
     }
 
@@ -151,14 +240,16 @@ final class CodeDocumentUIState: ObservableObject {
         selectedRunID = result.runID
         selectedArtifactPath = result.artifacts.first?.url.path
         manualPreviewArtifact = nil
+        secondaryManualPreviewArtifact = nil
         isRunning = false
         if !result.artifacts.isEmpty {
-            showOutputPane = true
+            updateOutputLayout { $0.isOutputVisible = true }
         }
         if !result.outputLog.isEmpty || !result.succeeded {
             showLogs = true
         }
         sanitizeArtifactSelection()
+        sanitizeSecondaryArtifactSelection(preferNewestAlternative: true)
     }
 
     func beginRun(commandDescription: String) {
@@ -172,19 +263,35 @@ final class CodeDocumentUIState: ObservableObject {
         runHistory.sort { $0.executedAt > $1.executedAt }
         if selectedRunID == record.runID {
             sanitizeArtifactSelection()
+            sanitizeSecondaryArtifactSelection()
             refreshOutputLogFromSelectedRun()
         }
     }
 
     func setManualPreviewArtifact(_ artifact: ArtifactDescriptor) {
         manualPreviewArtifact = artifact
-        showOutputPane = true
+        updateOutputLayout { $0.isOutputVisible = true }
     }
 
     func returnToSelectedRun() {
         manualPreviewArtifact = nil
         sanitizeArtifactSelection()
+        sanitizeSecondaryArtifactSelection()
         refreshOutputLogFromSelectedRun()
+    }
+
+    func setSecondaryManualPreviewArtifact(_ artifact: ArtifactDescriptor) {
+        secondaryManualPreviewArtifact = artifact
+        updateOutputLayout {
+            $0.secondaryPaneVisible = true
+            $0.isOutputVisible = true
+        }
+    }
+
+    func clearSecondaryPreview() {
+        secondaryManualPreviewArtifact = nil
+        secondaryArtifactPath = nil
+        sanitizeSecondaryArtifactSelection()
     }
 
     func selectPreviousRun() {
@@ -194,6 +301,7 @@ final class CodeDocumentUIState: ObservableObject {
         manualPreviewArtifact = nil
         selectedRunID = runHistory[index + 1].runID
         sanitizeArtifactSelection()
+        sanitizeSecondaryArtifactSelection()
         refreshOutputLogFromSelectedRun()
     }
 
@@ -204,7 +312,15 @@ final class CodeDocumentUIState: ObservableObject {
         manualPreviewArtifact = nil
         selectedRunID = runHistory[index - 1].runID
         sanitizeArtifactSelection()
+        sanitizeSecondaryArtifactSelection()
         refreshOutputLogFromSelectedRun()
+    }
+
+    func setSecondaryArtifactPath(_ path: String?) {
+        secondaryManualPreviewArtifact = nil
+        secondaryArtifactPath = path
+        outputLayout.secondaryPaneVisible = true
+        sanitizeSecondaryArtifactSelection()
     }
 
     private func sanitizeArtifactSelection() {
@@ -220,11 +336,48 @@ final class CodeDocumentUIState: ObservableObject {
         selectedArtifactPath = selectedRun.artifacts.first?.url.path
     }
 
+    private func sanitizeSecondaryArtifactSelection(preferNewestAlternative: Bool = false) {
+        guard outputLayout.secondaryPaneVisible else { return }
+        if let secondaryManualPreviewArtifact {
+            if FileManager.default.fileExists(atPath: secondaryManualPreviewArtifact.url.path) {
+                return
+            }
+            self.secondaryManualPreviewArtifact = nil
+        }
+        let candidates = availableSecondaryArtifacts
+        guard !candidates.isEmpty else {
+            secondaryArtifactPath = nil
+            return
+        }
+        if preferNewestAlternative {
+            secondaryArtifactPath = candidates.first?.url.path
+            return
+        }
+        if let secondaryArtifactPath,
+           candidates.contains(where: { $0.url.path == secondaryArtifactPath }) {
+            return
+        }
+        secondaryArtifactPath = candidates.first?.url.path
+    }
+
     private func refreshOutputLogFromSelectedRun() {
         guard manualPreviewArtifact == nil, let selectedRun else {
             return
         }
         outputLog = (try? String(contentsOf: selectedRun.logURL, encoding: .utf8)) ?? ""
+    }
+
+    func updateOutputLayout(_ updates: (inout CodeOutputLayoutState) -> Void) {
+        var next = outputLayout
+        updates(&next)
+        outputLayout = next
+    }
+
+    private static func restoreManualArtifact(from path: String?, sourceDocumentPath: String) -> ArtifactDescriptor? {
+        guard let path else { return nil }
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return ArtifactDescriptor.make(url: url, sourceDocumentPath: sourceDocumentPath, runID: nil)
     }
 }
 

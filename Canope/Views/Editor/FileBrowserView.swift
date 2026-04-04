@@ -441,11 +441,15 @@ struct FileBrowserView: View {
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles]
+            options: []
         ) else { return [] }
 
         return contents
             .filter { url in
+                let name = url.lastPathComponent
+                if name.hasPrefix(".") && name != ".canope" {
+                    return false
+                }
                 let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 let isDir = values?.isDirectory ?? false
                 let isSymbolicLink = values?.isSymbolicLink ?? false

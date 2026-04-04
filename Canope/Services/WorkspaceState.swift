@@ -1,21 +1,43 @@
 import Foundation
 
-enum LaTeXPanelArrangement: String, Codable, CaseIterable, Equatable {
-    case editorPDFTerminal
-    case terminalEditorPDF
-    case pdfEditorTerminal
+enum PanelArrangement: String, Codable, CaseIterable, Equatable {
+    // Raw values match the old LaTeXPanelArrangement for backward compat
+    case editorContentTerminal = "editorPDFTerminal"
+    case terminalEditorContent = "terminalEditorPDF"
+    case contentEditorTerminal = "pdfEditorTerminal"
 
-    var title: String {
+    func title(contentLabel: String) -> String {
         switch self {
-        case .editorPDFTerminal:
-            return "TeX | PDF | Terminal"
-        case .terminalEditorPDF:
-            return "Terminal | TeX | PDF"
-        case .pdfEditorTerminal:
-            return "PDF | TeX | Terminal"
+        case .editorContentTerminal:
+            return "TeX | \(contentLabel) | Terminal"
+        case .terminalEditorContent:
+            return "Terminal | TeX | \(contentLabel)"
+        case .contentEditorTerminal:
+            return "\(contentLabel) | TeX | Terminal"
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        // Accept old CodePanelArrangement raw values
+        switch raw {
+        case "editorOutputTerminal":
+            self = .editorContentTerminal
+        case "terminalEditorOutput":
+            self = .terminalEditorContent
+        case "outputEditorTerminal":
+            self = .contentEditorTerminal
+        default:
+            guard let value = PanelArrangement(rawValue: raw) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown PanelArrangement: \(raw)")
+            }
+            self = value
         }
     }
 }
+
+typealias LaTeXPanelArrangement = PanelArrangement
 
 struct MainWindowWorkspaceState: Codable, Equatable {
     enum SavedTab: Codable, Hashable {
@@ -113,7 +135,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var showPDFPreview: Bool
     var showErrors: Bool
     var splitLayout: String
-    var panelArrangement: LaTeXPanelArrangement
+    var panelArrangement: PanelArrangement
     var threePaneLeadingWidth: Double?
     var threePaneTrailingWidth: Double?
     var editorFontSize: Double
@@ -148,7 +170,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         showPDFPreview: Bool,
         showErrors: Bool,
         splitLayout: String,
-        panelArrangement: LaTeXPanelArrangement,
+        panelArrangement: PanelArrangement,
         threePaneLeadingWidth: Double?,
         threePaneTrailingWidth: Double?,
         editorFontSize: Double,
@@ -183,7 +205,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         showPDFPreview = try container.decode(Bool.self, forKey: .showPDFPreview)
         showErrors = try container.decode(Bool.self, forKey: .showErrors)
         splitLayout = try container.decode(String.self, forKey: .splitLayout)
-        panelArrangement = try container.decodeIfPresent(LaTeXPanelArrangement.self, forKey: .panelArrangement) ?? .editorPDFTerminal
+        panelArrangement = try container.decodeIfPresent(PanelArrangement.self, forKey: .panelArrangement) ?? .editorContentTerminal
         threePaneLeadingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneLeadingWidth)
         threePaneTrailingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneTrailingWidth)
         editorFontSize = try container.decode(Double.self, forKey: .editorFontSize)

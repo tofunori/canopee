@@ -231,6 +231,7 @@ struct LaTeXEditorContainer: View {
                 terminalWorkspaceState: terminalWorkspaceState,
                 documentState: codeDocumentStateStore.state(for: fileURL),
                 onOpenInNewTab: onOpenTeX,
+                openPaperIDs: openPaperIDs,
                 editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil,
                 onPersistWorkspaceState: {
                     codeDocumentStateStore.persistState(for: fileURL)

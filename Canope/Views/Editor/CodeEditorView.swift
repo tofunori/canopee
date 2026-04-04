@@ -1,9 +1,9 @@
 import AppKit
-import PDFKit
 import SwiftUI
-import WebKit
+import SwiftData
+import PDFKit
 
-private enum CodeEditorThreePaneRole {
+private enum CodeThreePaneRole {
     case terminal
     case editor
     case output
@@ -12,7 +12,6 @@ private enum CodeEditorThreePaneRole {
 struct CodeEditorView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
-    private static let threePaneCoordinateSpace = "CodeThreePaneLayout"
 
     let fileURL: URL
     var isActive: Bool = true
@@ -21,17 +20,20 @@ struct CodeEditorView: View {
     @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
     @ObservedObject var documentState: CodeDocumentUIState
     var onOpenInNewTab: ((URL) -> Void)?
+    var openPaperIDs: [UUID] = []
     var editorTabBar: AnyView? = nil
     var onPersistWorkspaceState: (() -> Void)?
+
+    @Query var allPapers: [Paper]
+    @State private var fitToWidthTrigger = false
+    @Namespace private var contentTabIndicatorNamespace
 
     @State private var text = ""
     @State private var savedText = ""
     @State private var lastModified: Date?
     @State private var pollTimer: Timer?
     @State private var sidebarResizeStartWidth: CGFloat?
-    @State private var threePaneDragStartLeftWidth: CGFloat?
-    @State private var threePaneDragStartRightWidth: CGFloat?
-    @State private var isDraggingThreePaneDivider = false
+    @State private var outputResizeStartWidth: CGFloat?
     @State private var toolbarStatus: ToolbarStatusState = .idle
     @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
     @State private var fileCreationError: String?
@@ -52,12 +54,6 @@ struct CodeEditorView: View {
         CGFloat(workspaceState.editorFontSize)
     }
     private var codeTheme: CodeSyntaxTheme { .monokai }
-    private var activeArtifact: ArtifactDescriptor? {
-        documentState.activeArtifact
-    }
-    private var activeArtifacts: [ArtifactDescriptor] {
-        documentState.activeArtifacts
-    }
     private var outputDirectoryURL: URL {
         if let manualPreviewArtifact = documentState.manualPreviewArtifact {
             return manualPreviewArtifact.url.deletingLastPathComponent()
@@ -79,41 +75,47 @@ struct CodeEditorView: View {
         return "Run \(index + 1)/\(documentState.runHistory.count) · \(time) · \(selectedRun.artifacts.count) artefact\(selectedRun.artifacts.count > 1 ? "s" : "")"
     }
 
-    private var showOutputPane: Bool {
+    // --- Layout flags: read from shared workspace state (same as LaTeX editor) ---
+
+    private var isOutputVisible: Bool {
         get { workspaceState.showPDFPreview }
-        nonmutating set {
-            workspaceState.showPDFPreview = newValue
-            documentState.showOutputPane = newValue
-        }
+        nonmutating set { workspaceState.showPDFPreview = newValue }
     }
 
-    private var splitLayout: LaTeXEditorSplitLayout {
-        get { LaTeXEditorSplitLayout(rawValue: workspaceState.splitLayout) ?? .editorOnly }
-        nonmutating set {
-            workspaceState.splitLayout = newValue.rawValue
-            let shouldShowOutput = newValue != .editorOnly
-            workspaceState.showPDFPreview = shouldShowOutput
-            documentState.showOutputPane = shouldShowOutput
-        }
+    private var editorTerminalSplitLayout: LaTeXEditorSplitLayout {
+        get { LaTeXEditorSplitLayout(rawValue: workspaceState.splitLayout) ?? .horizontal }
+        nonmutating set { workspaceState.splitLayout = newValue.rawValue }
     }
 
-    private var panelArrangement: LaTeXPanelArrangement {
+    private var panelArrangement: PanelArrangement {
         get { workspaceState.panelArrangement }
         nonmutating set { workspaceState.panelArrangement = newValue }
     }
 
-    private var isOutputLeadingInLayout: Bool {
-        panelArrangement == .pdfEditorTerminal
-    }
-
-    private var threePaneLeftWidth: CGFloat? {
+    private var leadingPaneWidth: CGFloat? {
         get { workspaceState.threePaneLeadingWidth.map { CGFloat($0) } }
         nonmutating set { workspaceState.threePaneLeadingWidth = newValue.map { Double($0) } }
     }
 
-    private var threePaneRightWidth: CGFloat? {
+    private var trailingPaneWidth: CGFloat? {
         get { workspaceState.threePaneTrailingWidth.map { CGFloat($0) } }
         nonmutating set { workspaceState.threePaneTrailingWidth = newValue.map { Double($0) } }
+    }
+
+    // --- Per-document state (code-specific) ---
+
+    private var outputPlacement: CodeOutputPlacement {
+        get { documentState.outputLayout.outputPlacement }
+        nonmutating set {
+            documentState.updateOutputLayout { $0.outputPlacement = newValue }
+        }
+    }
+
+    private var primaryOutputWidth: CGFloat? {
+        get { documentState.outputLayout.primaryOutputWidth.map { CGFloat($0) } }
+        nonmutating set {
+            documentState.updateOutputLayout { $0.primaryOutputWidth = newValue.map { Double($0) } }
+        }
     }
 
     private var showSidebar: Bool {
@@ -152,7 +154,6 @@ struct CodeEditorView: View {
         }
         .onAppear {
             loadFile()
-            syncOutputPaneVisibilityFromWorkspace()
             if isActive {
                 startFileWatcher()
             }
@@ -164,7 +165,6 @@ struct CodeEditorView: View {
         .onChange(of: isActive) {
             if isActive {
                 loadFile()
-                syncOutputPaneVisibilityFromWorkspace()
                 startFileWatcher()
             } else {
                 stopFileWatcher()
@@ -175,51 +175,33 @@ struct CodeEditorView: View {
             stopFileWatcher()
             toolbarStatus = .idle
             loadFile()
-            syncOutputPaneVisibilityFromWorkspace()
             if isActive {
                 startFileWatcher()
             }
         }
-        .onChange(of: documentState.showOutputPane) {
-            if workspaceState.showPDFPreview != documentState.showOutputPane {
-                workspaceState.showPDFPreview = documentState.showOutputPane
-                onPersistWorkspaceState?()
-            }
-            persistDocumentWorkspaceState()
-        }
-        .onChange(of: workspaceState.showPDFPreview) {
-            if documentState.showOutputPane != workspaceState.showPDFPreview {
-                documentState.showOutputPane = workspaceState.showPDFPreview
-            }
-            onPersistWorkspaceState?()
-        }
+        .onChange(of: documentState.outputLayout) { persistDocumentWorkspaceState() }
         .onChange(of: documentState.showLogs) { persistDocumentWorkspaceState() }
         .onChange(of: documentState.selectedRunID) { persistDocumentWorkspaceState() }
         .onChange(of: documentState.selectedArtifactPath) { persistDocumentWorkspaceState() }
+        .onChange(of: documentState.secondaryArtifactPath) { persistDocumentWorkspaceState() }
         .onChange(of: showSidebar) { onPersistWorkspaceState?() }
         .onChange(of: workspaceState.sidebarWidth) { onPersistWorkspaceState?() }
         .onChange(of: workspaceState.editorFontSize) { onPersistWorkspaceState?() }
-        .onChange(of: workspaceState.splitLayout) { onPersistWorkspaceState?() }
-        .onChange(of: workspaceState.panelArrangement) {
-            threePaneLeftWidth = nil
-            threePaneRightWidth = nil
-            onPersistWorkspaceState?()
-        }
     }
 
     private var workAreaPane: some View {
         Group {
-            if isActive && showTerminal && showOutputPane && splitLayout == .horizontal {
-                horizontalThreePaneLayout
-            } else if isActive && showTerminal {
-                switch panelArrangement {
-                case .terminalEditorPDF:
-                    HSplitView {
-                        embeddedTerminalPane
+            if isActive && showTerminal && editorTerminalSplitLayout != .editorOnly {
+                if editorTerminalSplitLayout == .vertical {
+                    VSplitView {
                         editorAndOutputPane
                             .layoutPriority(1)
+                        embeddedTerminalPane
+                            .frame(minHeight: 150, idealHeight: 220, maxHeight: .infinity)
                     }
-                case .editorPDFTerminal, .pdfEditorTerminal:
+                } else if isOutputVisible && outputPlacement == .right {
+                    horizontalThreePaneWorkspace
+                } else {
                     HSplitView {
                         editorAndOutputPane
                             .layoutPriority(1)
@@ -231,205 +213,22 @@ struct CodeEditorView: View {
             }
         }
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showOutputPane)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: splitLayout)
-    }
-
-    @ViewBuilder
-    private var horizontalThreePaneLayout: some View {
-        GeometryReader { proxy in
-            let roles = threePaneRoles
-            let totalContentWidth = max(0, proxy.size.width - (LaTeXEditorThreePaneSizing.dividerWidth * 2))
-            let widths = resolvedThreePaneWidths(for: roles, totalContentWidth: totalContentWidth)
-
-            HStack(spacing: 0) {
-                threePaneView(for: roles.0)
-                    .frame(width: widths.left)
-
-                threePaneResizeHandle {
-                    guard !isDraggingThreePaneDivider else { return }
-                    NSCursor.resizeLeftRight.set()
-                } onExit: {
-                    guard !isDraggingThreePaneDivider else { return }
-                    NSCursor.arrow.set()
-                } drag: {
-                    AnyGesture(
-                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.threePaneCoordinateSpace))
-                            .onChanged { value in
-                                if !isDraggingThreePaneDivider {
-                                    isDraggingThreePaneDivider = true
-                                    NSCursor.resizeLeftRight.set()
-                                }
-                                if threePaneDragStartLeftWidth == nil {
-                                    threePaneDragStartLeftWidth = widths.left
-                                }
-                                let startLeft = threePaneDragStartLeftWidth ?? widths.left
-                                let leftMin = paneMinWidth(for: roles.0)
-                                let middleMin = paneMinWidth(for: roles.1)
-                                let maxLeft = max(leftMin, totalContentWidth - widths.right - middleMin)
-                                threePaneLeftWidth = min(max(startLeft + value.translation.width, leftMin), maxLeft)
-                            }
-                            .onEnded { _ in
-                                threePaneDragStartLeftWidth = nil
-                                isDraggingThreePaneDivider = false
-                                NSCursor.arrow.set()
-                            }
-                    )
-                }
-
-                threePaneView(for: roles.1)
-                    .frame(width: widths.middle)
-
-                threePaneResizeHandle {
-                    guard !isDraggingThreePaneDivider else { return }
-                    NSCursor.resizeLeftRight.set()
-                } onExit: {
-                    guard !isDraggingThreePaneDivider else { return }
-                    NSCursor.arrow.set()
-                } drag: {
-                    AnyGesture(
-                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.threePaneCoordinateSpace))
-                            .onChanged { value in
-                                if !isDraggingThreePaneDivider {
-                                    isDraggingThreePaneDivider = true
-                                    NSCursor.resizeLeftRight.set()
-                                }
-                                if threePaneDragStartRightWidth == nil {
-                                    threePaneDragStartRightWidth = widths.right
-                                }
-                                let startRight = threePaneDragStartRightWidth ?? widths.right
-                                let middleMin = paneMinWidth(for: roles.1)
-                                let rightMin = paneMinWidth(for: roles.2)
-                                let maxRight = max(rightMin, totalContentWidth - widths.left - middleMin)
-                                threePaneRightWidth = min(max(startRight - value.translation.width, rightMin), maxRight)
-                            }
-                            .onEnded { _ in
-                                threePaneDragStartRightWidth = nil
-                                isDraggingThreePaneDivider = false
-                                NSCursor.arrow.set()
-                            }
-                    )
-                }
-
-                threePaneView(for: roles.2)
-                    .frame(width: widths.right)
-            }
-            .coordinateSpace(name: Self.threePaneCoordinateSpace)
-            .transaction { transaction in
-                transaction.animation = nil
-            }
-        }
-    }
-
-    private var threePaneRoles: (CodeEditorThreePaneRole, CodeEditorThreePaneRole, CodeEditorThreePaneRole) {
-        switch panelArrangement {
-        case .terminalEditorPDF:
-            return (.terminal, .editor, .output)
-        case .editorPDFTerminal:
-            return (.editor, .output, .terminal)
-        case .pdfEditorTerminal:
-            return (.output, .editor, .terminal)
-        }
-    }
-
-    @ViewBuilder
-    private func threePaneView(for role: CodeEditorThreePaneRole) -> some View {
-        switch role {
-        case .terminal:
-            embeddedTerminalPane
-        case .editor:
-            editorPane
-        case .output:
-            outputPane
-        }
-    }
-
-    private func paneMinWidth(for role: CodeEditorThreePaneRole) -> CGFloat {
-        switch role {
-        case .terminal:
-            return 160
-        case .editor:
-            return 200
-        case .output:
-            return 220
-        }
-    }
-
-    private func paneIdealWidth(for role: CodeEditorThreePaneRole) -> CGFloat {
-        switch role {
-        case .terminal:
-            return 320
-        case .editor:
-            return 620
-        case .output:
-            return 360
-        }
-    }
-
-    private func resolvedThreePaneWidths(
-        for roles: (CodeEditorThreePaneRole, CodeEditorThreePaneRole, CodeEditorThreePaneRole),
-        totalContentWidth: CGFloat
-    ) -> (left: CGFloat, middle: CGFloat, right: CGFloat) {
-        let leftMin = paneMinWidth(for: roles.0)
-        let middleMin = paneMinWidth(for: roles.1)
-        let rightMin = paneMinWidth(for: roles.2)
-        let minimumTotal = leftMin + middleMin + rightMin
-        let availableWidth = max(totalContentWidth, minimumTotal)
-
-        let seededLeft = threePaneLeftWidth ?? paneIdealWidth(for: roles.0)
-        let seededRight = threePaneRightWidth ?? paneIdealWidth(for: roles.2)
-
-        let leftMaxBeforeRightClamp = max(leftMin, availableWidth - middleMin - rightMin)
-        let left = min(max(seededLeft, leftMin), leftMaxBeforeRightClamp)
-
-        let rightMaxBeforeLeftClamp = max(rightMin, availableWidth - left - middleMin)
-        let right = min(max(seededRight, rightMin), rightMaxBeforeLeftClamp)
-
-        let leftMax = max(leftMin, availableWidth - right - middleMin)
-        let clampedLeft = min(left, leftMax)
-        let rightMax = max(rightMin, availableWidth - clampedLeft - middleMin)
-        let clampedRight = min(right, rightMax)
-        let middle = max(middleMin, availableWidth - clampedLeft - clampedRight)
-
-        return (clampedLeft, middle, clampedRight)
-    }
-
-    private func threePaneResizeHandle(
-        onEnter: @escaping () -> Void,
-        onExit: @escaping () -> Void,
-        drag: @escaping () -> AnyGesture<DragGesture.Value>
-    ) -> some View {
-        AppChromeResizeHandle(
-            width: LaTeXEditorThreePaneSizing.dividerWidth,
-            onHoverChanged: { hovering in
-                if hovering {
-                    onEnter()
-                } else {
-                    onExit()
-                }
-            },
-            dragGesture: drag()
-        )
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: isOutputVisible)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: editorTerminalSplitLayout)
     }
 
     @ViewBuilder
     private var editorAndOutputPane: some View {
-        if !showOutputPane {
+        if !isOutputVisible {
             editorPane
-        } else if splitLayout == .horizontal {
-            HSplitView {
-                if isOutputLeadingInLayout { outputPane }
-                editorPane
-                if !isOutputLeadingInLayout { outputPane }
-            }
-        } else if splitLayout == .vertical {
-            VSplitView {
-                if isOutputLeadingInLayout { outputPane }
-                editorPane
-                if !isOutputLeadingInLayout { outputPane }
-            }
+        } else if outputPlacement == .right {
+            outputRightPlacementPane
         } else {
-            editorPane
+            VSplitView {
+                editorPane
+                contentPane
+                    .frame(minHeight: 220, idealHeight: 320, maxHeight: .infinity)
+            }
         }
     }
 
@@ -498,124 +297,343 @@ struct CodeEditorView: View {
         .layoutPriority(1)
     }
 
-    private var outputPane: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Label("Output", systemImage: "chart.xyaxis.line")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                Text(outputStatusLabel)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                if documentState.manualPreviewArtifact != nil {
-                    Button(action: {
-                        documentState.returnToSelectedRun()
-                        persistDocumentWorkspaceState()
-                    }) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Retourner au dernier run")
-                } else {
-                    Button(action: {
-                        documentState.selectPreviousRun()
-                        persistDocumentWorkspaceState()
-                    }) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(documentState.canSelectPreviousRun ? .secondary : .tertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!documentState.canSelectPreviousRun)
-                    .help("Run précédent")
+    private var outputRightPlacementPane: some View {
+        GeometryReader { proxy in
+            let dividerWidth = LaTeXEditorThreePaneSizing.dividerWidth
+            let totalWidth = max(0, proxy.size.width - dividerWidth)
+            let minEditor: CGFloat = 220
+            let minOutput: CGFloat = 240
+            let seededOutput = primaryOutputWidth ?? 380
+            let maxOutput = max(minOutput, totalWidth - minEditor)
+            let outputWidth = min(max(seededOutput, minOutput), maxOutput)
+            let editorWidth = max(minEditor, totalWidth - outputWidth)
 
-                    Button(action: {
-                        documentState.selectNextRun()
-                        persistDocumentWorkspaceState()
-                    }) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(documentState.canSelectNextRun ? .secondary : .tertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!documentState.canSelectNextRun)
-                    .help("Run suivant")
+            HStack(spacing: 0) {
+                editorPane
+                    .frame(width: editorWidth)
 
-                    Button(action: refreshSelectedRun) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(documentState.selectedRun == nil)
-                    .help("Actualiser le run sélectionné")
-                }
-                Button(action: revealArtifactDirectoryInFinder) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Afficher le dossier d’artefacts")
+                AppChromeResizeHandle(
+                    width: dividerWidth,
+                    onHoverChanged: { hovering in
+                        if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    },
+                    dragGesture: AnyGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let start = outputResizeStartWidth ?? outputWidth
+                                if outputResizeStartWidth == nil {
+                                    outputResizeStartWidth = outputWidth
+                                }
+                                let next = start - value.translation.width
+                                primaryOutputWidth = min(max(next, minOutput), maxOutput)
+                            }
+                            .onEnded { _ in
+                                outputResizeStartWidth = nil
+                                persistDocumentWorkspaceState()
+                            }
+                    ),
+                    axis: .vertical
+                )
+
+                contentPane
+                    .frame(width: outputWidth)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(AppChromePalette.surfaceSubbar)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+        }
+    }
 
-            if activeArtifacts.count > 1 {
-                AppChromeDivider(role: .panel)
+    private var horizontalThreePaneWorkspace: some View {
+        let roles = codeThreePaneRoles
+        return ThreePaneLayoutView(
+            config: .code(arrangement: panelArrangement),
+            leadingWidth: Binding(get: { leadingPaneWidth }, set: { leadingPaneWidth = $0 }),
+            trailingWidth: Binding(get: { trailingPaneWidth }, set: { trailingPaneWidth = $0 }),
+            leading: { codeThreePaneView(for: roles.0) },
+            middle: { codeThreePaneView(for: roles.1) },
+            trailing: { codeThreePaneView(for: roles.2) },
+            onDragEnd: persistDocumentWorkspaceState
+        )
+    }
+
+    private var outputWorkspace: some View {
+        CodeOutputWorkspace(
+            documentState: documentState,
+            outputStatusLabel: outputStatusLabel,
+            revealArtifactDirectoryInFinder: revealArtifactDirectoryInFinder,
+            refreshSelectedRun: refreshSelectedRun,
+            persist: persistDocumentWorkspaceState
+        )
+    }
+
+    // MARK: - Content Pane (Output + Reference PDFs)
+
+    private var contentPaneTabs: [LaTeXEditorPdfPaneTab] {
+        [.compiled] + workspaceState.referencePaperIDs.map { .reference($0) }
+    }
+
+    private var selectedContentTab: LaTeXEditorPdfPaneTab {
+        if let id = workspaceState.selectedReferencePaperID {
+            return .reference(id)
+        }
+        return .compiled
+    }
+
+    private func paperFor(_ id: UUID) -> Paper? {
+        allPapers.first { $0.id == id }
+    }
+
+    private var contentPane: some View {
+        VStack(spacing: 0) {
+            if contentPaneTabs.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
-                        ForEach(activeArtifacts) { artifact in
-                            artifactTabButton(artifact)
+                        ForEach(contentPaneTabs, id: \.self) { tab in
+                            contentTabButton(tab)
                         }
                     }
                 }
                 .frame(height: AppChromeMetrics.tabBarHeight)
                 .background(AppChromePalette.surfaceSubbar)
+                AppChromeDivider(role: .panel)
             }
 
-            AppChromeDivider(role: .panel)
+            ZStack {
+                outputWorkspace
+                    .opacity(selectedContentTab == .compiled ? 1 : 0)
+                    .allowsHitTesting(selectedContentTab == .compiled)
 
-            ArtifactPreviewPane(artifact: activeArtifact)
+                ForEach(contentPaneTabs.compactMap { tab -> UUID? in
+                    if case .reference(let id) = tab { return id } else { return nil }
+                }, id: \.self) { id in
+                    Group {
+                        if let pdf = workspaceState.referencePDFs[id],
+                           let state = workspaceState.referencePDFUIStates[id],
+                           let paper = paperFor(id) {
+                            ReferencePDFAnnotationPane(
+                                document: pdf,
+                                fileURL: paper.fileURL,
+                                fitToWidthTrigger: selectedContentTab == .reference(id) ? fitToWidthTrigger : false,
+                                isBridgeCommandTargetActive: selectedContentTab == .reference(id),
+                                state: state,
+                                onDocumentChanged: {
+                                    referencePDFDocumentDidChange(id: id)
+                                },
+                                onMarkupAppearanceNeedsRefresh: {
+                                    reloadReferencePDFDocument(id: id)
+                                },
+                                onSaveNote: {
+                                    saveReferenceAnnotationNote(for: id)
+                                },
+                                onCancelNote: {
+                                    workspaceState.referencePDFUIStates[id]?.isEditingNote = false
+                                },
+                                onAutoSave: {
+                                    saveReferencePDF(id: id)
+                                }
+                            )
+                        } else {
+                            ContentUnavailableView(
+                                "PDF introuvable",
+                                systemImage: "exclamationmark.triangle",
+                                description: Text("Le fichier PDF n'a pas pu être chargé")
+                            )
+                        }
+                    }
+                    .opacity(selectedContentTab == .reference(id) ? 1 : 0)
+                    .allowsHitTesting(selectedContentTab == .reference(id))
+                }
+            }
         }
-        .frame(minWidth: 220, idealWidth: 360, maxWidth: .infinity)
+        .frame(minWidth: 240, idealWidth: 380, maxWidth: .infinity)
     }
 
-    private func artifactTabButton(_ artifact: ArtifactDescriptor) -> some View {
-        let isSelected = artifact.url.path == activeArtifact?.url.path
-        return Button {
+    @ViewBuilder
+    private func contentTabButton(_ tab: LaTeXEditorPdfPaneTab) -> some View {
+        let isSelected = tab == selectedContentTab
+        HStack(spacing: 4) {
+            Button {
+                AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                    selectContentTab(tab)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    switch tab {
+                    case .compiled:
+                        Image(systemName: "chart.xyaxis.line")
+                            .font(.system(size: 9))
+                        Text("Output")
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                    case .reference(let id):
+                        Image(systemName: "book")
+                            .font(.system(size: 9))
+                        Text(paperFor(id)?.authorsShort ?? "Article")
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if case .reference = tab {
+                Button {
+                    closeContentTab(tab)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(AppChromePalette.tabFill(isSelected: isSelected, isHovered: false, role: .reference))
+        .overlay(alignment: .bottom) {
+            if isSelected {
+                Rectangle()
+                    .fill(AppChromePalette.tabIndicator(for: .reference))
+                    .frame(height: AppChromeMetrics.tabIndicatorHeight)
+                    .matchedGeometryEffect(id: "code-content-tab-indicator", in: contentTabIndicatorNamespace)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.tabCornerRadius, style: .continuous))
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
+    }
+
+    private func selectContentTab(_ tab: LaTeXEditorPdfPaneTab) {
+        switch tab {
+        case .compiled:
+            workspaceState.selectedReferencePaperID = nil
+        case .reference(let id):
+            workspaceState.selectedReferencePaperID = id
+        }
+    }
+
+    private func closeContentTab(_ tab: LaTeXEditorPdfPaneTab) {
+        guard case .reference(let id) = tab else { return }
+        let pendingSave = workspaceState.referencePDFUIStates[id]?.hasUnsavedChanges == true
+        let documentToSave = workspaceState.referencePDFs[id]
+        let fileURLToSave = paperFor(id)?.fileURL
+
+        workspaceState.referencePaperIDs.removeAll { $0 == id }
+        workspaceState.referencePDFs.removeValue(forKey: id)
+        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
+        workspaceState.referencePDFUIStates.removeValue(forKey: id)
+        if workspaceState.selectedReferencePaperID == id {
+            workspaceState.selectedReferencePaperID = workspaceState.referencePaperIDs.first
+        }
+
+        guard pendingSave, let documentToSave, let fileURLToSave else { return }
+        DispatchQueue.main.async {
+            _ = AnnotationService.save(document: documentToSave, to: fileURLToSave)
+        }
+    }
+
+    private func openReference(_ paper: Paper) {
+        let tab = LaTeXEditorPdfPaneTab.reference(paper.id)
+        if contentPaneTabs.contains(tab) {
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
-                documentState.selectedArtifactPath = artifact.url.path
+                workspaceState.selectedReferencePaperID = paper.id
             }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: iconName(for: artifact.kind))
-                    .font(.system(size: 9))
-                Text(artifact.displayName)
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(AppChromePalette.tabFill(isSelected: isSelected, isHovered: false, role: .reference))
-            .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.tabCornerRadius, style: .continuous))
+            return
         }
-        .buttonStyle(.plain)
+        guard let pdf = PDFDocument(url: paper.fileURL) else { return }
+        AnnotationService.normalizeDocumentAnnotations(in: pdf)
+        workspaceState.referencePDFs[paper.id] = pdf
+        if workspaceState.referencePDFUIStates[paper.id] == nil {
+            workspaceState.referencePDFUIStates[paper.id] = ReferencePDFUIState()
+        }
+        workspaceState.referencePaperIDs.append(paper.id)
+        AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+            workspaceState.selectedReferencePaperID = paper.id
+        }
+        if !isOutputVisible {
+            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                isOutputVisible = true
+            }
+        }
     }
 
-    private func iconName(for artifactKind: ArtifactKind) -> String {
-        switch artifactKind {
-        case .pdf:
-            return "doc.richtext"
-        case .image:
-            return "photo"
-        case .html:
-            return "globe"
+    // MARK: - Reference PDF Helpers
+
+    private func referencePDFDocumentDidChange(id: UUID) {
+        guard let state = workspaceState.referencePDFUIStates[id] else { return }
+        state.hasUnsavedChanges = true
+        state.annotationRefreshToken = UUID()
+        let delay: TimeInterval = (state.selectedAnnotation?.isTextBoxAnnotation == true || state.currentTool == .textBox) ? 0.9 : 0.25
+        state.pendingSaveWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak state] in
+            state?.pendingSaveWorkItem = nil
+            saveReferencePDF(id: id)
+        }
+        state.pendingSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func saveReferencePDF(id: UUID) {
+        guard let document = workspaceState.referencePDFs[id],
+              let paper = paperFor(id) else { return }
+        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
+        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem = nil
+        if AnnotationService.save(document: document, to: paper.fileURL) {
+            workspaceState.referencePDFUIStates[id]?.hasUnsavedChanges = false
+        }
+    }
+
+    private func reloadReferencePDFDocument(id: UUID) {
+        guard let paper = paperFor(id) else { return }
+        let state = workspaceState.referencePDFUIStates[id]
+        state?.selectedAnnotation = nil
+        state?.requestedRestorePageIndex = state?.lastKnownPageIndex
+        guard let data = try? Data(contentsOf: paper.fileURL),
+              let refreshed = PDFDocument(data: data) else {
+            if let loaded = PDFDocument(url: paper.fileURL) {
+                AnnotationService.normalizeDocumentAnnotations(in: loaded)
+                workspaceState.referencePDFs[id] = loaded
+            }
+            state?.annotationRefreshToken = UUID()
+            state?.pdfViewRefreshToken = UUID()
+            return
+        }
+        AnnotationService.normalizeDocumentAnnotations(in: refreshed)
+        workspaceState.referencePDFs[id] = refreshed
+        state?.annotationRefreshToken = UUID()
+        state?.pdfViewRefreshToken = UUID()
+    }
+
+    private func saveReferenceAnnotationNote(for id: UUID) {
+        guard let state = workspaceState.referencePDFUIStates[id],
+              let annotation = state.selectedAnnotation else { return }
+        annotation.contents = state.editingNoteText
+        state.isEditingNote = false
+        state.annotationRefreshToken = UUID()
+        referencePDFDocumentDidChange(id: id)
+    }
+
+    private var codeThreePaneRoles: (CodeThreePaneRole, CodeThreePaneRole, CodeThreePaneRole) {
+        switch panelArrangement {
+        case .editorContentTerminal:
+            return (.editor, .output, .terminal)
+        case .terminalEditorContent:
+            return (.terminal, .editor, .output)
+        case .contentEditorTerminal:
+            return (.output, .editor, .terminal)
+        }
+    }
+
+    @ViewBuilder
+    private func codeThreePaneView(for role: CodeThreePaneRole) -> some View {
+        switch role {
+        case .terminal:
+            embeddedTerminalPane
+        case .editor:
+            editorPane
+        case .output:
+            contentPane
         }
     }
 
@@ -649,7 +667,11 @@ struct CodeEditorView: View {
                 if EditorFileSupport.isEditorDocument(url) {
                     onOpenInNewTab?(url)
                 } else if let artifact = ArtifactDescriptor.make(url: url, sourceDocumentPath: fileURL.path, runID: nil) {
-                    documentState.setManualPreviewArtifact(artifact)
+                    if documentState.outputLayout.secondaryPaneVisible {
+                        documentState.setSecondaryManualPreviewArtifact(artifact)
+                    } else {
+                        documentState.setManualPreviewArtifact(artifact)
+                    }
                     persistDocumentWorkspaceState()
                 }
             }
@@ -743,6 +765,29 @@ struct CodeEditorView: View {
                 .help("Journal d’exécution")
             }
 
+            toolbarCluster(zone: .primary, title: "Réf.") {
+                Menu {
+                    let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
+                    if openPapers.isEmpty {
+                        Text("Aucun article ouvert en onglet")
+                    } else {
+                        ForEach(openPapers) { paper in
+                            Button {
+                                openReference(paper)
+                            } label: {
+                                let alreadyOpen = contentPaneTabs.contains(.reference(paper.id))
+                                Text("\(alreadyOpen ? "✓ " : "")\(paper.authorsShort) (\(paper.year.map { String($0) } ?? "—")) — \(paper.title)")
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: contentPaneTabs.count > 1 ? "book.fill" : "book")
+                        .foregroundStyle(contentPaneTabs.count > 1 ? .blue : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Ouvrir un article de référence")
+            }
+
             Spacer(minLength: 8)
 
             toolbarCluster(zone: .trailing, title: "Vue") {
@@ -759,65 +804,94 @@ struct CodeEditorView: View {
 
                 Button(action: {
                     AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        showOutputPane.toggle()
+                        isOutputVisible.toggle()
                     }
                 }) {
                     Image(systemName: "chart.xyaxis.line")
-                        .foregroundStyle(showOutputPane ? AppChromePalette.info : .secondary)
+                        .foregroundStyle(isOutputVisible ? AppChromePalette.info : .secondary)
                 }
                 .buttonStyle(.plain)
 
                 Menu {
                     Button {
                         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            splitLayout = .horizontal
+                            outputPlacement = .right
                         }
                     } label: {
-                        Label("Côte à côte", systemImage: "rectangle.split.2x1")
-                        if splitLayout == .horizontal { Image(systemName: "checkmark") }
+                        Label("Output à droite", systemImage: "rectangle.split.2x1")
+                        if outputPlacement == .right { Image(systemName: "checkmark") }
                     }
 
                     Button {
                         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            splitLayout = .vertical
+                            outputPlacement = .bottom
                         }
                     } label: {
-                        Label("Haut / Bas", systemImage: "rectangle.split.1x2")
-                        if splitLayout == .vertical { Image(systemName: "checkmark") }
-                    }
-
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            splitLayout = .editorOnly
-                        }
-                    } label: {
-                        Label("Éditeur seul", systemImage: "doc.text")
-                        if splitLayout == .editorOnly { Image(systemName: "checkmark") }
+                        Label("Output en bas", systemImage: "rectangle.split.1x2")
+                        if outputPlacement == .bottom { Image(systemName: "checkmark") }
                     }
                 } label: {
-                    Image(systemName: "rectangle.split.2x1")
+                    Label("Output", systemImage: outputPlacement == .right ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                        .font(.caption2.weight(.semibold))
                 }
                 .buttonStyle(.plain)
 
                 Menu {
-                    ForEach(LaTeXPanelArrangement.allCases, id: \.self) { arrangement in
-                        Button {
-                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                                panelArrangement = arrangement
-                            }
-                        } label: {
-                            HStack {
-                                if panelArrangement == arrangement {
-                                    Image(systemName: "checkmark")
+                    Button {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            editorTerminalSplitLayout = .horizontal
+                        }
+                    } label: {
+                        Label("Disposition horizontale", systemImage: "rectangle.split.2x1")
+                        if editorTerminalSplitLayout == .horizontal { Image(systemName: "checkmark") }
+                    }
+
+                    Button {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            editorTerminalSplitLayout = .vertical
+                        }
+                    } label: {
+                        Label("Terminal en bas", systemImage: "rectangle.split.1x2")
+                        if editorTerminalSplitLayout == .vertical { Image(systemName: "checkmark") }
+                    }
+
+                    Button {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            editorTerminalSplitLayout = .editorOnly
+                        }
+                    } label: {
+                        Label("Sans terminal", systemImage: "doc.text")
+                        if editorTerminalSplitLayout == .editorOnly { Image(systemName: "checkmark") }
+                    }
+                } label: {
+                    Label("Disposition", systemImage: "slider.horizontal.3")
+                        .font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+
+                if showTerminal && isOutputVisible && outputPlacement == .right && editorTerminalSplitLayout == .horizontal {
+                    Menu {
+                        ForEach(PanelArrangement.allCases, id: \.self) { arrangement in
+                            Button {
+                                AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                                    panelArrangement = arrangement
                                 }
-                                Text(arrangement.title)
+                            } label: {
+                                HStack {
+                                    if panelArrangement == arrangement {
+                                        Image(systemName: "checkmark")
+                                    }
+                                    Text(arrangement.title(contentLabel: "Output"))
+                                }
                             }
                         }
+                    } label: {
+                        Label("Ordre", systemImage: "square.split.3x1")
+                            .font(.caption2.weight(.semibold))
                     }
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
+                    .buttonStyle(.plain)
+                    .help("Ordre des panneaux")
                 }
-                .buttonStyle(.plain)
 
                 Button(action: {
                     AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
@@ -1023,12 +1097,6 @@ struct CodeEditorView: View {
         onPersistWorkspaceState?()
     }
 
-    private func syncOutputPaneVisibilityFromWorkspace() {
-        if documentState.showOutputPane != workspaceState.showPDFPreview {
-            documentState.showOutputPane = workspaceState.showPDFPreview
-        }
-    }
-
     private func startFileWatcher() {
         guard pollTimer == nil else { return }
         lastModified = modificationDate()
@@ -1056,89 +1124,5 @@ struct CodeEditorView: View {
 
     nonisolated private static func modificationDate(for url: URL) -> Date? {
         try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
-    }
-}
-
-private struct ArtifactPreviewPane: View {
-    let artifact: ArtifactDescriptor?
-
-    var body: some View {
-        Group {
-            if let artifact {
-                switch artifact.kind {
-                case .pdf:
-                    if let document = PDFDocument(url: artifact.url) {
-                        PDFPreviewView(document: document, allowsInverseSync: false)
-                    } else {
-                        unavailableView(
-                            title: "PDF introuvable",
-                            systemImage: "doc.richtext",
-                            description: "Le PDF n’a pas pu être chargé."
-                        )
-                    }
-                case .image:
-                    ImageArtifactView(url: artifact.url)
-                case .html:
-                    WebArtifactView(url: artifact.url)
-                }
-            } else {
-                unavailableView(
-                    title: "Aucune sortie",
-                    systemImage: "chart.xyaxis.line",
-                    description: "Exécute le script pour voir le dernier artefact généré."
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func unavailableView(title: String, systemImage: String, description: String) -> some View {
-        ContentUnavailableView(
-            title,
-            systemImage: systemImage,
-            description: Text(description)
-        )
-    }
-}
-
-private struct ImageArtifactView: NSViewRepresentable {
-    let url: URL
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let imageView = NSImageView()
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.imageAlignment = .alignCenter
-
-        let scrollView = NSScrollView()
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.documentView = imageView
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let imageView = scrollView.documentView as? NSImageView else { return }
-        imageView.image = NSImage(contentsOf: url)
-        imageView.frame = CGRect(origin: .zero, size: imageView.image?.size ?? .zero)
-    }
-}
-
-private struct WebArtifactView: NSViewRepresentable {
-    let url: URL
-
-    func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.setValue(false, forKey: "drawsBackground")
-        webView.allowsBackForwardNavigationGestures = true
-        return webView
-    }
-
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        let accessURL = url.deletingLastPathComponent()
-        webView.loadFileURL(url, allowingReadAccessTo: accessURL)
     }
 }

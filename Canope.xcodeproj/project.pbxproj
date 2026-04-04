@@ -11,6 +11,7 @@
 		05DC7906E8C40724A4AD9E41 /* RecentTeXFilesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CCFB1D31C977634472B234D /* RecentTeXFilesStore.swift */; };
 		068F8F649D14185E05258883 /* TextNoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9374D4066FF6C281C46D277 /* TextNoteEditorView.swift */; };
 		06EE728427877B00AFBB8D0A /* PaperRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F5330808F861EA6C2686A88 /* PaperRowView.swift */; };
+		085341ECE38ECACB0EC9A1E7 /* CodeOutputWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2168A22984A0573806D7375 /* CodeOutputWorkspace.swift */; };
 		08C11D9AD3D55B9EEECCD694 /* AnnotationTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 083BC2D172129785C6152114 /* AnnotationTool.swift */; };
 		0C3042306404BE1982B18799 /* LaTeXToolbarComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13A9A2F1AF101D865F019ED8 /* LaTeXToolbarComponents.swift */; };
 		11C7CAFDE5222CAEB518DCE8 /* AnnotationColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAA8E9FC6B60137A6822B07A /* AnnotationColor.swift */; };
@@ -60,6 +61,7 @@
 		BA1CC7C393692A6F0E92B75E /* ClaudeIDEBridgeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46E0CF6500C50097F0D77FF5 /* ClaudeIDEBridgeService.swift */; };
 		BA26CC6387AE6CC2E7447200 /* LaTeXTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64494B3369625558447F0913 /* LaTeXTextEditor.swift */; };
 		BA4F8E1EC05941E3D78F64CF /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB6807CBA5694C83AE1A3317 /* LibraryView.swift */; };
+		BAA58AD3F47FBC5419FD4533 /* ThreePaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E3551EFCEDED294A25C2CF8 /* ThreePaneLayout.swift */; };
 		BF63157CD6C69DE2472A3C0B /* MetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F63CE44FF6158ED19809BED5 /* MetadataExtractor.swift */; };
 		C0CCD66691C04566F42D8A46 /* PaperTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9150735813E3A10D61D07D74 /* PaperTableView.swift */; };
 		C143C9F848CA1F82B914653C /* AnnotationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1190F7AF51184A02BE7D55D /* AnnotationService.swift */; };
@@ -135,6 +137,7 @@
 		65641D21C00AF173744B276C /* BridgeCommandWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeCommandWatcher.swift; sourceTree = "<group>"; };
 		6618946B15E66FCAD408426A /* LaTeXEditorReferenceActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXEditorReferenceActions.swift; sourceTree = "<group>"; };
 		68AF170C9C8810841C98EC66 /* SplitViewGrabHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitViewGrabHelper.swift; sourceTree = "<group>"; };
+		6E3551EFCEDED294A25C2CF8 /* ThreePaneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreePaneLayout.swift; sourceTree = "<group>"; };
 		6F5330808F861EA6C2686A88 /* PaperRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperRowView.swift; sourceTree = "<group>"; };
 		75DB6386D580EA00D1FCBD94 /* LaTeXAnnotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXAnnotation.swift; sourceTree = "<group>"; };
 		79F2AFB9672171E0D8B26550 /* ClaudeCLIWrapperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLIWrapperService.swift; sourceTree = "<group>"; };
@@ -160,6 +163,7 @@
 		B57071B4DCB48AFE3F0C4E19 /* LaTeXEditorAnnotationExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXEditorAnnotationExport.swift; sourceTree = "<group>"; };
 		B95EDBAA98A96F9AC5DC1959 /* CodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorView.swift; sourceTree = "<group>"; };
 		BF2088594C9985A874B328F3 /* PDFReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFReaderView.swift; sourceTree = "<group>"; };
+		C2168A22984A0573806D7375 /* CodeOutputWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeOutputWorkspace.swift; sourceTree = "<group>"; };
 		C57612B1DBD072F8ECA3D83D /* WorkspaceSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSessionStore.swift; sourceTree = "<group>"; };
 		C97A471E5ABAA4E7B828E80D /* AppChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppChrome.swift; sourceTree = "<group>"; };
 		CAED9E2A18A12DF28633AD06 /* CursorTrackingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorTrackingView.swift; sourceTree = "<group>"; };
@@ -287,6 +291,7 @@
 				0124D8B26DAB0457F43AB2B1 /* MainWindowTitleBarBehavior.swift */,
 				68AF170C9C8810841C98EC66 /* SplitViewGrabHelper.swift */,
 				299BF29CC1FF9600B34192DE /* TabBarComponents.swift */,
+				6E3551EFCEDED294A25C2CF8 /* ThreePaneLayout.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -362,6 +367,7 @@
 			isa = PBXGroup;
 			children = (
 				B95EDBAA98A96F9AC5DC1959 /* CodeEditorView.swift */,
+				C2168A22984A0573806D7375 /* CodeOutputWorkspace.swift */,
 				5B29836069A5EA8CAA41CDDE /* CodeTextEditor.swift */,
 				8C7D3AE3E860936DB5CB1AE6 /* CompilationErrorView.swift */,
 				32C6E1C98265B6FD8F69A4D6 /* FileBrowserView.swift */,
@@ -533,6 +539,7 @@
 				5A5C3C970350B253F747E628 /* ClaudeIDESelectionState.swift in Sources */,
 				1B24B40C25F526C875AF959A /* ClaudeService.swift in Sources */,
 				92B2406F02CFBBDF0CA498A4 /* CodeEditorView.swift in Sources */,
+				085341ECE38ECACB0EC9A1E7 /* CodeOutputWorkspace.swift in Sources */,
 				C5F0ACCCC4A8CA7C4127C5C7 /* CodeRunService.swift in Sources */,
 				DC524768FC0FE9132D96AF41 /* CodeSyntaxSupport.swift in Sources */,
 				CA8210EA442BB5C7B991E685 /* CodeTextEditor.swift in Sources */,
@@ -585,6 +592,7 @@
 				C9EBF369A5B91D99F94EE3AF /* SyncTeXService.swift in Sources */,
 				E677B769BAD8B1A4B17C0844 /* TabBarComponents.swift in Sources */,
 				068F8F649D14185E05258883 /* TextNoteEditorView.swift in Sources */,
+				BAA58AD3F47FBC5419FD4533 /* ThreePaneLayout.swift in Sources */,
 				992B2AE06A1940F4E500F096 /* WorkspaceSessionStore.swift in Sources */,
 				1CF349C784559A1A75E1E643 /* WorkspaceState.swift in Sources */,
 			);

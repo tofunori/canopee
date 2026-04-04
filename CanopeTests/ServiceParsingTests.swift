@@ -984,4 +984,59 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(state.selectedRun?.runID, older.runID)
         XCTAssertEqual(state.activeArtifact?.displayName, "older.html")
     }
+
+    func testCodeDocumentWorkspaceStateDecodesLegacyOutputVisibility() throws {
+        let payload = """
+        {
+          "showLogs": true,
+          "selectedRunID": null,
+          "lastArtifactPath": null,
+          "showOutputPane": false
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(CodeDocumentWorkspaceState.self, from: payload)
+
+        XCTAssertTrue(decoded.showLogs)
+        XCTAssertFalse(decoded.outputLayout.isOutputVisible)
+        XCTAssertEqual(decoded.outputLayout.outputPlacement, .right)
+        XCTAssertEqual(decoded.outputLayout.secondaryPaneAxis, .vertical)
+    }
+
+    @MainActor
+    func testCodeDocumentUIStateKeepsSecondaryPreviewSeparateFromPrimary() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let scriptURL = tempDirectory.appendingPathComponent("analysis.py")
+        try "print('ok')".write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        _ = try seedCodeRun(
+            for: scriptURL,
+            executedAt: Date(timeIntervalSince1970: 2_000),
+            artifactNames: ["plot.png", "summary.html"],
+            log: "done"
+        )
+
+        let state = CodeDocumentUIState(snapshot: nil, fileURL: scriptURL)
+        state.updateOutputLayout { $0.secondaryPaneVisible = true }
+        state.setSecondaryArtifactPath(state.availableSecondaryArtifacts.first?.url.path)
+
+        XCTAssertNotNil(state.activeArtifact)
+        XCTAssertNotNil(state.secondaryActiveArtifact)
+        XCTAssertNotEqual(state.activeArtifact?.url.path, state.secondaryActiveArtifact?.url.path)
+
+        let manualURL = tempDirectory.appendingPathComponent("manual.pdf")
+        try Data().write(to: manualURL)
+        let manualArtifact = try XCTUnwrap(
+            ArtifactDescriptor.make(url: manualURL, sourceDocumentPath: scriptURL.path, runID: nil)
+        )
+        state.setSecondaryManualPreviewArtifact(manualArtifact)
+
+        XCTAssertEqual(state.secondaryActiveArtifact?.url.path, manualURL.path)
+        XCTAssertNotNil(state.activeArtifact)
+        XCTAssertNotEqual(state.activeArtifact?.url.path, manualURL.path)
+    }
 }
