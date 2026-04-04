@@ -45,6 +45,7 @@ struct UnifiedEditorView: View {
     @State var lastModified: Date?
     @State var pollTimer: Timer?
     @State var sidebarResizeStartWidth: CGFloat?
+    @State var sidebarDragWidth: CGFloat?
     @State private var toolbarStatus: ToolbarStatusState = .idle
     @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
     @State private var fileCreationError: String?

@@ -3,61 +3,79 @@ import SwiftUI
 import PDFKit
 
 extension UnifiedEditorView {
+    private var isSidebarDragging: Bool { sidebarDragWidth != nil }
+
     var sidebarPane: some View {
-        HStack(spacing: 0) {
-            sidebarActivityBar
-            AppChromeDivider(role: .panel, axis: .vertical)
-            Group {
-                switch selectedSidebarSection {
-                case .files:
-                    fileBrowserSidebar
-                case .annotations:
-                    annotationSidebar
-                case .diff:
-                    diffSidebar
+        let frozenWidth = sidebarWidth
+        let ghostTarget = sidebarDragWidth
+        // During drag: expand frame to show ghost when dragging wider. At rest: use frozenWidth.
+        let displayWidth = isSidebarDragging ? max(frozenWidth, ghostTarget ?? 0) : frozenWidth
+        let totalWidth: CGFloat = showSidebar
+            ? LaTeXEditorSidebarSizing.activityBarWidth + displayWidth + LaTeXEditorSidebarSizing.resizeHandleWidth + AppChromeMetrics.dividerThickness
+            : LaTeXEditorSidebarSizing.activityBarWidth
+
+        return ZStack(alignment: .leading) {
+            HStack(spacing: 0) {
+                sidebarActivityBar
+                AppChromeDivider(role: .panel, axis: .vertical)
+                Group {
+                    switch selectedSidebarSection {
+                    case .files:
+                        fileBrowserSidebar
+                    case .annotations:
+                        annotationSidebar
+                    case .diff:
+                        diffSidebar
+                    }
+                }
+                .frame(
+                    minWidth: showSidebar ? frozenWidth : 0,
+                    idealWidth: showSidebar ? frozenWidth : 0,
+                    maxWidth: showSidebar ? frozenWidth : 0
+                )
+                .opacity(showSidebar ? 1 : 0)
+                .allowsHitTesting(showSidebar)
+                .clipped()
+
+                if showSidebar {
+                    sidebarResizeHandle
                 }
             }
-            .frame(
-                minWidth: showSidebar ? sidebarWidth : 0,
-                idealWidth: showSidebar ? sidebarWidth : 0,
-                maxWidth: showSidebar ? sidebarWidth : 0
-            )
-            .opacity(showSidebar ? 1 : 0)
-            .allowsHitTesting(showSidebar)
-            .clipped()
 
-            if showSidebar {
-                sidebarResizeHandle
+            // Ghost line at target position during drag
+            if let target = ghostTarget, showSidebar {
+                let ghostX = LaTeXEditorSidebarSizing.activityBarWidth + AppChromeMetrics.dividerThickness + target
+                Rectangle()
+                    .fill(Color.accentColor.opacity(0.5))
+                    .frame(width: 2)
+                    .offset(x: ghostX)
+                    .allowsHitTesting(false)
             }
         }
-        .frame(
-            width: showSidebar
-                ? LaTeXEditorSidebarSizing.activityBarWidth + sidebarWidth + LaTeXEditorSidebarSizing.resizeHandleWidth + AppChromeMetrics.dividerThickness
-                : LaTeXEditorSidebarSizing.activityBarWidth
-        )
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showSidebar)
+        .frame(width: totalWidth)
+        .transaction { t in t.animation = nil }
     }
 
     var sidebarResizeHandle: some View {
         AppChromeResizeHandle(
             width: LaTeXEditorSidebarSizing.resizeHandleWidth,
             onHoverChanged: { hovering in
-                if hovering {
-                    NSCursor.resizeLeftRight.push()
-                } else {
-                    NSCursor.pop()
-                }
+                if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             },
             dragGesture: AnyGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        let baseWidth = sidebarResizeStartWidth ?? sidebarWidth
                         if sidebarResizeStartWidth == nil {
                             sidebarResizeStartWidth = sidebarWidth
                         }
-                        sidebarWidth = baseWidth + value.translation.width
+                        let base = sidebarResizeStartWidth ?? sidebarWidth
+                        sidebarDragWidth = min(max(base + value.translation.width, LaTeXEditorSidebarSizing.minWidth), LaTeXEditorSidebarSizing.maxWidth)
                     }
                     .onEnded { _ in
+                        if let final = sidebarDragWidth {
+                            sidebarWidth = final
+                        }
+                        sidebarDragWidth = nil
                         sidebarResizeStartWidth = nil
                     }
             )
