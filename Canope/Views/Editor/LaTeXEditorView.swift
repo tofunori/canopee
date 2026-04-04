@@ -235,6 +235,7 @@ struct LaTeXEditorView: View {
     @State private var toolbarStatus: ToolbarStatusState = .idle
     @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
     @State private var fileCreationError: String?
+    @State private var annotationExportError: String?
 
     // PDF pane tabs (compiled + reference articles)
     enum PdfPaneTab: Hashable {
@@ -317,6 +318,53 @@ struct LaTeXEditorView: View {
 
     private var isFileBrowserCreateMenuVisible: Bool {
         showSidebar && selectedSidebarSection == .files
+    }
+
+    private var activeMarkdownExportFileName: String? {
+        documentMode == .markdown ? fileURL.lastPathComponent : nil
+    }
+
+    private var activeReferenceCompanionExportFileName: String {
+        guard let id = activeReferencePDFID,
+              let paper = paperFor(id) else {
+            return PDFAnnotationMarkdownExporter.companionURL(for: previewPDFURL).lastPathComponent
+        }
+
+        return companionExportFileName(for: .reference(pdfURL: paper.fileURL))
+    }
+
+    private var compiledPDFCompanionExportFileName: String {
+        companionExportFileName(for: .compiled(documentURL: fileURL, pdfURL: previewPDFURL))
+    }
+
+    private var showsLatexToolbarActions: Bool {
+        documentMode == .latex
+    }
+
+    private var hasCompilationErrors: Bool {
+        errors.contains(where: { !$0.isWarning })
+    }
+
+    private var documentPrimaryActionHelpText: String {
+        documentMode == .latex ? "Compiler (⌘B)" : "Rendre le PDF (⌘B)"
+    }
+
+    private var documentOutputLogHelpText: String {
+        documentMode == .latex ? "Console de compilation" : "Journal du rendu"
+    }
+
+    private var exportCompiledAnnotationsToActiveMarkdownAction: (() -> Void)? {
+        guard documentMode == .markdown else { return nil }
+        return { exportCompiledPDFAnnotationsToActiveMarkdown() }
+    }
+
+    private var exportActiveReferenceAnnotationsToActiveMarkdownAction: (() -> Void)? {
+        guard documentMode == .markdown else { return nil }
+        return { exportActiveReferencePDFAnnotationsToActiveMarkdown() }
+    }
+
+    private var isReferenceAnnotationSidebarVisible: Bool {
+        showSidebar && selectedSidebarSection == .annotations
     }
 
     private var outputSummaryText: String {
@@ -475,6 +523,14 @@ struct LaTeXEditorView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(fileCreationError ?? "")
+        }
+        .alert("Impossible d’exporter les annotations", isPresented: Binding(
+            get: { annotationExportError != nil },
+            set: { if !$0 { annotationExportError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(annotationExportError ?? "")
         }
         .onReceive(NotificationCenter.default.publisher(for: .syncTeXForwardSync)) { notification in
             guard documentMode == .latex else { return }
@@ -1524,294 +1580,291 @@ struct LaTeXEditorView: View {
 
     private var editorToolbar: some View {
         HStack(spacing: 8) {
-            toolbarCluster(zone: .leading, title: "Fichier") {
-                Image(systemName: "doc.plaintext")
-                    .foregroundStyle(documentMode.fileIconTint)
-                Text(fileURL.lastPathComponent)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                AppChromeStatusCapsule(status: toolbarStatus)
-                if !isFileBrowserCreateMenuVisible {
-                    Menu {
-                        Button {
-                            createNewEditorFile(.latex)
-                        } label: {
-                            Label("Nouveau fichier LaTeX", systemImage: "doc.badge.plus")
-                        }
-
-                        Button {
-                            createNewEditorFile(.markdown)
-                        } label: {
-                            Label("Nouveau fichier Markdown", systemImage: "text.badge.plus")
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Créer un nouveau fichier .tex ou .md")
-                }
-            }
-
-            toolbarCluster(zone: .primary, title: documentMode.primaryClusterTitle) {
-                Button(action: runPrimaryDocumentAction) {
-                    if isCompiling {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "play.fill")
-                    }
-                }
-                .buttonStyle(.plain)
-                .help(documentMode == .latex ? "Compiler (⌘B)" : "Rendre le PDF (⌘B)")
-                .keyboardShortcut("b", modifiers: .command)
-                .disabled(isCompiling)
-
-                Button(action: saveFile) {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                .buttonStyle(.plain)
-                .help("Sauvegarder (⌘S)")
-                .keyboardShortcut("s", modifiers: .command)
-
-                if documentMode == .latex {
-                    Button(action: beginAnnotationFromSelection) {
-                        Image(systemName: "highlighter")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Annoter la sélection (⇧⌘A)")
-                    .keyboardShortcut("a", modifiers: [.command, .shift])
-                    .disabled(!canAnnotateCurrentDocument)
-
-                    Button(action: reflowParagraphs) {
-                        Image(systemName: "text.justify.leading")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Reflow paragraphes (⌘⇧W)")
-                    .keyboardShortcut("w", modifiers: [.command, .shift])
-                }
-
-                Button(action: { showErrors.toggle() }) {
-                    Image(systemName: "doc.text.below.ecg")
-                        .foregroundStyle(showErrors ? .green : errors.contains(where: { !$0.isWarning }) ? .red : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(documentMode == .latex ? "Console de compilation" : "Journal du rendu")
-            }
-            .id("document-toolbar-shortcuts:\(fileURL.path)")
-
-            toolbarCluster(zone: .primary, title: "Réf.") {
-                Menu {
-                    let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
-                    if openPapers.isEmpty {
-                        Text("Aucun article ouvert en onglet")
-                    } else {
-                        ForEach(openPapers) { paper in
-                            Button {
-                                openReference(paper)
-                            } label: {
-                                let alreadyOpen = pdfPaneTabs.contains(.reference(paper.id))
-                                Text("\(alreadyOpen ? "✓ " : "")\(paper.authorsShort) (\(paper.year.map { String($0) } ?? "—")) — \(paper.title)")
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: pdfPaneTabs.count > 1 ? "book.fill" : "book")
-                        .foregroundStyle(pdfPaneTabs.count > 1 ? .blue : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Ouvrir un article de référence")
-            }
-
-            if let referenceState = activeReferencePDFState {
-                ReferencePDFToolCluster(title: "Outils", state: referenceState)
-
-                ReferencePDFActionsCluster(
-                    title: "Actions",
-                    state: referenceState,
-                    annotationCount: activeReferenceAnnotationCount,
-                    isAnnotationSidebarVisible: showSidebar && selectedSidebarSection == .annotations,
-                    onChangeSelectedColor: changeSelectedReferenceAnnotationColor,
-                    onFitToWidth: fitToWidth,
-                    onRefresh: refreshCurrentReference,
-                    onSave: saveCurrentReferencePDF,
-                    onDeleteSelected: deleteSelectedReferenceAnnotation,
-                    onDeleteAll: deleteAllReferenceAnnotations,
-                    onToggleAnnotations: {
-                        toggleReferenceAnnotationSidebar()
-                    }
-                )
-            }
-
+            fileToolbarClusterView
+            documentToolbarClusterView
+            referencePickerToolbarClusterView
+            activeReferenceToolbarView
             Spacer(minLength: 8)
-
-            toolbarCluster(zone: .trailing, title: "Vue") {
-                Button(action: {
-                    toggleSidebar()
-                }) {
-                    Image(systemName: "sidebar.left")
-                        .symbolVariant(showSidebar ? .none : .slash)
-                        .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Afficher la barre latérale")
-
-                Menu {
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            splitLayout = .horizontal
-                            showPDFPreview = true
-                        }
-                    } label: {
-                        Label("Côte à côte", systemImage: "rectangle.split.2x1")
-                        if splitLayout == .horizontal { Image(systemName: "checkmark") }
-                    }
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            splitLayout = .vertical
-                            showPDFPreview = true
-                        }
-                    } label: {
-                        Label("Haut / Bas", systemImage: "rectangle.split.1x2")
-                        if splitLayout == .vertical { Image(systemName: "checkmark") }
-                    }
-                    Button {
-                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                            splitLayout = .editorOnly
-                            showPDFPreview = false
-                        }
-                    } label: {
-                        Label("Éditeur seul", systemImage: "doc.text")
-                        if splitLayout == .editorOnly { Image(systemName: "checkmark") }
-                    }
-                } label: {
-                    Image(systemName: "rectangle.split.2x1")
-                }
-                .buttonStyle(.plain)
-                .help("Disposition")
-
-                Menu {
-                    ForEach(LaTeXPanelArrangement.allCases, id: \.self) { arrangement in
-                        Button {
-                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                                panelArrangement = arrangement
-                            }
-                        } label: {
-                            HStack {
-                                if panelArrangement == arrangement {
-                                    Image(systemName: "checkmark")
-                                }
-                                Text(arrangement.title)
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                }
-                .buttonStyle(.plain)
-                .help("Ordre des panneaux")
-
-                Button(action: {
-                    toggleEditorPaneVisibility()
-                }) {
-                    Image(systemName: showEditorPane ? "doc.text.fill" : "doc.text")
-                        .foregroundStyle(showEditorPane ? AppChromePalette.info : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Panneau LaTeX")
-                .disabled(showEditorPane && !showTerminal && !showPDFPreview)
-
-                Button(action: {
-                    toggleTerminalVisibility()
-                }) {
-                    Image(systemName: showTerminal ? "terminal.fill" : "terminal")
-                        .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Terminal")
-            }
-
-            toolbarCluster(zone: .trailing, title: "Ed.") {
-                Menu {
-                    ForEach([11, 12, 13, 14, 15, 16, 18, 20, 24], id: \.self) { size in
-                        Button {
-                            editorFontSize = CGFloat(size)
-                        } label: {
-                            HStack {
-                                if Int(editorFontSize) == size { Image(systemName: "checkmark") }
-                                Text("\(size) pt")
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "textformat.size")
-                }
-                .buttonStyle(.plain)
-                .help("Taille police")
-
-                Menu {
-                    ForEach(0..<Self.editorThemes.count, id: \.self) { i in
-                        Button {
-                            editorTheme = i
-                        } label: {
-                            HStack {
-                                if i == editorTheme { Image(systemName: "checkmark") }
-                                Text(Self.editorThemes[i].name)
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "paintpalette")
-                }
-                .buttonStyle(.plain)
-                .help("Thème éditeur")
-            }
-
-            if showTerminal {
-                toolbarCluster(zone: .trailing, title: "Term.") {
-                    Button(action: addTerminalTab) {
-                        Image(systemName: "plus")
-                            .foregroundStyle(.green)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Nouveau terminal")
-
-                    Menu {
-                        ForEach(0..<TerminalPanel.themes.count, id: \.self) { index in
-                            Button {
-                                applyTerminalTheme(index)
-                            } label: {
-                                Text(TerminalPanel.themes[index].name)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "paintpalette")
-                            .foregroundStyle(.green)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Thème du terminal")
-
-                    Menu {
-                        ForEach(TerminalPanel.fontSizes, id: \.self) { size in
-                            Button {
-                                applyTerminalFontSize(size)
-                            } label: {
-                                Text("\(size) pt")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "textformat.size")
-                            .foregroundStyle(.green)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Taille de la police du terminal")
-                }
-            }
+            viewToolbarClusterView
+            editorAppearanceToolbarClusterView
+            terminalToolbarClusterView
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .frame(height: AppChromeMetrics.toolbarHeight)
         .background(AppChromePalette.surfaceBar)
+    }
+
+    private var fileToolbarClusterView: some View {
+        toolbarCluster(zone: .leading, title: "Fichier") {
+            Image(systemName: "doc.plaintext")
+                .foregroundStyle(documentMode.fileIconTint)
+            Text(fileURL.lastPathComponent)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+            AppChromeStatusCapsule(status: toolbarStatus)
+            if !isFileBrowserCreateMenuVisible {
+                Menu {
+                    Button {
+                        createNewEditorFile(.latex)
+                    } label: {
+                        Label("Nouveau fichier LaTeX", systemImage: "doc.badge.plus")
+                    }
+
+                    Button {
+                        createNewEditorFile(.markdown)
+                    } label: {
+                        Label("Nouveau fichier Markdown", systemImage: "text.badge.plus")
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Créer un nouveau fichier .tex ou .md")
+            }
+        }
+    }
+
+    private var documentToolbarClusterView: some View {
+        EditorDocumentToolbarClusterView(
+            title: documentMode.primaryClusterTitle,
+            showsLatexActions: showsLatexToolbarActions,
+            isCompiling: isCompiling,
+            compiledPDFAvailable: selectedPdfTab == .compiled && compiledPDF != nil,
+            activeMarkdownExportFileName: activeMarkdownExportFileName,
+            companionExportFileName: compiledPDFCompanionExportFileName,
+            canAnnotateCurrentDocument: canAnnotateCurrentDocument,
+            showErrors: showErrors,
+            hasCompilationErrors: hasCompilationErrors,
+            primaryActionHelpText: documentPrimaryActionHelpText,
+            outputLogHelpText: documentOutputLogHelpText,
+            shortcutIdentity: fileURL.path,
+            onRunPrimaryAction: runPrimaryDocumentAction,
+            onSave: saveFile,
+            onExportToActiveMarkdown: exportCompiledAnnotationsToActiveMarkdownAction,
+            onExportToCompanionMarkdown: exportCompiledPDFAnnotationsToCompanionMarkdown,
+            onChooseExportDestination: chooseCompiledPDFAnnotationsMarkdownDestination,
+            onBeginAnnotation: beginAnnotationFromSelection,
+            onReflow: reflowParagraphs,
+            onToggleErrors: { showErrors.toggle() }
+        )
+    }
+
+    private var referencePickerToolbarClusterView: some View {
+        toolbarCluster(zone: .primary, title: "Réf.") {
+            Menu {
+                let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
+                if openPapers.isEmpty {
+                    Text("Aucun article ouvert en onglet")
+                } else {
+                    ForEach(openPapers) { paper in
+                        Button {
+                            openReference(paper)
+                        } label: {
+                            let alreadyOpen = pdfPaneTabs.contains(.reference(paper.id))
+                            Text("\(alreadyOpen ? "✓ " : "")\(paper.authorsShort) (\(paper.year.map { String($0) } ?? "—")) — \(paper.title)")
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: pdfPaneTabs.count > 1 ? "book.fill" : "book")
+                    .foregroundStyle(pdfPaneTabs.count > 1 ? .blue : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Ouvrir un article de référence")
+        }
+    }
+
+    private var activeReferenceToolbarView: some View {
+        ActiveReferenceToolbarView(
+            referenceState: activeReferencePDFState,
+            annotationCount: activeReferenceAnnotationCount,
+            isAnnotationSidebarVisible: isReferenceAnnotationSidebarVisible,
+            activeMarkdownFileName: activeMarkdownExportFileName,
+            companionExportFileName: activeReferenceCompanionExportFileName,
+            onChangeSelectedColor: changeSelectedReferenceAnnotationColor,
+            onFitToWidth: fitToWidth,
+            onRefresh: refreshCurrentReference,
+            onSave: saveCurrentReferencePDF,
+            onExportToActiveMarkdown: exportActiveReferenceAnnotationsToActiveMarkdownAction,
+            onExportToCompanionMarkdown: exportActiveReferencePDFAnnotationsToCompanionMarkdown,
+            onExportToChosenMarkdownFile: chooseActiveReferencePDFAnnotationsMarkdownDestination,
+            onDeleteSelected: deleteSelectedReferenceAnnotation,
+            onDeleteAll: deleteAllReferenceAnnotations,
+            onToggleAnnotations: toggleReferenceAnnotationSidebar
+        )
+    }
+
+    private var viewToolbarClusterView: some View {
+        toolbarCluster(zone: .trailing, title: "Vue") {
+            Button(action: {
+                toggleSidebar()
+            }) {
+                Image(systemName: "sidebar.left")
+                    .symbolVariant(showSidebar ? .none : .slash)
+                    .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Afficher la barre latérale")
+
+            Menu {
+                Button {
+                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                        splitLayout = .horizontal
+                        showPDFPreview = true
+                    }
+                } label: {
+                    Label("Côte à côte", systemImage: "rectangle.split.2x1")
+                    if splitLayout == .horizontal { Image(systemName: "checkmark") }
+                }
+                Button {
+                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                        splitLayout = .vertical
+                        showPDFPreview = true
+                    }
+                } label: {
+                    Label("Haut / Bas", systemImage: "rectangle.split.1x2")
+                    if splitLayout == .vertical { Image(systemName: "checkmark") }
+                }
+                Button {
+                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                        splitLayout = .editorOnly
+                        showPDFPreview = false
+                    }
+                } label: {
+                    Label("Éditeur seul", systemImage: "doc.text")
+                    if splitLayout == .editorOnly { Image(systemName: "checkmark") }
+                }
+            } label: {
+                Image(systemName: "rectangle.split.2x1")
+            }
+            .buttonStyle(.plain)
+            .help("Disposition")
+
+            Menu {
+                ForEach(LaTeXPanelArrangement.allCases, id: \.self) { arrangement in
+                    Button {
+                        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                            panelArrangement = arrangement
+                        }
+                    } label: {
+                        HStack {
+                            if panelArrangement == arrangement {
+                                Image(systemName: "checkmark")
+                            }
+                            Text(arrangement.title)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+            }
+            .buttonStyle(.plain)
+            .help("Ordre des panneaux")
+
+            Button(action: {
+                toggleEditorPaneVisibility()
+            }) {
+                Image(systemName: showEditorPane ? "doc.text.fill" : "doc.text")
+                    .foregroundStyle(showEditorPane ? AppChromePalette.info : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Panneau LaTeX")
+            .disabled(showEditorPane && !showTerminal && !showPDFPreview)
+
+            Button(action: {
+                toggleTerminalVisibility()
+            }) {
+                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                    .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Terminal")
+        }
+    }
+
+    private var editorAppearanceToolbarClusterView: some View {
+        toolbarCluster(zone: .trailing, title: "Ed.") {
+            Menu {
+                ForEach([11, 12, 13, 14, 15, 16, 18, 20, 24], id: \.self) { size in
+                    Button {
+                        editorFontSize = CGFloat(size)
+                    } label: {
+                        HStack {
+                            if Int(editorFontSize) == size { Image(systemName: "checkmark") }
+                            Text("\(size) pt")
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "textformat.size")
+            }
+            .buttonStyle(.plain)
+            .help("Taille police")
+
+            Menu {
+                ForEach(0..<Self.editorThemes.count, id: \.self) { i in
+                    Button {
+                        editorTheme = i
+                    } label: {
+                        HStack {
+                            if i == editorTheme { Image(systemName: "checkmark") }
+                            Text(Self.editorThemes[i].name)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "paintpalette")
+            }
+            .buttonStyle(.plain)
+            .help("Thème éditeur")
+        }
+    }
+
+    @ViewBuilder
+    private var terminalToolbarClusterView: some View {
+        if showTerminal {
+            toolbarCluster(zone: .trailing, title: "Term.") {
+                Button(action: addTerminalTab) {
+                    Image(systemName: "plus")
+                        .foregroundStyle(.green)
+                }
+                .buttonStyle(.plain)
+                .help("Nouveau terminal")
+
+                Menu {
+                    ForEach(0..<TerminalPanel.themes.count, id: \.self) { index in
+                        Button {
+                            applyTerminalTheme(index)
+                        } label: {
+                            Text(TerminalPanel.themes[index].name)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "paintpalette")
+                        .foregroundStyle(.green)
+                }
+                .buttonStyle(.plain)
+                .help("Thème du terminal")
+
+                Menu {
+                    ForEach(TerminalPanel.fontSizes, id: \.self) { size in
+                        Button {
+                            applyTerminalFontSize(size)
+                        } label: {
+                            Text("\(size) pt")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "textformat.size")
+                        .foregroundStyle(.green)
+                }
+                .buttonStyle(.plain)
+                .help("Taille de la police du terminal")
+            }
+        }
     }
 
     private func toolbarCluster<Content: View>(
@@ -2566,6 +2619,149 @@ struct LaTeXEditorView: View {
     private func saveCurrentReferencePDF() {
         guard let id = activeReferencePDFID else { return }
         saveReferencePDF(id: id)
+    }
+
+    private func exportCompiledPDFAnnotationsToActiveMarkdown() {
+        guard let document = compiledPDF,
+              let target = activeMarkdownExportTarget else { return }
+        exportPDFAnnotationsToMarkdown(
+            document: document,
+            source: .compiled(documentURL: fileURL, pdfURL: previewPDFURL),
+            target: target
+        )
+    }
+
+    private func exportCompiledPDFAnnotationsToCompanionMarkdown() {
+        guard let document = compiledPDF else { return }
+        exportPDFAnnotationsToMarkdown(
+            document: document,
+            source: .compiled(documentURL: fileURL, pdfURL: previewPDFURL),
+            target: .companionFile(PDFAnnotationMarkdownExporter.companionURL(for: fileURL))
+        )
+    }
+
+    private func chooseCompiledPDFAnnotationsMarkdownDestination() {
+        guard let document = compiledPDF else { return }
+        chooseMarkdownExportDestination(
+            document: document,
+            source: .compiled(documentURL: fileURL, pdfURL: previewPDFURL)
+        )
+    }
+
+    private func exportActiveReferencePDFAnnotationsToActiveMarkdown() {
+        guard let id = activeReferencePDFID,
+              let document = workspaceState.referencePDFs[id],
+              let paper = paperFor(id),
+              let target = activeMarkdownExportTarget else { return }
+
+        exportPDFAnnotationsToMarkdown(
+            document: document,
+            source: .reference(pdfURL: paper.fileURL),
+            target: target
+        )
+    }
+
+    private func exportActiveReferencePDFAnnotationsToCompanionMarkdown() {
+        guard let id = activeReferencePDFID,
+              let document = workspaceState.referencePDFs[id],
+              let paper = paperFor(id) else { return }
+
+        exportPDFAnnotationsToMarkdown(
+            document: document,
+            source: .reference(pdfURL: paper.fileURL),
+            target: .companionFile(PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL))
+        )
+    }
+
+    private func chooseActiveReferencePDFAnnotationsMarkdownDestination() {
+        guard let id = activeReferencePDFID,
+              let document = workspaceState.referencePDFs[id],
+              let paper = paperFor(id) else { return }
+
+        chooseMarkdownExportDestination(
+            document: document,
+            source: .reference(pdfURL: paper.fileURL)
+        )
+    }
+
+    private func exportPDFAnnotationsToMarkdown(
+        document: PDFDocument,
+        source: PDFAnnotationMarkdownExportSource,
+        target: PDFAnnotationExportTarget? = nil
+    ) {
+        do {
+            let resolvedTarget = target ?? defaultExportTarget(for: source)
+            let isWritingBackIntoActiveMarkdown = documentMode == .markdown && resolvedTarget.url == fileURL
+            let existingMarkdown: String? = {
+                if isWritingBackIntoActiveMarkdown {
+                    return text
+                }
+                return nil
+            }()
+
+            let result = try PDFAnnotationMarkdownExporter.export(
+                document: document,
+                source: source,
+                target: resolvedTarget,
+                existingMarkdown: existingMarkdown
+            )
+
+            if isWritingBackIntoActiveMarkdown {
+                text = result.updatedMarkdown
+                savedText = result.updatedMarkdown
+                lastModified = modificationDate()
+            }
+
+            setToolbarStatus(.exported, autoClearAfter: 1.6)
+        } catch {
+            annotationExportError = error.localizedDescription
+        }
+    }
+
+    private var activeMarkdownExportTarget: PDFAnnotationExportTarget? {
+        documentMode == .markdown ? .activeMarkdown(fileURL) : nil
+    }
+
+    private func defaultExportTarget(for source: PDFAnnotationMarkdownExportSource) -> PDFAnnotationExportTarget {
+        if documentMode == .markdown {
+            return .activeMarkdown(fileURL)
+        }
+
+        switch source {
+        case .compiled(let documentURL, _):
+            return .companionFile(PDFAnnotationMarkdownExporter.companionURL(for: documentURL))
+        case .reference(let pdfURL):
+            return .companionFile(PDFAnnotationMarkdownExporter.companionURL(for: pdfURL))
+        }
+    }
+
+    private func companionExportFileName(for source: PDFAnnotationMarkdownExportSource) -> String {
+        source.fallbackCompanionURL.lastPathComponent
+    }
+
+    private func chooseMarkdownExportDestination(
+        document: PDFDocument,
+        source: PDFAnnotationMarkdownExportSource
+    ) {
+        guard let targetURL = presentMarkdownExportPanel(suggestedURL: source.fallbackCompanionURL) else { return }
+        exportPDFAnnotationsToMarkdown(
+            document: document,
+            source: source,
+            target: .companionFile(targetURL)
+        )
+    }
+
+    private func presentMarkdownExportPanel(suggestedURL: URL) -> URL? {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.directoryURL = suggestedURL.deletingLastPathComponent()
+        panel.nameFieldStringValue = suggestedURL.lastPathComponent
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.isExtensionHidden = false
+        panel.title = "Exporter les annotations"
+        panel.message = "Choisis un fichier Markdown à mettre à jour avec ces annotations."
+        panel.prompt = "Exporter"
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     private func saveReferencePDF(id: UUID) {
@@ -3414,10 +3610,15 @@ private struct ReferencePDFActionsCluster: View {
     @ObservedObject var state: ReferencePDFUIState
     let annotationCount: Int
     let isAnnotationSidebarVisible: Bool
+    let activeMarkdownFileName: String?
+    let companionExportFileName: String
     let onChangeSelectedColor: (NSColor) -> Void
     let onFitToWidth: () -> Void
     let onRefresh: () -> Void
     let onSave: () -> Void
+    let onExportToActiveMarkdown: (() -> Void)?
+    let onExportToCompanionMarkdown: () -> Void
+    let onExportToChosenMarkdownFile: () -> Void
     let onDeleteSelected: () -> Void
     let onDeleteAll: () -> Void
     let onToggleAnnotations: () -> Void
@@ -3471,6 +3672,24 @@ private struct ReferencePDFActionsCluster: View {
                     help: "Enregistrer les annotations du PDF",
                     action: onSave
                 )
+
+                Menu {
+                    AppChromeAnnotationExportMenuItems(
+                        activeMarkdownFileName: activeMarkdownFileName,
+                        companionFileName: companionExportFileName,
+                        onExportToActiveMarkdown: onExportToActiveMarkdown,
+                        onExportToCompanion: onExportToCompanionMarkdown,
+                        onChooseDestination: onExportToChosenMarkdownFile
+                    )
+                } label: {
+                    ReferencePDFToolbarIconLabel(
+                        systemName: "square.and.arrow.up.on.square",
+                        isActive: false,
+                        helpText: "Exporter les annotations en Markdown"
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Exporter les annotations en Markdown")
 
                 AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
 
@@ -3533,6 +3752,188 @@ private func annotationColorSwatchImage(_ color: NSColor) -> NSImage {
     return image
 }
 
+private struct EditorDocumentToolbarClusterView: View {
+    let title: String
+    let showsLatexActions: Bool
+    let isCompiling: Bool
+    let compiledPDFAvailable: Bool
+    let activeMarkdownExportFileName: String?
+    let companionExportFileName: String
+    let canAnnotateCurrentDocument: Bool
+    let showErrors: Bool
+    let hasCompilationErrors: Bool
+    let primaryActionHelpText: String
+    let outputLogHelpText: String
+    let shortcutIdentity: String
+    let onRunPrimaryAction: () -> Void
+    let onSave: () -> Void
+    let onExportToActiveMarkdown: (() -> Void)?
+    let onExportToCompanionMarkdown: () -> Void
+    let onChooseExportDestination: () -> Void
+    let onBeginAnnotation: () -> Void
+    let onReflow: () -> Void
+    let onToggleErrors: () -> Void
+
+    var body: some View {
+        AppChromeToolbarCluster(zone: .primary, title: title) {
+            Button(action: onRunPrimaryAction) {
+                if isCompiling {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "play.fill")
+                }
+            }
+            .buttonStyle(.plain)
+            .appChromeSystemHelp(primaryActionHelpText)
+            .appChromeQuickHelp(primaryActionHelpText)
+            .keyboardShortcut("b", modifiers: .command)
+            .disabled(isCompiling)
+
+            Button(action: onSave) {
+                Image(systemName: "square.and.arrow.down")
+            }
+            .buttonStyle(.plain)
+            .appChromeSystemHelp("Sauvegarder (⌘S)")
+            .appChromeQuickHelp("Sauvegarder (⌘S)")
+            .keyboardShortcut("s", modifiers: .command)
+
+            if compiledPDFAvailable {
+                Menu {
+                    AppChromeAnnotationExportMenuItems(
+                        activeMarkdownFileName: activeMarkdownExportFileName,
+                        companionFileName: companionExportFileName,
+                        onExportToActiveMarkdown: onExportToActiveMarkdown,
+                        onExportToCompanion: onExportToCompanionMarkdown,
+                        onChooseDestination: onChooseExportDestination
+                    )
+                } label: {
+                    ReferencePDFToolbarIconLabel(
+                        systemName: "square.and.arrow.up.on.square",
+                        isActive: false,
+                        helpText: "Exporter les annotations du PDF en Markdown"
+                    )
+                }
+                .buttonStyle(.plain)
+                .appChromeSystemHelp("Exporter les annotations du PDF en Markdown")
+                .appChromeQuickHelp("Exporter les annotations du PDF en Markdown")
+            }
+
+            if showsLatexActions {
+                Button(action: onBeginAnnotation) {
+                    Image(systemName: "highlighter")
+                }
+                .buttonStyle(.plain)
+                .appChromeSystemHelp("Annoter la sélection (⇧⌘A)")
+                .appChromeQuickHelp("Annoter la sélection (⇧⌘A)")
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(!canAnnotateCurrentDocument)
+
+                Button(action: onReflow) {
+                    Image(systemName: "text.justify.leading")
+                }
+                .buttonStyle(.plain)
+                .appChromeSystemHelp("Reflow paragraphes (⌘⇧W)")
+                .appChromeQuickHelp("Reflow paragraphes (⌘⇧W)")
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+            }
+
+            Button(action: onToggleErrors) {
+                Image(systemName: "doc.text.below.ecg")
+                    .foregroundStyle(showErrors ? .green : hasCompilationErrors ? .red : .secondary)
+            }
+            .buttonStyle(.plain)
+            .appChromeSystemHelp(outputLogHelpText)
+            .appChromeQuickHelp(outputLogHelpText)
+        }
+        .id("document-toolbar-shortcuts:\(shortcutIdentity)")
+    }
+}
+
+private struct ActiveReferenceToolbarSections: View {
+    @ObservedObject var referenceState: ReferencePDFUIState
+    let annotationCount: Int
+    let isAnnotationSidebarVisible: Bool
+    let activeMarkdownFileName: String?
+    let companionExportFileName: String
+    let onChangeSelectedColor: (NSColor) -> Void
+    let onFitToWidth: () -> Void
+    let onRefresh: () -> Void
+    let onSave: () -> Void
+    let onExportToActiveMarkdown: (() -> Void)?
+    let onExportToCompanionMarkdown: () -> Void
+    let onExportToChosenMarkdownFile: () -> Void
+    let onDeleteSelected: () -> Void
+    let onDeleteAll: () -> Void
+    let onToggleAnnotations: () -> Void
+
+    var body: some View {
+        Group {
+            ReferencePDFToolCluster(title: "Outils", state: referenceState)
+
+            ReferencePDFActionsCluster(
+                title: "Actions",
+                state: referenceState,
+                annotationCount: annotationCount,
+                isAnnotationSidebarVisible: isAnnotationSidebarVisible,
+                activeMarkdownFileName: activeMarkdownFileName,
+                companionExportFileName: companionExportFileName,
+                onChangeSelectedColor: onChangeSelectedColor,
+                onFitToWidth: onFitToWidth,
+                onRefresh: onRefresh,
+                onSave: onSave,
+                onExportToActiveMarkdown: onExportToActiveMarkdown,
+                onExportToCompanionMarkdown: onExportToCompanionMarkdown,
+                onExportToChosenMarkdownFile: onExportToChosenMarkdownFile,
+                onDeleteSelected: onDeleteSelected,
+                onDeleteAll: onDeleteAll,
+                onToggleAnnotations: onToggleAnnotations
+            )
+        }
+    }
+}
+
+private struct ActiveReferenceToolbarView: View {
+    let referenceState: ReferencePDFUIState?
+    let annotationCount: Int
+    let isAnnotationSidebarVisible: Bool
+    let activeMarkdownFileName: String?
+    let companionExportFileName: String
+    let onChangeSelectedColor: (NSColor) -> Void
+    let onFitToWidth: () -> Void
+    let onRefresh: () -> Void
+    let onSave: () -> Void
+    let onExportToActiveMarkdown: (() -> Void)?
+    let onExportToCompanionMarkdown: () -> Void
+    let onExportToChosenMarkdownFile: () -> Void
+    let onDeleteSelected: () -> Void
+    let onDeleteAll: () -> Void
+    let onToggleAnnotations: () -> Void
+
+    var body: some View {
+        Group {
+            if let referenceState {
+                ActiveReferenceToolbarSections(
+                    referenceState: referenceState,
+                    annotationCount: annotationCount,
+                    isAnnotationSidebarVisible: isAnnotationSidebarVisible,
+                    activeMarkdownFileName: activeMarkdownFileName,
+                    companionExportFileName: companionExportFileName,
+                    onChangeSelectedColor: onChangeSelectedColor,
+                    onFitToWidth: onFitToWidth,
+                    onRefresh: onRefresh,
+                    onSave: onSave,
+                    onExportToActiveMarkdown: onExportToActiveMarkdown,
+                    onExportToCompanionMarkdown: onExportToCompanionMarkdown,
+                    onExportToChosenMarkdownFile: onExportToChosenMarkdownFile,
+                    onDeleteSelected: onDeleteSelected,
+                    onDeleteAll: onDeleteAll,
+                    onToggleAnnotations: onToggleAnnotations
+                )
+            }
+        }
+    }
+}
+
 private struct ReferencePDFToolbarIconButton: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let systemName: String
@@ -3563,6 +3964,7 @@ private struct ReferencePDFToolbarIconButton: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .appChromeQuickHelp(help)
         .onHover { isHovered = $0 }
         .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
         .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isActive)
@@ -3591,6 +3993,7 @@ private struct ReferencePDFToolbarIconLabel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let systemName: String
     let isActive: Bool
+    var helpText: String? = nil
 
     @State private var isHovered = false
 
@@ -3608,6 +4011,8 @@ private struct ReferencePDFToolbarIconLabel: View {
                     .stroke(isActive ? AppChromePalette.selectedAccentStroke : (isHovered ? AppChromePalette.clusterStroke : .clear), lineWidth: 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous))
+            .appChromeSystemHelp(helpText)
+            .appChromeQuickHelp(helpText)
             .onHover { isHovered = $0 }
             .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
             .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isActive)

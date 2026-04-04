@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 enum AppChromeMetrics {
     static let topBarHeight: CGFloat = 26
@@ -14,6 +15,7 @@ enum AppChromeMetrics {
     static let tabIndicatorHeight: CGFloat = 2
     static let dividerThickness: CGFloat = 1
     static let statusCapsuleHeight: CGFloat = 18
+    static let hoverHintDelay: TimeInterval = 0.08
 }
 
 enum AppChromePalette {
@@ -67,6 +69,7 @@ enum ToolbarStatusState: Equatable {
     case compiling
     case rendering
     case saved
+    case exported
     case previewReady
     case errors(Int)
 
@@ -84,6 +87,8 @@ enum ToolbarStatusState: Equatable {
             return "doc.richtext"
         case .saved:
             return "checkmark.circle.fill"
+        case .exported:
+            return "square.and.arrow.up.circle.fill"
         case .previewReady:
             return "doc.richtext.fill"
         case .errors:
@@ -101,6 +106,8 @@ enum ToolbarStatusState: Equatable {
             return "Rendu…"
         case .saved:
             return "Enregistré"
+        case .exported:
+            return "Annotations exportées"
         case .previewReady:
             return "PDF prêt"
         case .errors(let count):
@@ -118,6 +125,8 @@ enum ToolbarStatusState: Equatable {
             return AppChromePalette.info
         case .saved:
             return AppChromePalette.success
+        case .exported:
+            return AppChromePalette.success
         case .previewReady:
             return AppChromePalette.success
         case .errors:
@@ -129,14 +138,14 @@ enum ToolbarStatusState: Equatable {
         switch self {
         case .compiling, .rendering, .errors:
             return true
-        case .idle, .saved, .previewReady:
+        case .idle, .saved, .exported, .previewReady:
             return false
         }
     }
 
     var textTint: Color {
         switch self {
-        case .saved, .previewReady:
+        case .saved, .exported, .previewReady:
             return .secondary
         default:
             return tint
@@ -266,6 +275,120 @@ struct AppChromeStatusCapsule: View {
             .transition(.opacity)
             .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: status)
         }
+    }
+}
+
+struct AppChromeHoverHintBubble: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.96))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(AppChromePalette.clusterStroke, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+            .fixedSize(horizontal: false, vertical: true)
+            .allowsHitTesting(false)
+    }
+}
+
+private struct AppChromeQuickHelpModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let text: String
+
+    @State private var isPresented = false
+    @State private var revealWorkItem: DispatchWorkItem?
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .top) {
+                if isPresented {
+                    AppChromeHoverHintBubble(text: text)
+                        .offset(y: -34)
+                        .transition(.opacity)
+                        .zIndex(10)
+                }
+            }
+            .onHover { hovering in
+                revealWorkItem?.cancel()
+                revealWorkItem = nil
+
+                guard !text.isEmpty else {
+                    isPresented = false
+                    return
+                }
+
+                if hovering {
+                    let workItem = DispatchWorkItem {
+                        AppChromeMotion.perform(AppChromeMotion.hover(reduceMotion: reduceMotion)) {
+                            isPresented = true
+                        }
+                        revealWorkItem = nil
+                    }
+                    revealWorkItem = workItem
+                    DispatchQueue.main.asyncAfter(deadline: .now() + AppChromeMetrics.hoverHintDelay, execute: workItem)
+                } else {
+                    AppChromeMotion.perform(AppChromeMotion.hover(reduceMotion: reduceMotion)) {
+                        isPresented = false
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func appChromeSystemHelp(_ text: String?) -> some View {
+        if let text, !text.isEmpty {
+            help(text)
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
+    func appChromeQuickHelp(_ text: String?) -> some View {
+        if let text, !text.isEmpty {
+            modifier(AppChromeQuickHelpModifier(text: text))
+        } else {
+            self
+        }
+    }
+}
+
+@ViewBuilder
+func AppChromeAnnotationExportMenuItems(
+    activeMarkdownFileName: String?,
+    companionFileName: String,
+    onExportToActiveMarkdown: (() -> Void)?,
+    onExportToCompanion: @escaping () -> Void,
+    onChooseDestination: @escaping () -> Void
+) -> some View {
+    if let activeMarkdownFileName, let onExportToActiveMarkdown {
+        Button(action: onExportToActiveMarkdown) {
+            Label("Markdown actif (\(activeMarkdownFileName))", systemImage: "text.document")
+        }
+    }
+
+    Button(action: onExportToCompanion) {
+        Label("Fichier compagnon (\(companionFileName))", systemImage: "doc.plaintext")
+    }
+
+    Divider()
+
+    Button(action: onChooseDestination) {
+        Label("Choisir un fichier Markdown…", systemImage: "folder")
     }
 }
 

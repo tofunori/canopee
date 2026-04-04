@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PDFKit
+import UniformTypeIdentifiers
 
 struct PDFReaderView: View {
     let paperID: PersistentIdentifier
@@ -19,6 +20,9 @@ struct PDFReaderView: View {
     @State private var selectedAnnotation: PDFAnnotation?
     @State private var isEditingNote = false
     @State private var editingNoteText = ""
+    @State private var toolbarStatus: ToolbarStatusState = .idle
+    @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
+    @State private var annotationExportError: String?
     @State private var undoAction: (() -> Void)?
     @State private var clearSelectionAction: (() -> Void)?
     @State private var applyBridgeAnnotation: ((_ selection: PDFSelection, _ type: PDFAnnotationSubtype, _ color: NSColor) -> Void)?
@@ -39,11 +43,17 @@ struct PDFReaderView: View {
             AnnotationToolbar(
                 currentTool: $currentTool,
                 currentColor: $currentColor,
+                status: toolbarStatus,
                 selectedAnnotation: selectedAnnotation,
                 showTerminal: $showTerminal,
                 showAnnotations: $showAnnotationSidebar,
 
                 onSave: savePDF,
+                activeMarkdownExportFileName: nil,
+                companionExportFileName: companionExportFileName,
+                onExportToActiveMarkdown: nil,
+                onExportToCompanionMarkdown: exportAnnotationsToCompanionMarkdown,
+                onExportToChosenMarkdownFile: exportAnnotationsToChosenMarkdownFile,
                 onDeleteSelected: deleteSelectedAnnotation,
                 onDeleteAll: deleteAllAnnotations,
                 onChangeColor: changeSelectedAnnotationColor
@@ -153,6 +163,14 @@ struct PDFReaderView: View {
                 onCancel: { isEditingNote = false }
             )
         }
+        .alert("Impossible d’exporter les annotations", isPresented: Binding(
+            get: { annotationExportError != nil },
+            set: { if !$0 { annotationExportError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(annotationExportError ?? "")
+        }
     }
 
     // MARK: - Keyboard
@@ -259,6 +277,70 @@ struct PDFReaderView: View {
             hasUnsavedChanges = false
             paper.dateModified = Date()
         }
+    }
+
+    private var companionExportFileName: String {
+        guard let paper else { return "annotations.md" }
+        return PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL).lastPathComponent
+    }
+
+    private func exportAnnotationsToCompanionMarkdown() {
+        guard let paper else { return }
+        exportAnnotationsToMarkdown(target: .companionFile(PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL)))
+    }
+
+    private func exportAnnotationsToChosenMarkdownFile() {
+        guard let paper else { return }
+        let suggestedURL = PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL)
+        guard let targetURL = presentMarkdownExportPanel(suggestedURL: suggestedURL) else { return }
+        exportAnnotationsToMarkdown(target: .companionFile(targetURL))
+    }
+
+    private func exportAnnotationsToMarkdown(target: PDFAnnotationExportTarget) {
+        guard let document, let paper else { return }
+
+        do {
+            _ = try PDFAnnotationMarkdownExporter.export(
+                document: document,
+                source: .reference(pdfURL: paper.fileURL),
+                target: target
+            )
+            setToolbarStatus(.exported, autoClearAfter: 1.6)
+        } catch {
+            annotationExportError = error.localizedDescription
+        }
+    }
+
+    private func presentMarkdownExportPanel(suggestedURL: URL) -> URL? {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.directoryURL = suggestedURL.deletingLastPathComponent()
+        panel.nameFieldStringValue = suggestedURL.lastPathComponent
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.isExtensionHidden = false
+        panel.title = "Exporter les annotations"
+        panel.message = "Choisis un fichier Markdown à mettre à jour avec ces annotations."
+        panel.prompt = "Exporter"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    private func setToolbarStatus(_ status: ToolbarStatusState, autoClearAfter delay: TimeInterval? = nil) {
+        toolbarStatusClearWorkItem?.cancel()
+        toolbarStatusClearWorkItem = nil
+        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+            toolbarStatus = status
+        }
+
+        guard let delay, status != .idle else { return }
+
+        let workItem = DispatchWorkItem {
+            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                toolbarStatus = .idle
+            }
+            toolbarStatusClearWorkItem = nil
+        }
+        toolbarStatusClearWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     private func preferredAutoSaveDelay() -> TimeInterval {

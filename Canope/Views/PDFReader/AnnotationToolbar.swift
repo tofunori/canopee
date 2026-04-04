@@ -6,10 +6,16 @@ struct AnnotationToolbar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var currentTool: AnnotationTool
     @Binding var currentColor: NSColor
+    let status: ToolbarStatusState
     let selectedAnnotation: PDFAnnotation?
     @Binding var showTerminal: Bool
     @Binding var showAnnotations: Bool
     var onSave: () -> Void
+    let activeMarkdownExportFileName: String?
+    let companionExportFileName: String
+    var onExportToActiveMarkdown: (() -> Void)?
+    var onExportToCompanionMarkdown: () -> Void
+    var onExportToChosenMarkdownFile: () -> Void
     var onDeleteSelected: () -> Void
     var onDeleteAll: () -> Void
     var onChangeColor: (NSColor) -> Void
@@ -72,6 +78,8 @@ struct AnnotationToolbar: View {
                 }
             }
 
+            AppChromeStatusCapsule(status: status)
+
             Spacer()
 
             AppChromeToolbarCluster(zone: .trailing, title: "Actions") {
@@ -98,6 +106,23 @@ struct AnnotationToolbar: View {
                     action: onSave
                 )
                 .keyboardShortcut("s", modifiers: .command)
+
+                Menu {
+                    AppChromeAnnotationExportMenuItems(
+                        activeMarkdownFileName: activeMarkdownExportFileName,
+                        companionFileName: companionExportFileName,
+                        onExportToActiveMarkdown: onExportToActiveMarkdown,
+                        onExportToCompanion: onExportToCompanionMarkdown,
+                        onChooseDestination: onExportToChosenMarkdownFile
+                    )
+                } label: {
+                    ToolbarIconLabel(
+                        systemName: "square.and.arrow.up.on.square",
+                        helpText: "Exporter les annotations en Markdown"
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Exporter les annotations en Markdown")
             }
 
             AppChromeToolbarCluster(zone: .trailing, title: "Vue") {
@@ -262,6 +287,7 @@ struct ToolbarIconButton: View {
         .buttonStyle(.plain)
         .foregroundStyle(foregroundStyle)
         .help(helpText)
+        .appChromeQuickHelp(helpText)
         .onHover { hovering in
             isHovered = hovering
         }
@@ -277,6 +303,35 @@ struct ToolbarIconButton: View {
             return AppChromePalette.hoverFill
         }
         return .clear
+    }
+}
+
+struct ToolbarIconLabel: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let systemName: String
+    var symbolVariant: SymbolVariants = .none
+    let helpText: String
+    @State private var isHovered = false
+
+    var body: some View {
+        Image(systemName: systemName)
+            .symbolVariant(symbolVariant)
+            .imageScale(.small)
+            .frame(width: AppChromeMetrics.toolbarButtonSize, height: AppChromeMetrics.toolbarButtonSize)
+            .background(backgroundFill)
+            .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius))
+            .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius))
+            .foregroundStyle(.primary)
+            .help(helpText)
+            .appChromeQuickHelp(helpText)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+            .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
+    }
+
+    private var backgroundFill: Color {
+        isHovered ? AppChromePalette.hoverFill : .clear
     }
 }
 
