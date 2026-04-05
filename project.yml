@@ -33,8 +33,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.canope.app
         PRODUCT_NAME: Canope
         PRODUCT_MODULE_NAME: Canope
-        MARKETING_VERSION: "0.2.4"
-        CURRENT_PROJECT_VERSION: 6
+        MARKETING_VERSION: "0.3.0"
+        CURRENT_PROJECT_VERSION: 7
         SWIFT_VERSION: "6.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.productivity"
