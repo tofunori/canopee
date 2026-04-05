@@ -10,6 +10,9 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     @State private var selectedSlashIndex: Int?
     @State private var showSessionPicker = false
     @State private var cachedSelection: SelectionInfo?
+    @State private var scrollMonitor: Any?
+    @State private var editingMessageID: UUID?
+    @State private var editingText = ""
     @State private var selectionTimer: Timer?
 
     var body: some View {
@@ -25,17 +28,26 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             if !provider.isConnected {
                 provider.start()
             }
-            cachedSelection = Self.readSelectionFromDisk()
+            cachedSelection = readSelectionFromDisk()
             selectionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
                 Task { @MainActor in
-                    cachedSelection = Self.readSelectionFromDisk()
+                    cachedSelection = readSelectionFromDisk()
                 }
+            }
+            // Disable auto-scroll when user scrolls up
+            scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+                if event.scrollingDeltaY > 0 {
+                    shouldAutoScroll = false
+                }
+                return event
             }
         }
         .onDisappear {
             selectionTimer?.invalidate()
             selectionTimer = nil
+            if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
         }
+        // Cmd+N handled via menu item or button — SwiftUI doesn't support view-level Cmd shortcuts well
         .sheet(isPresented: $showSessionPicker) {
             SessionPickerView { sessionId in
                 showSessionPicker = false
@@ -129,9 +141,9 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             Button {
                 provider.stop()
             } label: {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+                Image(systemName: provider.isProcessing ? "stop.circle.fill" : "stop.fill")
+                    .font(.system(size: provider.isProcessing ? 14 : 9))
+                    .foregroundStyle(provider.isProcessing ? .red : .secondary)
             }
             .buttonStyle(.plain)
             .opacity(provider.isProcessing ? 1 : 0.3)
@@ -147,7 +159,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 4) {
                     ForEach(provider.messages) { message in
                         messageRow(message)
                             .id(message.id)
@@ -175,6 +187,15 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                     proxy.scrollTo("bottom_anchor", anchor: .bottom)
                 }
             }
+            .onChange(of: provider.isProcessing) {
+                if provider.isProcessing { shouldAutoScroll = true }
+            }
+            .onChange(of: provider.messages.last?.content) {
+                // Auto-scroll only if user hasn't scrolled away
+                if shouldAutoScroll {
+                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                }
+            }
         }
     }
 
@@ -199,16 +220,61 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     private func userBubble(_ message: ChatMessage) -> some View {
         HStack {
             Spacer(minLength: 60)
-            Text(message.content)
-                .font(.system(size: 13))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.85))
-                )
-                .textSelection(.enabled)
+            if editingMessageID == message.id {
+                // Inline editor
+                VStack(alignment: .trailing, spacing: 6) {
+                    TextField("", text: $editingText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.3))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Color.accentColor, lineWidth: 1)
+                        )
+                    HStack(spacing: 8) {
+                        Button("Annuler") { editingMessageID = nil }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Button("Renvoyer") {
+                            let newText = editingText
+                            editingMessageID = nil
+                            if let p = provider as? ClaudeHeadlessProvider {
+                                p.editAndResend(newText: newText)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .font(.system(size: 11))
+                    }
+                }
+            } else {
+                Text(message.content)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.85))
+                    )
+                    .textSelection(.enabled)
+                    .contextMenu {
+                        Button("Copier") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(message.content, forType: .string)
+                        }
+                        Button("Éditer & renvoyer") {
+                            editingMessageID = message.id
+                            editingText = message.content
+                        }
+                    }
+            }
         }
         .padding(.vertical, 2)
     }
@@ -219,7 +285,6 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
 
     private func assistantRow(_ message: ChatMessage) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            // Small Claude icon
             Circle()
                 .fill(Color.orange.opacity(0.15))
                 .frame(width: 20, height: 20)
@@ -232,8 +297,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 if message.isStreaming {
-                    // Plain text during streaming to avoid regex parsing on every chunk
-                    Text(message.content)
+                    Text(message.content.contains("$") ? LaTeXUnicode.convert(message.content) : message.content)
                         .font(.system(size: 13))
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
@@ -457,7 +521,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     // MARK: - Slash Commands
 
     private var slashCommands: [String] { [
-        "resume", "continue",
+        "new", "resume", "continue",
         "compact", "context", "cost", "help", "init", "review",
         "commit", "simplify", "research", "plan-review", "diff-review",
         "project-recap", "visual-explainer", "generate-slides",
@@ -487,7 +551,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
 
     private var currentSelection: SelectionInfo? { cachedSelection }
 
-    private static func readSelectionFromDisk() -> SelectionInfo? {
+    private func readSelectionFromDisk() -> SelectionInfo? {
         let path = CanopeContextFiles.ideSelectionStatePaths[0]
         guard let data = FileManager.default.contents(atPath: path),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -504,6 +568,12 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
 
     // MARK: - Helpers
 
+    @State private var shouldAutoScroll = false
+
+    private func startAutoScroll(proxy: ScrollViewProxy) {
+        shouldAutoScroll = true
+    }
+
     private var canSend: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !provider.isProcessing
     }
@@ -513,6 +583,14 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
         guard !text.isEmpty else { return }
         guard !provider.isProcessing else { return }
         inputText = ""
+
+        // /new starts a fresh conversation
+        if text == "/new" {
+            if let p = provider as? ClaudeHeadlessProvider {
+                p.newSession()
+            }
+            return
+        }
 
         // Handle /continue locally
         if text == "/continue" {
@@ -683,6 +761,100 @@ struct SpinnerVerbView: View {
     }
 }
 
+// MARK: - LaTeX to Unicode Converter
+
+enum LaTeXUnicode {
+    private static let greekLetters: [String: String] = [
+        "\\alpha": "α", "\\beta": "β", "\\gamma": "γ", "\\delta": "δ",
+        "\\epsilon": "ε", "\\zeta": "ζ", "\\eta": "η", "\\theta": "θ",
+        "\\iota": "ι", "\\kappa": "κ", "\\lambda": "λ", "\\mu": "μ",
+        "\\nu": "ν", "\\xi": "ξ", "\\pi": "π", "\\rho": "ρ",
+        "\\sigma": "σ", "\\tau": "τ", "\\upsilon": "υ", "\\phi": "φ",
+        "\\chi": "χ", "\\psi": "ψ", "\\omega": "ω",
+        "\\Gamma": "Γ", "\\Delta": "Δ", "\\Theta": "Θ", "\\Lambda": "Λ",
+        "\\Sigma": "Σ", "\\Phi": "Φ", "\\Psi": "Ψ", "\\Omega": "Ω",
+        "\\infty": "∞", "\\partial": "∂", "\\nabla": "∇",
+        "\\pm": "±", "\\times": "×", "\\div": "÷", "\\cdot": "·",
+        "\\leq": "≤", "\\geq": "≥", "\\neq": "≠", "\\approx": "≈",
+        "\\sim": "∼", "\\propto": "∝", "\\sum": "Σ", "\\prod": "Π",
+        "\\sqrt": "√", "\\degree": "°", "\\circ": "°",
+    ]
+
+    private static let subscriptDigits: [Character: Character] = [
+        "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+        "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+    ]
+
+    private static let superscriptDigits: [Character: Character] = [
+        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+        "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+        "-": "⁻", "+": "⁺", "n": "ⁿ",
+    ]
+
+    static func convert(_ text: String) -> String {
+        var result = text
+
+        // Remove $ delimiters
+        result = result.replacingOccurrences(of: "$", with: "")
+
+        // Greek letters and symbols (longer names first to avoid partial matches)
+        let sorted = greekLetters.sorted { $0.key.count > $1.key.count }
+        for (latex, unicode) in sorted {
+            result = result.replacingOccurrences(of: latex, with: unicode)
+        }
+
+        // Subscripts: _{...} or _x
+        result = replacePattern(in: result, pattern: #"_\{([^}]+)\}"#) { match in
+            String(match.map { subscriptDigits[$0] ?? $0 })
+        }
+        result = replacePattern(in: result, pattern: #"_([0-9a-z])"#) { match in
+            String(match.map { subscriptDigits[$0] ?? $0 })
+        }
+
+        // Superscripts: ^{...} or ^x
+        result = replacePattern(in: result, pattern: #"\^\{([^}]+)\}"#) { match in
+            String(match.map { superscriptDigits[$0] ?? $0 })
+        }
+        result = replacePattern(in: result, pattern: #"\^([0-9n+-])"#) { match in
+            String(match.map { superscriptDigits[$0] ?? $0 })
+        }
+
+        // \text{...} → just the text
+        result = replacePattern(in: result, pattern: #"\\text\{([^}]+)\}"#) { $0 }
+        // \mathrm{...} → just the text
+        result = replacePattern(in: result, pattern: #"\\mathrm\{([^}]+)\}"#) { $0 }
+        // \frac{a}{b} → a/b
+        result = result.replacingOccurrences(
+            of: #"\\frac\{([^}]+)\}\{([^}]+)\}"#,
+            with: "$1/$2",
+            options: .regularExpression
+        )
+
+        // Clean up remaining backslash commands
+        result = result.replacingOccurrences(of: "\\,", with: " ")
+        result = result.replacingOccurrences(of: "\\;", with: " ")
+        result = result.replacingOccurrences(of: "\\!", with: "")
+        result = result.replacingOccurrences(of: "\\quad", with: "  ")
+
+        return result
+    }
+
+    private static func replacePattern(in text: String, pattern: String, transform: (String) -> String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        var result = text
+        let matches = regex.matches(in: result, range: NSRange(result.startIndex..., in: result))
+        for match in matches.reversed() {
+            guard let fullRange = Range(match.range, in: result),
+                  match.numberOfRanges > 1,
+                  let captureRange = Range(match.range(at: 1), in: result)
+            else { continue }
+            let captured = String(result[captureRange])
+            result.replaceSubrange(fullRange, with: transform(captured))
+        }
+        return result
+    }
+}
+
 // MARK: - Markdown Block Renderer
 
 struct MarkdownBlockView: View {
@@ -691,16 +863,112 @@ struct MarkdownBlockView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            // Group consecutive text blocks into one selectable Text view
+            let groups = Self.groupBlocks(blocks)
+            ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                switch group {
+                case .textRun(let segments):
+                    Text(Self.buildAttributedString(segments: segments, inlineMarkdown: inlineMarkdown))
+                        .font(.system(size: 13))
+                        .textSelection(.enabled)
+                case .special(let block):
+                    blockView(block)
+                }
             }
         }
-        .textSelection(.enabled)
         .onAppear {
             if blocks.isEmpty {
                 blocks = Self.parseBlocks(text)
             }
         }
+    }
+
+    private enum BlockGroup {
+        case textRun(segments: [Block])  // paragraphs, headings, insights merged into one Text
+        case special(Block)              // code, table, rule — need custom rendering
+    }
+
+    private static func groupBlocks(_ blocks: [Block]) -> [BlockGroup] {
+        var groups: [BlockGroup] = []
+        var currentRun: [Block] = []
+
+        func flushRun() {
+            if !currentRun.isEmpty {
+                groups.append(.textRun(segments: currentRun))
+                currentRun = []
+            }
+        }
+
+        for block in blocks {
+            switch block {
+            case .paragraph, .heading, .insight, .list, .blockquote:
+                currentRun.append(block)
+            case .code, .table, .rule:
+                flushRun()
+                groups.append(.special(block))
+            }
+        }
+        flushRun()
+        return groups
+    }
+
+    private static func buildAttributedString(
+        segments: [Block],
+        inlineMarkdown: (String) -> AttributedString
+    ) -> AttributedString {
+        var result = AttributedString()
+        for (i, block) in segments.enumerated() {
+            if i > 0 {
+                result += AttributedString("\n\n")
+            }
+            switch block {
+            case .heading(let level, let text):
+                var attr = inlineMarkdown(text)
+                let size: CGFloat = level == 1 ? 18 : level == 2 ? 15 : 13
+                attr.font = .system(size: size, weight: .bold)
+                if level <= 2 {
+                    attr.foregroundColor = .orange
+                }
+                result += attr
+
+            case .paragraph(let text):
+                result += inlineMarkdown(text)
+
+            case .insight(let lines):
+                var header = AttributedString("★ Insight ─────────────────────────────────────\n")
+                header.font = .system(size: 12, weight: .medium).monospaced()
+                header.foregroundColor = .purple
+                result += header
+                for (j, line) in lines.enumerated() {
+                    result += inlineMarkdown(line)
+                    if j < lines.count - 1 { result += AttributedString("\n") }
+                }
+                var footer = AttributedString("\n─────────────────────────────────────────────────")
+                footer.font = .system(size: 12).monospaced()
+                footer.foregroundColor = .purple
+                result += footer
+
+            case .list(let items, let ordered):
+                for (j, item) in items.enumerated() {
+                    let bullet = ordered ? "\(j + 1). " : "  •  "
+                    result += AttributedString(bullet)
+                    result += inlineMarkdown(item)
+                    if j < items.count - 1 { result += AttributedString("\n") }
+                }
+
+            case .blockquote(let text):
+                var bar = AttributedString("  ┃  ")
+                bar.foregroundColor = .secondary
+                result += bar
+                var quoted = inlineMarkdown(text)
+                quoted.foregroundColor = .secondary
+                result += quoted
+
+            default:
+                break
+            }
+        }
+        return result
     }
 
     private enum Block {
@@ -709,6 +977,8 @@ struct MarkdownBlockView: View {
         case table(rows: [[String]])
         case rule
         case insight(lines: [String])
+        case list(items: [String], ordered: Bool)
+        case blockquote(text: String)
         case paragraph(text: String)
     }
 
@@ -727,6 +997,8 @@ struct MarkdownBlockView: View {
             insightView(lines: lines)
         case .paragraph(let text):
             paragraphView(text: text)
+        case .list, .blockquote:
+            EmptyView() // Rendered in textRun via buildAttributedString
         }
     }
 
@@ -822,9 +1094,11 @@ struct MarkdownBlockView: View {
     }
 
     private func inlineMarkdown(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(
+        // Convert LaTeX math before markdown parsing
+        let converted = text.contains("$") ? LaTeXUnicode.convert(text) : text
+        return (try? AttributedString(markdown: converted, options: .init(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
-        ))) ?? AttributedString(text)
+        ))) ?? AttributedString(converted)
     }
 
     // MARK: - Parser
@@ -910,6 +1184,46 @@ struct MarkdownBlockView: View {
                 continue
             }
 
+            // Blockquote
+            if line.hasPrefix(">") {
+                var quoteLines: [String] = []
+                while i < lines.count && lines[i].hasPrefix(">") {
+                    let content = String(lines[i].dropFirst()).trimmingCharacters(in: .init(charactersIn: " "))
+                    quoteLines.append(content)
+                    i += 1
+                }
+                blocks.append(.blockquote(text: quoteLines.joined(separator: "\n")))
+                continue
+            }
+
+            // List (unordered: - or * ; ordered: 1. 2. etc.)
+            if line.range(of: #"^\s*[-*]\s+\S"#, options: .regularExpression) != nil ||
+               line.range(of: #"^\s*\d+\.\s+\S"#, options: .regularExpression) != nil
+            {
+                let isOrdered = line.range(of: #"^\s*\d+\."#, options: .regularExpression) != nil
+                var items: [String] = []
+                while i < lines.count {
+                    let l = lines[i]
+                    if let match = l.range(of: #"^\s*[-*]\s+(.*)"#, options: .regularExpression) {
+                        let content = String(l[match]).replacingOccurrences(
+                            of: #"^\s*[-*]\s+"#, with: "", options: .regularExpression)
+                        items.append(content)
+                        i += 1
+                    } else if let match = l.range(of: #"^\s*\d+\.\s+(.*)"#, options: .regularExpression) {
+                        let content = String(l[match]).replacingOccurrences(
+                            of: #"^\s*\d+\.\s+"#, with: "", options: .regularExpression)
+                        items.append(content)
+                        i += 1
+                    } else {
+                        break
+                    }
+                }
+                if !items.isEmpty {
+                    blocks.append(.list(items: items, ordered: isOrdered))
+                }
+                continue
+            }
+
             // Empty line — skip
             if line.trimmingCharacters(in: .whitespaces).isEmpty {
                 i += 1
@@ -968,6 +1282,8 @@ struct SessionPickerView: View {
 
     @State private var sessions: [ClaudeHeadlessProvider.SessionEntry] = []
     @State private var search = ""
+    @State private var renamingSession: ClaudeHeadlessProvider.SessionEntry?
+    @State private var renameText = ""
 
     private var filtered: [ClaudeHeadlessProvider.SessionEntry] {
         if search.isEmpty { return sessions }
@@ -1044,6 +1360,12 @@ struct SessionPickerView: View {
                         }
                         .buttonStyle(.plain)
                         .background(Color.clear)
+                        .contextMenu {
+                            Button("Renommer…") {
+                                renameText = entry.name
+                                renamingSession = entry
+                            }
+                        }
 
                         Divider().padding(.leading, 16)
                     }
@@ -1054,6 +1376,32 @@ struct SessionPickerView: View {
         .background(AppChromePalette.surfaceBar)
         .onAppear {
             sessions = ClaudeHeadlessProvider.listSessions()
+        }
+        .sheet(item: $renamingSession) { entry in
+            VStack(spacing: 12) {
+                Text("Renommer la session")
+                    .font(.system(size: 13, weight: .semibold))
+
+                TextField("Nom", text: $renameText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+
+                HStack {
+                    Button("Annuler") { renamingSession = nil }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Renommer") {
+                        ClaudeHeadlessProvider.renameSession(id: entry.id, name: renameText)
+                        sessions = ClaudeHeadlessProvider.listSessions()
+                        renamingSession = nil
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+            .padding(20)
+            .frame(width: 300)
         }
     }
 }

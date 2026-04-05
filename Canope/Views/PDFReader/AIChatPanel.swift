@@ -573,7 +573,15 @@ struct TerminalPanel: View {
         .onReceive(NotificationCenter.default.publisher(for: .canopeSendPromptToTerminal)) { notification in
             guard isVisible else { return }
             guard let prompt = notification.userInfo?["prompt"] as? String else { return }
-            sendPromptToFocusedTerminal(prompt)
+            // If the active tab is a Claude chat, send to it instead of the terminal
+            if let selectedTab = workspaceState.selectedTab, selectedTab.kind == .claudeChat,
+               let tabID = workspaceState.selectedTabID
+            {
+                let provider = workspaceState.chatProvider(for: tabID, workingDirectory: startupWorkingDirectory)
+                provider.sendMessage(prompt)
+            } else {
+                sendPromptToFocusedTerminal(prompt)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalAddTab)) { _ in
             guard isVisible else { return }

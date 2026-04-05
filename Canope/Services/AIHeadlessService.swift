@@ -73,6 +73,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     private var currentProcess: Process?
     private var readTask: Task<Void, Never>?
     private var outputBuffer = ""
+    private var pendingLines: [String] = []
+    private var throttleTask: Task<Void, Never>?
     private let workingDirectory: URL
     private var currentAssistantIndex: Int?
     private var useContinueForNextMessage = false
@@ -94,8 +96,13 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         readTask = nil
         if let proc = currentProcess, proc.isRunning { proc.terminate() }
         currentProcess = nil
-        isConnected = false
         isProcessing = false
+        // Stay connected — stop only cancels the current request
+        // Finalize any streaming message
+        if let idx = currentAssistantIndex, idx < messages.count {
+            messages[idx].isStreaming = false
+        }
+        currentAssistantIndex = nil
     }
 
     /// Resume a specific session by ID. Loads message history and sets --resume for next message.
@@ -228,6 +235,113 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
+    /// Edit the last user message and resend with --fork-session.
+    func editAndResend(newText: String) {
+        guard let sid = session.id else {
+            // No session to fork — just send as new message
+            sendMessage(newText)
+            return
+        }
+
+        // Remove messages after the last user message
+        if let lastUserIdx = messages.lastIndex(where: { $0.role == .user }) {
+            messages.removeSubrange(lastUserIdx...)
+        }
+
+        // Fork the session with the new message
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        messages.append(ChatMessage(
+            role: .user, content: trimmed, timestamp: Date(),
+            isStreaming: false, isCollapsed: false
+        ))
+
+        // Kill any previous process
+        readTask?.cancel()
+        readTask = nil
+        if let old = currentProcess, old.isRunning { old.terminate() }
+        currentProcess = nil
+
+        isProcessing = true
+        currentAssistantIndex = nil
+        outputBuffer = ""
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: Self.findCLI("claude"))
+        let prompt = Self.buildPromptWithIDEContext(trimmed)
+        var args = ["-p", prompt, "--output-format", "stream-json", "--verbose",
+                    "--model", selectedModel, "--effort", selectedEffort,
+                    "--resume", sid, "--fork-session"]
+        proc.currentDirectoryURL = resumeWorkingDirectory ?? workingDirectory
+
+        if resumeWorkingDirectory == nil {
+            let mcpConfigPath = CanopeContextFiles.claudeIDEMcpConfigPaths[0]
+            if FileManager.default.fileExists(atPath: mcpConfigPath) {
+                args += ["--mcp-config", mcpConfigPath]
+            }
+        }
+        proc.arguments = args
+
+        var env = ProcessInfo.processInfo.environment
+        env["NO_COLOR"] = "1"
+        ClaudeIDEBridgeService.shared.startIfNeeded()
+        CanopeContextFiles.writeClaudeIDEMcpConfig()
+        for entry in CanopeContextFiles.terminalEnvironment {
+            let parts = entry.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 { env[String(parts[0])] = String(parts[1]) }
+        }
+        proc.environment = env
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        proc.standardOutput = stdout
+        proc.standardError = stderr
+        currentProcess = proc
+
+        do {
+            try proc.run()
+        } catch {
+            appendSystem("Erreur : \(error.localizedDescription)")
+            isProcessing = false
+            return
+        }
+
+        let stdoutHandle = stdout.fileHandleForReading
+        readTask = Task.detached { [weak self] in
+            while true {
+                let data = stdoutHandle.availableData
+                if data.isEmpty { break }
+                guard let text = String(data: data, encoding: .utf8) else { continue }
+                await MainActor.run { [weak self] in
+                    self?.handleOutput(text)
+                }
+            }
+            await MainActor.run { [weak self] in
+                self?.isProcessing = false
+                if let idx = self?.currentAssistantIndex, let count = self?.messages.count, idx < count {
+                    self?.messages[idx].isStreaming = false
+                }
+            }
+        }
+    }
+
+    /// Start a fresh conversation, clearing all state.
+    func newSession() {
+        readTask?.cancel()
+        readTask = nil
+        if let old = currentProcess, old.isRunning { old.terminate() }
+        currentProcess = nil
+        isProcessing = false
+        currentAssistantIndex = nil
+        outputBuffer = ""
+        session = SessionInfo()
+        resumeWorkingDirectory = nil
+        useContinueForNextMessage = false
+        messages.removeAll()
+        appendSystem("Nouvelle conversation")
+    }
+
     /// Resume the most recent session.
     func resumeLastSession() {
         readTask?.cancel()
@@ -292,18 +406,33 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
+    /// Rename a session by updating the JSON file in ~/.claude/sessions/
+    nonisolated static func renameSession(id: String, name: String) {
+        let sessionsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/sessions")
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: sessionsDir, includingPropertiesForKeys: nil
+        ) else { return }
+
+        for file in files where file.pathExtension == "json" {
+            guard var data = try? Data(contentsOf: file),
+                  var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sid = json["sessionId"] as? String, sid == id
+            else { continue }
+
+            json["name"] = name
+            guard let updated = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+            else { return }
+            try? updated.write(to: file, options: .atomic)
+            return
+        }
+    }
+
     func sendMessage(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        // Debug: show state
-        if !isConnected {
-            appendSystem("⚠ isConnected=false, calling start()")
-            start()
-        }
-        if isProcessing {
-            appendSystem("⚠ Process en cours, annulation du précédent")
-        }
+        if !isConnected { start() }
 
         messages.append(ChatMessage(
             role: .user, content: trimmed, timestamp: Date(),
@@ -387,7 +516,10 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
             Task { @MainActor [weak self] in
                 let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !t.isEmpty { self?.appendSystem("stderr: \(t)") }
+                // Only show actionable stderr errors, not noise
+                if !t.isEmpty && (t.contains("Error") || t.contains("error")) {
+                    self?.appendSystem(t)
+                }
             }
         }
 
@@ -424,7 +556,20 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             let line = String(outputBuffer[..<range.lowerBound])
             outputBuffer = String(outputBuffer[range.upperBound...])
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
-            parseLine(line)
+            pendingLines.append(line)
+        }
+        // Throttle: process pending lines at most every 150ms
+        if throttleTask == nil {
+            throttleTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(150))
+                guard let self else { return }
+                let lines = self.pendingLines
+                self.pendingLines.removeAll()
+                self.throttleTask = nil
+                for line in lines {
+                    self.parseLine(line)
+                }
+            }
         }
     }
 
