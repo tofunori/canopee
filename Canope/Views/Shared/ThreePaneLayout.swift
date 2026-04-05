@@ -44,15 +44,15 @@ struct ThreePaneLayoutConfig {
 // MARK: - Factory methods
 
 extension ThreePaneLayoutConfig {
-    static func latex(arrangement: PanelArrangement, contentVisible: Bool = true) -> ThreePaneLayoutConfig {
-        let editor  = ThreePaneSlotSizing(minWidth: 160)
+    static func latex(arrangement: PanelArrangement, editorVisible: Bool = true, contentVisible: Bool = true) -> ThreePaneLayoutConfig {
+        let editor  = ThreePaneSlotSizing(minWidth: editorVisible ? 160 : 0)
         let pdf     = ThreePaneSlotSizing(minWidth: contentVisible ? 180 : 0)
         let term    = ThreePaneSlotSizing(minWidth: 160)
         return config(for: arrangement, editor: editor, content: pdf, terminal: term)
     }
 
-    static func code(arrangement: PanelArrangement, contentVisible: Bool = true) -> ThreePaneLayoutConfig {
-        let editor  = ThreePaneSlotSizing(minWidth: 200)
+    static func code(arrangement: PanelArrangement, editorVisible: Bool = true, contentVisible: Bool = true) -> ThreePaneLayoutConfig {
+        let editor  = ThreePaneSlotSizing(minWidth: editorVisible ? 200 : 0)
         let output  = ThreePaneSlotSizing(minWidth: contentVisible ? 200 : 0)
         let term    = ThreePaneSlotSizing(minWidth: 160)
         return config(for: arrangement, editor: editor, content: output, terminal: term)

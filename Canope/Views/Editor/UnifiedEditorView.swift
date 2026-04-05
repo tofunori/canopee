@@ -449,8 +449,18 @@ struct UnifiedEditorView: View {
     @ViewBuilder
     var workAreaPane: some View {
         Group {
-            if isActive && showTerminal {
+            if isActive && showTerminal && showEditorPane {
+                // 3 panes (or 2 if content hidden): Terminal + Editor + Content
                 horizontalThreePaneLayout
+            } else if isActive && showTerminal && !showEditorPane && isContentPaneVisible {
+                // 2 panes: Terminal + Content (editor hidden)
+                HSplitView {
+                    embeddedTerminalPane
+                    contentPane
+                }
+            } else if isActive && showTerminal {
+                // Terminal only (editor + content hidden)
+                embeddedTerminalPane
             } else {
                 editorAndContentPane
             }
@@ -489,7 +499,7 @@ struct UnifiedEditorView: View {
     var horizontalThreePaneLayout: some View {
         let roles = threePaneRoles
         let isCode = documentMode.isRunnableCode
-        let showContent = isCode ? isOutputVisible : (showPDFPreview && showEditorPane)
+        let showContent = isCode ? isOutputVisible : showPDFPreview
         let config = isCode
             ? ThreePaneLayoutConfig.code(arrangement: panelArrangement, contentVisible: showContent)
             : ThreePaneLayoutConfig.latex(arrangement: panelArrangement, contentVisible: showContent)
@@ -1054,17 +1064,19 @@ struct UnifiedEditorView: View {
         }
     }
 
-    /// Shared pane toggles: sidebar, content pane, terminal
+    private var isContentPaneVisible: Bool {
+        documentMode.isRunnableCode ? isOutputVisible : showPDFPreview
+    }
+
+    /// 4 pane toggles: Files, Editor, Terminal, Content
     private var panneauxCluster: some View {
         toolbarCluster(zone: .trailing, title: "Panneaux") {
             Button(action: {
                 AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                    if documentMode.isRunnableCode { showSidebar.toggle() }
-                    else { toggleSidebar() }
+                    showSidebar.toggle()
                 }
             }) {
-                Image(systemName: "sidebar.left")
-                    .symbolVariant(showSidebar ? .none : .slash)
+                Image(systemName: "folder")
                     .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
@@ -1072,32 +1084,43 @@ struct UnifiedEditorView: View {
 
             Button(action: {
                 AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                    if documentMode.isRunnableCode {
-                        isOutputVisible.toggle()
-                    } else {
-                        showPDFPreview.toggle()
-                    }
+                    toggleEditorPaneVisibility()
                 }
             }) {
-                let isContentVisible = documentMode.isRunnableCode ? isOutputVisible : showPDFPreview
-                Image(systemName: "sidebar.trailing")
-                    .symbolVariant(isContentVisible ? .none : .slash)
-                    .foregroundStyle(isContentVisible ? AppChromePalette.info : .secondary)
+                Image(systemName: "doc.text")
+                    .foregroundStyle(showEditorPane ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .help(documentMode.isRunnableCode ? "Output" : "PDF")
+            .help("Éditeur")
+            .disabled(showEditorPane && !showTerminal && !isContentPaneVisible)
 
             Button(action: {
                 AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                    if documentMode.isRunnableCode { showTerminal.toggle() }
-                    else { toggleTerminalVisibility() }
+                    showTerminal.toggle()
                 }
             }) {
-                Image(systemName: showTerminal ? "terminal.fill" : "terminal")
+                Image(systemName: "terminal")
                     .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
             }
             .buttonStyle(.plain)
             .help("Terminal")
+
+            Button(action: {
+                AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+                    if documentMode.isRunnableCode {
+                        isOutputVisible.toggle()
+                    } else if showPDFPreview {
+                        splitLayout = .editorOnly
+                    } else {
+                        splitLayout = .horizontal
+                    }
+                }
+            }) {
+                Image(systemName: documentMode.isRunnableCode ? "chart.xyaxis.line" : "doc.richtext")
+                    .foregroundStyle(isContentPaneVisible ? AppChromePalette.info : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(documentMode.isRunnableCode ? "Output" : "PDF")
         }
     }
 
@@ -1280,205 +1303,6 @@ struct UnifiedEditorView: View {
         }
     }
 
-    // --- Code toolbar ---
-
-    private var codeToolbarContent: some View {
-        Group {
-            toolbarCluster(zone: .leading, title: "Fichier") {
-                Image(systemName: "chevron.left.forwardslash.chevron.right")
-                    .foregroundStyle(documentMode.fileIconTint)
-                Text(fileURL.lastPathComponent)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                AppChromeStatusCapsule(status: toolbarStatus)
-                if !showSidebar {
-                    Menu {
-                        createFileMenuContent
-                    } label: {
-                        Image(systemName: "plus")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            toolbarCluster(zone: .primary, title: documentMode.primaryClusterTitle) {
-                Button(action: runScript) {
-                    Image(systemName: codeDocumentState.isRunning ? "hourglass" : "play.fill")
-                        .foregroundStyle(AppChromePalette.success)
-                }
-                .buttonStyle(.plain)
-                .disabled(codeDocumentState.isRunning)
-                .help("Exécuter (⌘B)")
-                .keyboardShortcut("b", modifiers: .command)
-
-                Button(action: saveFile) {
-                    Image(systemName: "square.and.arrow.down")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Enregistrer")
-
-                Button(action: { codeDocumentState.showLogs.toggle() }) {
-                    Image(systemName: codeDocumentState.showLogs ? "list.bullet.rectangle.fill" : "list.bullet.rectangle")
-                        .foregroundStyle(codeDocumentState.showLogs ? AppChromePalette.info : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Journal d'exécution")
-            }
-
-            toolbarCluster(zone: .primary, title: "Réf.") {
-                Menu {
-                    let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
-                    if openPapers.isEmpty {
-                        Text("Aucun article ouvert en onglet")
-                    } else {
-                        ForEach(openPapers) { paper in
-                            Button {
-                                openCodeReference(paper)
-                            } label: {
-                                let alreadyOpen = contentPaneTabs.contains(.reference(paper.id))
-                                Text("\(alreadyOpen ? "✓ " : "")\(paper.authorsShort) (\(paper.year.map { String($0) } ?? "—")) — \(paper.title)")
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: contentPaneTabs.count > 1 ? "book.fill" : "book")
-                        .foregroundStyle(contentPaneTabs.count > 1 ? .blue : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Ouvrir un article de référence")
-            }
-
-            codeActiveReferenceToolbarView
-
-            Spacer(minLength: 8)
-
-            // Pane toggles
-            toolbarCluster(zone: .trailing, title: "Panneaux") {
-                Button(action: {
-                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        showSidebar.toggle()
-                    }
-                }) {
-                    Image(systemName: "sidebar.left")
-                        .symbolVariant(showSidebar ? .none : .slash)
-                        .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Fichiers")
-
-                Button(action: {
-                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        isOutputVisible.toggle()
-                    }
-                }) {
-                    Image(systemName: isOutputVisible ? "sidebar.trailing" : "sidebar.trailing")
-                        .symbolVariant(isOutputVisible ? .none : .slash)
-                        .foregroundStyle(isOutputVisible ? AppChromePalette.info : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Output / PDF")
-
-                Button(action: {
-                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        showTerminal.toggle()
-                    }
-                }) {
-                    Image(systemName: showTerminal ? "terminal.fill" : "terminal")
-                        .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Terminal")
-            }
-
-            // Layout menu
-            toolbarCluster(zone: .trailing, title: "Disposition") {
-                Menu {
-                    Section("Ordre des panneaux") {
-                        ForEach(PanelArrangement.allCases, id: \.self) { arrangement in
-                            Button {
-                                AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                                    panelArrangement = arrangement
-                                }
-                            } label: {
-                                HStack {
-                                    if panelArrangement == arrangement {
-                                        Image(systemName: "checkmark")
-                                    }
-                                    Text(arrangement.title(contentLabel: "Output"))
-                                }
-                            }
-                        }
-                    }
-
-                    Section("Output") {
-                        Button {
-                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                                outputPlacement = .right
-                            }
-                        } label: {
-                            Label("Output à droite", systemImage: "rectangle.split.2x1")
-                            if outputPlacement == .right { Image(systemName: "checkmark") }
-                        }
-
-                        Button {
-                            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                                outputPlacement = .bottom
-                            }
-                        } label: {
-                            Label("Output en bas", systemImage: "rectangle.split.1x2")
-                            if outputPlacement == .bottom { Image(systemName: "checkmark") }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "rectangle.3.group")
-                }
-                .buttonStyle(.plain)
-                .help("Disposition des panneaux")
-            }
-
-            toolbarCluster(zone: .trailing, title: "Ed.") {
-                Menu {
-                    ForEach([11, 12, 13, 14, 15, 16, 18, 20, 24], id: \.self) { size in
-                        Button {
-                            workspaceState.editorFontSize = Double(size)
-                        } label: {
-                            HStack {
-                                if Int(editorFontSize) == size { Image(systemName: "checkmark") }
-                                Text("\(size) pt")
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "textformat.size")
-                }
-                .buttonStyle(.plain)
-
-                Image(systemName: "paintpalette.fill")
-                    .foregroundStyle(Color(nsColor: codeTheme.color(for: .keyword)))
-                    .help(codeTheme.name)
-            }
-
-            if showTerminal {
-                toolbarCluster(zone: .trailing, title: "Term.") {
-                    Button(action: addTerminalTab) {
-                        Image(systemName: "plus")
-                            .foregroundStyle(.green)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: terminalAppearanceStore.presentSettings) {
-                        Image(systemName: "slider.horizontal.3")
-                            .foregroundStyle(.green)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
     // Code-mode reference toolbar
     private var codeActiveReferenceToolbarView: some View {
         ActiveReferenceToolbarView(
@@ -1572,7 +1396,7 @@ struct UnifiedEditorView: View {
     }
 
     func toggleEditorPaneVisibility() {
-        guard !(showEditorPane && !showTerminal && !showPDFPreview) else { return }
+        guard !(showEditorPane && !showTerminal && !isContentPaneVisible) else { return }
         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
             showEditorPane.toggle()
         }
