@@ -9,6 +9,8 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     @FocusState private var isInputFocused: Bool
     @State private var selectedSlashIndex: Int?
     @State private var showSessionPicker = false
+    @State private var cachedSelection: SelectionInfo?
+    @State private var selectionTimer: Timer?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +25,16 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             if !provider.isConnected {
                 provider.start()
             }
+            cachedSelection = Self.readSelectionFromDisk()
+            selectionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                Task { @MainActor in
+                    cachedSelection = Self.readSelectionFromDisk()
+                }
+            }
+        }
+        .onDisappear {
+            selectionTimer?.invalidate()
+            selectionTimer = nil
         }
         .sheet(isPresented: $showSessionPicker) {
             SessionPickerView { sessionId in
@@ -159,13 +171,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             }
             .onAppear { scrollProxy = proxy }
             .onChange(of: provider.messages.count) {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
-                }
-            }
-            .onChange(of: provider.messages.last?.content) {
-                // Auto-scroll during streaming
-                if provider.messages.last?.isStreaming == true {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     proxy.scrollTo("bottom_anchor", anchor: .bottom)
                 }
             }
@@ -225,10 +231,15 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 0) {
-                MarkdownBlockView(text: message.content)
-
                 if message.isStreaming {
+                    // Plain text during streaming to avoid regex parsing on every chunk
+                    Text(message.content)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
                     streamingCursor
+                } else {
+                    MarkdownBlockView(text: message.content)
                 }
             }
 
@@ -474,7 +485,9 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
         let lineCount: Int
     }
 
-    private var currentSelection: SelectionInfo? {
+    private var currentSelection: SelectionInfo? { cachedSelection }
+
+    private static func readSelectionFromDisk() -> SelectionInfo? {
         let path = CanopeContextFiles.ideSelectionStatePaths[0]
         guard let data = FileManager.default.contents(atPath: path),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -674,15 +687,20 @@ struct SpinnerVerbView: View {
 
 struct MarkdownBlockView: View {
     let text: String
+    @State private var blocks: [Block] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            let blocks = Self.parseBlocks(text)
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 blockView(block)
             }
         }
         .textSelection(.enabled)
+        .onAppear {
+            if blocks.isEmpty {
+                blocks = Self.parseBlocks(text)
+            }
+        }
     }
 
     private enum Block {

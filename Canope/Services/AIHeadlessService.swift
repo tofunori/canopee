@@ -111,12 +111,20 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
         session.id = id
         messages.removeAll()
+        appendSystem("Chargement…")
 
         // Find the session's original cwd so --resume works
         resumeWorkingDirectory = Self.findSessionCwd(id: id)
 
-        loadSessionHistory(id: id)
-        appendSystem("Session reprise : \(id.prefix(12))…")
+        // Load history in background to avoid freezing
+        Task.detached { [weak self] in
+            let loaded = Self.parseSessionHistory(id: id)
+            await MainActor.run { [weak self] in
+                self?.messages.removeAll()
+                self?.messages = loaded
+                self?.appendSystem("Session reprise : \(id.prefix(12))…")
+            }
+        }
     }
 
     private static func findSessionCwd(id: String) -> URL? {
@@ -139,7 +147,13 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     }
 
     /// Load conversation history from the JSONL file for a session.
-    private func loadSessionHistory(id: String) {
+    private nonisolated static func parseSessionHistory(id: String) -> [ChatMessage] {
+        var result: [ChatMessage] = []
+        loadSessionHistoryInto(id: id, messages: &result)
+        return result
+    }
+
+    private nonisolated static func loadSessionHistoryInto(id: String, messages: inout [ChatMessage]) {
         // Search all project dirs for the session JSONL
         let claudeDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
         guard let projectDirs = try? FileManager.default.contentsOfDirectory(
@@ -158,7 +172,9 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
               let content = try? String(contentsOf: url, encoding: .utf8)
         else { return }
 
-        let lines = content.components(separatedBy: "\n")
+        // Only parse the tail of the file to avoid freezing on large sessions
+        let allLines = content.components(separatedBy: "\n")
+        let lines = allLines.suffix(30) // last ~30 JSONL entries ≈ last few exchanges
         for line in lines {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty,
                   let data = line.data(using: .utf8),
@@ -321,17 +337,19 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         } else if let sid = session.id {
             args += ["--resume", sid]
         }
-        // Connect to Canope's IDE bridge MCP server
-        let mcpConfigPath = CanopeContextFiles.claudeIDEMcpConfigPaths[0]
-        if FileManager.default.fileExists(atPath: mcpConfigPath) {
-            args += ["--mcp-config", mcpConfigPath]
-        }
-        proc.arguments = args
-        // Use the session's original cwd for resume, otherwise use the default
+
+        // Use the session's original cwd for resume, keep it for the whole session
         proc.currentDirectoryURL = resumeWorkingDirectory ?? workingDirectory
-        if resumeWorkingDirectory != nil {
-            resumeWorkingDirectory = nil // only use once, subsequent messages stay in this session
+
+        // Only add MCP config for same-project sessions (avoids slow MCP startup on cross-project resume)
+        if resumeWorkingDirectory == nil {
+            let mcpConfigPath = CanopeContextFiles.claudeIDEMcpConfigPaths[0]
+            if FileManager.default.fileExists(atPath: mcpConfigPath) {
+                args += ["--mcp-config", mcpConfigPath]
+            }
         }
+
+        proc.arguments = args
 
         var env = ProcessInfo.processInfo.environment
         env["NO_COLOR"] = "1"
@@ -550,7 +568,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         ))
     }
 
-    static func toolSummary(name: String, input: [String: Any]?) -> String {
+    nonisolated static func toolSummary(name: String, input: [String: Any]?) -> String {
         guard let input = input else { return name }
         switch name {
         case "Read":
