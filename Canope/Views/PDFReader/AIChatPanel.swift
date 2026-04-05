@@ -377,10 +377,16 @@ extension NSColor {
 
 // MARK: - Terminal Tab
 
+enum TerminalTabKind: Equatable {
+    case terminal
+    case claudeChat
+}
+
 struct TerminalTab: Identifiable {
     let id = UUID()
     var title: String = "Terminal"
     var optionAsMetaKey: Bool = false
+    var kind: TerminalTabKind = .terminal
 }
 
 @MainActor
@@ -393,6 +399,7 @@ final class TerminalWorkspaceState: ObservableObject {
     @Published var splitTabs: [TerminalTab]
     @Published var focusedPane: TerminalPanel.PaneID
     @Published var splitFraction: CGFloat
+    @Published var chatProviders: [UUID: ClaudeHeadlessProvider] = [:]
 
     init() {
         let initialTab = TerminalTab()
@@ -404,6 +411,26 @@ final class TerminalWorkspaceState: ObservableObject {
         self.splitTabs = [TerminalTab()]
         self.focusedPane = .top
         self.splitFraction = 0.5
+    }
+
+    var selectedTab: TerminalTab? {
+        tabs.first { $0.id == selectedTabID }
+    }
+
+    func chatProvider(for tabID: UUID, workingDirectory: URL?) -> ClaudeHeadlessProvider {
+        if let existing = chatProviders[tabID] { return existing }
+        let provider = ClaudeHeadlessProvider(workingDirectory: workingDirectory)
+        chatProviders[tabID] = provider
+        return provider
+    }
+
+    func removeTab(id: UUID) {
+        chatProviders[id]?.stop()
+        chatProviders.removeValue(forKey: id)
+        tabs.removeAll { $0.id == id }
+        if selectedTabID == id {
+            selectedTabID = tabs.last?.id
+        }
     }
 }
 
@@ -470,9 +497,18 @@ struct TerminalPanel: View {
                     }
                 }
 
-                if showsInlineControls {
-                    Spacer()
+                Spacer()
 
+                Button(action: addClaudeChatTab) {
+                    Image(systemName: "sparkle")
+                        .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .foregroundStyle(.orange)
+                }
+                .buttonStyle(.plain)
+                .help("Nouveau chat Claude")
+
+                if showsInlineControls {
                     Button(action: toggleOptionAsMetaForFocusedPane) {
                         Text("⌥")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -501,8 +537,10 @@ struct TerminalPanel: View {
                     }
                     .buttonStyle(.plain)
                     .help("Réglages du terminal")
-                    .padding(.trailing, 6)
                 }
+
+                Spacer()
+                    .frame(width: 6)
             }
             .frame(height: AppChromeMetrics.tabBarHeight)
             .background(AppChromePalette.surfaceSubbar)
@@ -510,7 +548,9 @@ struct TerminalPanel: View {
             AppChromeDivider(role: .panel)
 
             Group {
-                if workspaceState.isSplit {
+                if workspaceState.selectedTab?.kind == .claudeChat {
+                    chatPaneContent
+                } else if workspaceState.isSplit {
                     splitTerminalContent
                 } else {
                     paneContainer(.top) {
@@ -533,7 +573,15 @@ struct TerminalPanel: View {
         .onReceive(NotificationCenter.default.publisher(for: .canopeSendPromptToTerminal)) { notification in
             guard isVisible else { return }
             guard let prompt = notification.userInfo?["prompt"] as? String else { return }
-            sendPromptToFocusedTerminal(prompt)
+            // If the active tab is a Claude chat, send to it instead of the terminal
+            if let selectedTab = workspaceState.selectedTab, selectedTab.kind == .claudeChat,
+               let tabID = workspaceState.selectedTabID
+            {
+                let provider = workspaceState.chatProvider(for: tabID, workingDirectory: startupWorkingDirectory)
+                provider.sendMessage(prompt)
+            } else {
+                sendPromptToFocusedTerminal(prompt)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .canopeTerminalAddTab)) { _ in
             guard isVisible else { return }
@@ -559,10 +607,13 @@ struct TerminalPanel: View {
 
     @ViewBuilder
     private func terminalTabButton(_ tab: TerminalTab) -> some View {
+        let iconName = tab.kind == .claudeChat ? "sparkle" : "terminal"
+        let indicatorColor = tab.kind == .claudeChat ? Color.orange : AppChromePalette.tabIndicator(for: .terminal)
+
         HStack(spacing: 4) {
-            Image(systemName: "terminal")
+            Image(systemName: iconName)
                 .font(.system(size: 9))
-                .foregroundStyle(AppChromePalette.tabIndicator(for: .terminal))
+                .foregroundStyle(indicatorColor)
             Text(tab.title)
                 .font(.system(size: 10, weight: tab.id == currentTabID ? .semibold : .regular))
                 .lineLimit(1)
@@ -581,7 +632,7 @@ struct TerminalPanel: View {
         .overlay(alignment: .bottom) {
             if tab.id == currentTabID {
                 Rectangle()
-                    .fill(AppChromePalette.tabIndicator(for: .terminal))
+                    .fill(indicatorColor)
                     .frame(height: AppChromeMetrics.tabIndicatorHeight)
             }
         }
@@ -778,6 +829,23 @@ struct TerminalPanel: View {
         workspaceState.selectedTabID = tab.id
     }
 
+    private func addClaudeChatTab() {
+        let tab = TerminalTab(title: "Claude", kind: .claudeChat)
+        workspaceState.tabs.append(tab)
+        workspaceState.selectedTabID = tab.id
+    }
+
+    @ViewBuilder
+    private var chatPaneContent: some View {
+        if let tabID = workspaceState.selectedTabID {
+            let provider = workspaceState.chatProvider(
+                for: tabID,
+                workingDirectory: startupWorkingDirectory
+            )
+            AIChatView(provider: provider)
+        }
+    }
+
     private func toggleOptionAsMetaForFocusedPane() {
         switch workspaceState.focusedPane {
         case .top:
@@ -799,6 +867,10 @@ struct TerminalPanel: View {
     private func closeTab(_ tab: TerminalTab) {
         guard workspaceState.tabs.count > 1 else { return }
         if let index = workspaceState.tabs.firstIndex(where: { $0.id == tab.id }) {
+            // Clean up chat provider if it's a chat tab
+            workspaceState.chatProviders[tab.id]?.stop()
+            workspaceState.chatProviders.removeValue(forKey: tab.id)
+
             workspaceState.tabs.remove(at: index)
             if let terminal = workspaceState.terminalViews.removeValue(forKey: tab.id) {
                 if let terminal = terminal as? FocusAwareLocalProcessTerminalView {
