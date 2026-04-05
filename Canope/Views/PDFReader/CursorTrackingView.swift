@@ -32,6 +32,7 @@ class CursorTrackingView: NSView {
         return self
     }
 
+
     override var acceptsFirstResponder: Bool { false }
     override var isFlipped: Bool { true }
 

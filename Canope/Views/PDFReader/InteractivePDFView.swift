@@ -64,6 +64,19 @@ final class InteractivePDFView: PDFView {
         refreshCurrentSelectionAppearance()
     }
 
+    /// Intercept PDFView's internal cursor management completely in pointer mode.
+    override func setCursorFor(_ area: PDFAreaOfInterest) {
+        if selectionPreviewTool == .pointer {
+            if area.contains(.linkArea) || area.contains(.annotationArea) {
+                NSCursor.pointingHand.set()
+            } else if area.contains(.pageArea) {
+                NSCursor.iBeam.set()
+            }
+        } else {
+            super.setCursorFor(area)
+        }
+    }
+
     override func rightMouseDown(with event: NSEvent) {
         onUserInteraction?()
         super.rightMouseDown(with: event)
