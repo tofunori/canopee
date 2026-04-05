@@ -21,14 +21,13 @@ fi
 
 DMG_PATH="${DMG_PATH:-$BUILD_ROOT/$DMG_NAME}"
 
-if [[ ! -d "$PROJECT_PATH" ]]; then
-  if [[ -f "$PROJECT_SPEC_PATH" ]] && command -v xcodegen >/dev/null 2>&1; then
-    echo "==> Generating Xcode project from $(basename "$PROJECT_SPEC_PATH")"
-    (cd "$ROOT_DIR" && xcodegen generate)
-  else
-    echo "Missing Xcode project at $PROJECT_PATH and xcodegen is unavailable." >&2
-    exit 1
-  fi
+# Always regenerate from project.yml when xcodegen is available
+if [[ -f "$PROJECT_SPEC_PATH" ]] && command -v xcodegen >/dev/null 2>&1; then
+  echo "==> Generating Xcode project from $(basename "$PROJECT_SPEC_PATH")"
+  (cd "$ROOT_DIR" && xcodegen generate)
+elif [[ ! -d "$PROJECT_PATH" ]]; then
+  echo "Missing Xcode project at $PROJECT_PATH and xcodegen is unavailable." >&2
+  exit 1
 fi
 
 rm -rf "$BUILD_ROOT"
