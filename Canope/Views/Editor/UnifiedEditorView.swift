@@ -76,7 +76,9 @@ struct UnifiedEditorView: View {
     // MARK: - Computed: Mode
 
     var documentMode: EditorDocumentMode { EditorDocumentMode(fileURL: fileURL) }
-    var projectRoot: URL { fileURL.deletingLastPathComponent() }
+    var projectRoot: URL {
+        hasNoFile ? FileManager.default.homeDirectoryForCurrentUser : fileURL.deletingLastPathComponent()
+    }
 
     // MARK: - Computed: LaTeX themes
 
@@ -122,6 +124,9 @@ struct UnifiedEditorView: View {
          NSColor(srgbRed: 0.83, green: 0.21, blue: 0.51, alpha: 1),
          NSColor(srgbRed: 0.80, green: 0.29, blue: 0.09, alpha: 1)),
     ]
+
+    /// True when no file is loaded (sentinel URL from container)
+    var hasNoFile: Bool { fileURL.scheme == "canope" || !fileURL.isFileURL }
 
     // MARK: - Computed: LaTeX properties
 
@@ -363,7 +368,7 @@ struct UnifiedEditorView: View {
             AppChromeDivider(role: .shell)
             HSplitView {
                 sidebarPane
-                VStack(spacing: 0) { workAreaPane }
+                workAreaPane
             }
         }
         .sheet(item: $pendingAnnotation) { pending in
@@ -388,10 +393,13 @@ struct UnifiedEditorView: View {
         }
         .onAppear {
             if !AppRuntime.isRunningTests { ClaudeIDEBridgeService.shared.startIfNeeded() }
-            loadFile()
-            if !documentMode.isRunnableCode { loadExistingPDF() }
-            if isActive { startFileWatcher() }
-            if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
+            if hasNoFile { text = ""; savedText = "" }
+            else {
+                loadFile()
+                if !documentMode.isRunnableCode { loadExistingPDF() }
+                if isActive { startFileWatcher() }
+                if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
+            }
         }
         .onDisappear {
             stopFileWatcher()
@@ -409,13 +417,17 @@ struct UnifiedEditorView: View {
         .onChange(of: fileURL) {
             stopFileWatcher()
             toolbarStatus = .idle
-            loadFile()
-            if !documentMode.isRunnableCode {
-                loadExistingPDF()
-                latexAnnotations = documentMode == .latex ? LaTeXAnnotationStore.load(for: fileURL) : []
-                reconcileAnnotations()
+            if hasNoFile {
+                text = ""; savedText = ""
+            } else {
+                loadFile()
+                if !documentMode.isRunnableCode {
+                    loadExistingPDF()
+                    latexAnnotations = documentMode == .latex ? LaTeXAnnotationStore.load(for: fileURL) : []
+                    reconcileAnnotations()
+                }
+                if isActive { startFileWatcher() }
             }
-            if isActive { startFileWatcher() }
         }
         .onChange(of: panelArrangement) {
             threePaneLeftWidth = nil; threePaneRightWidth = nil
@@ -450,16 +462,14 @@ struct UnifiedEditorView: View {
     var workAreaPane: some View {
         Group {
             if isActive && showTerminal && showEditorPane {
-                // 3 panes (or 2 if content hidden): Terminal + Editor + Content
                 horizontalThreePaneLayout
             } else if isActive && showTerminal && !showEditorPane && isContentPaneVisible {
-                // 2 panes: Terminal + Content (editor hidden)
                 HSplitView {
                     embeddedTerminalPane
                     contentPane
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else if isActive && showTerminal {
-                // Terminal only (editor + content hidden)
                 embeddedTerminalPane
             } else {
                 editorAndContentPane
@@ -468,7 +478,6 @@ struct UnifiedEditorView: View {
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showPDFPreview)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showEditorPane)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: splitLayout)
     }
 
     // MARK: - Three-Pane Layout
@@ -660,8 +669,14 @@ struct UnifiedEditorView: View {
                 AppChromeDivider(role: .panel)
             }
 
-            // Text editor: branch on mode
-            if documentMode.isRunnableCode {
+            // Text editor: branch on mode (or placeholder when no file)
+            if hasNoFile {
+                ContentUnavailableView(
+                    "Ouvrir un fichier",
+                    systemImage: "doc.text",
+                    description: Text("Ouvre un fichier .tex, .md, .py ou .R pour commencer")
+                )
+            } else if documentMode.isRunnableCode {
                 CodeTextEditor(
                     text: $text,
                     language: syntaxLanguage,
@@ -1415,7 +1430,7 @@ struct UnifiedEditorView: View {
     // MARK: - File Operations
 
     func loadFile(useAsBaseline: Bool = true) {
-        guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
+        guard !hasNoFile, let content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
         text = content
         if useAsBaseline {
             savedText = content
@@ -2321,7 +2336,7 @@ struct UnifiedEditorView: View {
     // MARK: - File Watching (polling-based for reliability with external editors)
 
     func startFileWatcher() {
-        guard pollTimer == nil else { return }
+        guard !hasNoFile, pollTimer == nil else { return }
         lastModified = modificationDate()
         let watchedURL = fileURL
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
