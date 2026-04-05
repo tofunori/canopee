@@ -22,7 +22,8 @@ struct LaTeXEditorContainer: View {
 
     /// The currently active editor path
     private var activePath: String? {
-        if case .editor(let p) = selectedTab, !p.isEmpty { return p }
+        if case .editor(let p) = selectedTab { return p }
+        if selectedTab == .editorWorkspace { return nil }
         return openPaths.last
     }
 
@@ -40,10 +41,14 @@ struct LaTeXEditorContainer: View {
                 if let other = openPaths.first(where: { $0 != path }) {
                     selectedTab = .editor(other)
                 } else {
-                    selectedTab = .editor("")
+                    selectedTab = .editorWorkspace
                 }
             }
         }
+    }
+
+    private var resolvedWorkspaceRoot: URL {
+        workspaceState.workspaceRoot ?? LaTeXWorkspaceUIState.preferredWorkspaceRoot(openPaths: openPaths)
     }
 
     @State private var hoveredTabPath: String?
@@ -64,7 +69,8 @@ struct LaTeXEditorContainer: View {
             editorTheme: workspaceState.editorTheme,
             referencePaperIDs: workspaceState.referencePaperIDs,
             selectedReferencePaperID: workspaceState.selectedReferencePaperID,
-            layoutBeforeReference: workspaceState.layoutBeforeReference
+            layoutBeforeReference: workspaceState.layoutBeforeReference,
+            workspaceRootPath: workspaceState.workspaceRoot?.path
         )
     }
 
@@ -92,6 +98,7 @@ struct LaTeXEditorContainer: View {
         workspaceState.editorFontSize = snapshot.editorFontSize
         workspaceState.editorTheme = snapshot.editorTheme
         workspaceState.layoutBeforeReference = snapshot.layoutBeforeReference
+        workspaceState.workspaceRoot = snapshot.workspaceRootPath.map { URL(fileURLWithPath: $0) }
 
         var seen = Set<UUID>()
         let referenceIDs = snapshot.referencePaperIDs.filter { seen.insert($0).inserted }
@@ -99,6 +106,9 @@ struct LaTeXEditorContainer: View {
         workspaceState.selectedReferencePaperID = snapshot.selectedReferencePaperID
         workspaceState.referencePDFs = loadReferencePDFs(for: referenceIDs)
         workspaceState.referencePDFUIStates = Dictionary(uniqueKeysWithValues: referenceIDs.map { ($0, ReferencePDFUIState()) })
+        if workspaceState.workspaceRoot == nil {
+            workspaceState.workspaceRoot = LaTeXWorkspaceUIState.preferredWorkspaceRoot(openPaths: openPaths)
+        }
 
         if let selectedID = workspaceState.selectedReferencePaperID,
            !referenceIDs.contains(selectedID) {
@@ -183,6 +193,8 @@ struct LaTeXEditorContainer: View {
             if openPaths.isEmpty {
                 LaTeXLandingView(
                     onOpenTeX: onOpenTeX,
+                    onOpenFolder: { openFolderFromLanding() },
+                    workspaceRoot: resolvedWorkspaceRoot,
                     allPapers: allPapers,
                     referencePaperIDs: workspaceState.referencePaperIDs,
                     selectedReferencePaperID: $workspaceState.selectedReferencePaperID,
@@ -197,12 +209,14 @@ struct LaTeXEditorContainer: View {
         }
         .onAppear {
             restoreWorkspaceStateIfNeeded()
+            ensureWorkspaceRoot()
             syncCodeDocumentStates()
         }
         .onChange(of: workspaceSnapshot) {
             persistWorkspaceState()
         }
         .onChange(of: openPaths) {
+            ensureWorkspaceRoot()
             syncCodeDocumentStates()
         }
     }
@@ -224,6 +238,23 @@ struct LaTeXEditorContainer: View {
                 persistWorkspaceState()
             }
         )
+    }
+
+    private func openFolderFromLanding() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choisir un dossier de travail"
+        panel.prompt = "Ouvrir"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        workspaceState.workspaceRoot = url
+    }
+
+    private func ensureWorkspaceRoot() {
+        if workspaceState.workspaceRoot == nil {
+            workspaceState.workspaceRoot = LaTeXWorkspaceUIState.preferredWorkspaceRoot(openPaths: openPaths)
+        }
     }
 
     private func syncCodeDocumentStates() {

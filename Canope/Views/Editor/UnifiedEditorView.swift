@@ -77,7 +77,9 @@ struct UnifiedEditorView: View {
 
     var documentMode: EditorDocumentMode { EditorDocumentMode(fileURL: fileURL) }
     var projectRoot: URL {
-        hasNoFile ? FileManager.default.homeDirectoryForCurrentUser : fileURL.deletingLastPathComponent()
+        if let root = workspaceState.workspaceRoot { return root }
+        if hasNoFile { return FileManager.default.homeDirectoryForCurrentUser }
+        return fileURL.deletingLastPathComponent()
     }
 
     // MARK: - Computed: LaTeX themes
@@ -360,6 +362,11 @@ struct UnifiedEditorView: View {
     var body: some View {
         bodyCore
             .bodyAlerts(fileCreationError: $fileCreationError, annotationExportError: $annotationExportError)
+            .background {
+                Button("") { openFolderPicker() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                    .hidden()
+            }
     }
 
     private var bodyCore: some View {
@@ -1169,13 +1176,23 @@ struct UnifiedEditorView: View {
 
     private var fileToolbarClusterView: some View {
         toolbarCluster(zone: .leading, title: "Fichier") {
-            Image(systemName: "doc.plaintext")
-                .foregroundStyle(documentMode.fileIconTint)
-            Text(fileURL.lastPathComponent)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .lineLimit(1)
-            AppChromeStatusCapsule(status: toolbarStatus)
+            Button(action: openFolderPicker) {
+                Image(systemName: "folder.badge.plus")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Ouvrir un dossier (⇧⌘O)")
+
+            if !hasNoFile {
+                Image(systemName: "doc.plaintext")
+                    .foregroundStyle(documentMode.fileIconTint)
+                Text(fileURL.lastPathComponent)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                AppChromeStatusCapsule(status: toolbarStatus)
+            }
+
             if !isFileBrowserCreateMenuVisible {
                 Menu {
                     createFileMenuContent
@@ -1484,6 +1501,27 @@ struct UnifiedEditorView: View {
                 latexAnnotations = EditorDocumentMode(fileURL: url) == .latex ? LaTeXAnnotationStore.load(for: url) : []
                 reconcileAnnotations()
             }
+        }
+    }
+
+    func openFolderPicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choisir un dossier de travail"
+        panel.prompt = "Ouvrir"
+        panel.directoryURL = workspaceState.workspaceRoot ?? FileManager.default.homeDirectoryForCurrentUser
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window) { response in
+                guard response == .OK, let url = panel.url else { return }
+                self.workspaceState.workspaceRoot = url
+                if !self.showSidebar { self.showSidebar = true }
+            }
+        } else {
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            workspaceState.workspaceRoot = url
+            if !showSidebar { showSidebar = true }
         }
     }
 

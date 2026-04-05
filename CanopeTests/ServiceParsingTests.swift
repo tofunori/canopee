@@ -793,8 +793,51 @@ final class ServiceParsingTests: XCTestCase {
     func testCodeSyntaxThemeMonokaiProvidesExpectedKeywordColor() {
         assertColorsEqual(
             CodeSyntaxTheme.monokai.color(for: .keyword),
-            NSColor(red: 249 / 255, green: 38 / 255, blue: 114 / 255, alpha: 1)
+            NSColor(red: 102 / 255, green: 217 / 255, blue: 239 / 255, alpha: 1)
         )
+    }
+
+    func testMainWindowWorkspaceSavedTabRoundTripsEditorWorkspace() throws {
+        let encoded = try JSONEncoder().encode(MainWindowWorkspaceState.SavedTab.editorWorkspace)
+        let decoded = try JSONDecoder().decode(MainWindowWorkspaceState.SavedTab.self, from: encoded)
+
+        XCTAssertEqual(decoded, .editorWorkspace)
+        XCTAssertEqual(decoded.tabItem, .editorWorkspace)
+    }
+
+    func testMainWindowWorkspaceSavedTabDecodesLegacyEmptyEditorPathAsEditorWorkspace() throws {
+        let data = Data(#"{"kind":"editor","path":""}"#.utf8)
+        let decoded = try JSONDecoder().decode(MainWindowWorkspaceState.SavedTab.self, from: data)
+
+        XCTAssertEqual(decoded, .editorWorkspace)
+    }
+
+    func testPreferredWorkspaceRootUsesLastOpenEditorPathBeforeRecents() {
+        let home = URL(fileURLWithPath: "/Users/tester")
+        let root = LaTeXWorkspaceUIState.preferredWorkspaceRoot(
+            openPaths: ["/tmp/alpha/main.tex", "/tmp/beta/notes.md"],
+            recentPaths: ["/tmp/recent/paper.tex"],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(root.path, "/tmp/beta")
+    }
+
+    func testPreferredWorkspaceRootFallsBackToRecentFileThenHome() {
+        let home = URL(fileURLWithPath: "/Users/tester")
+        let fromRecent = LaTeXWorkspaceUIState.preferredWorkspaceRoot(
+            openPaths: [],
+            recentPaths: ["/tmp/recent/paper.tex"],
+            homeDirectory: home
+        )
+        let fromHome = LaTeXWorkspaceUIState.preferredWorkspaceRoot(
+            openPaths: [],
+            recentPaths: [],
+            homeDirectory: home
+        )
+
+        XCTAssertEqual(fromRecent.path, "/tmp/recent")
+        XCTAssertEqual(fromHome.path, home.path)
     }
 
     func testCodeSyntaxHighlighterRecognizesPythonTokens() {

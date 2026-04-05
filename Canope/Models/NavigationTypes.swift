@@ -12,6 +12,7 @@ enum SidebarSelection: Hashable {
 enum TabItem: Hashable {
     case library
     case paper(UUID)
+    case editorWorkspace
     case editor(String) // file path as string (URL isn't Hashable)
     case pdfFile(String) // standalone PDF file path
 }

@@ -62,7 +62,8 @@ final class ReferencePDFUIState: ObservableObject {
 
 @MainActor
 final class LaTeXWorkspaceUIState: ObservableObject {
-    @Published var showSidebar = true
+    @Published var workspaceRoot: URL?
+    @Published var showSidebar = false
     @Published var selectedSidebarSection = "files"
     @Published var sidebarWidth: Double = 220
     @Published var showEditorPane = true
@@ -79,4 +80,18 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var layoutBeforeReference: String?
     @Published var referencePDFs: [UUID: PDFDocument] = [:]
     @Published var referencePDFUIStates: [UUID: ReferencePDFUIState] = [:]
+
+    nonisolated static func preferredWorkspaceRoot(
+        openPaths: [String],
+        recentPaths: [String] = RecentTeXFilesStore.recentTeXFiles,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        if let openPath = openPaths.last {
+            return URL(fileURLWithPath: openPath).deletingLastPathComponent()
+        }
+        if let recentPath = recentPaths.first {
+            return URL(fileURLWithPath: recentPath).deletingLastPathComponent()
+        }
+        return homeDirectory
+    }
 }

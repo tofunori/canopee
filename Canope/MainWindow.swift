@@ -31,8 +31,12 @@ struct MainWindow: View {
     }
 
     private var isEditorSelected: Bool {
-        if case .editor = selectedTab { return true }
-        return false
+        switch selectedTab {
+        case .editorWorkspace, .editor:
+            return true
+        default:
+            return false
+        }
     }
 
     @ViewBuilder
@@ -116,6 +120,7 @@ struct MainWindow: View {
         switch tab {
         case .library: return "Bibliothèque"
         case .paper(let id): return allPapers.first(where: { $0.id == id })?.title ?? "Article"
+        case .editorWorkspace: return "Éditeur"
         case .editor(let path): return URL(fileURLWithPath: path).lastPathComponent
         case .pdfFile(let path): return URL(fileURLWithPath: path).lastPathComponent
         }
@@ -140,7 +145,7 @@ struct MainWindow: View {
             if let activeEditor = openTabs.first(where: { if case .editor = $0 { return true } else { return false } }) {
                 selectedTab = activeEditor
             } else {
-                selectedTab = .editor("")
+                selectedTab = .editorWorkspace
             }
         }
 
@@ -182,6 +187,7 @@ struct MainWindow: View {
         if !openTabs.contains(tab) {
             openTabs.append(tab)
         }
+        rebaseEditorWorkspaceIfNeeded(for: url)
         AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
             selectedTab = tab
         }
@@ -190,10 +196,27 @@ struct MainWindow: View {
         }
     }
 
+    private func rebaseEditorWorkspaceIfNeeded(for url: URL) {
+        let parent = url.deletingLastPathComponent().standardizedFileURL
+        guard let currentRoot = latexWorkspaceState.workspaceRoot?.standardizedFileURL else {
+            latexWorkspaceState.workspaceRoot = parent
+            return
+        }
+
+        let rootPath = currentRoot.path
+        let filePath = url.standardizedFileURL.path
+        let isInsideRoot = filePath == rootPath || filePath.hasPrefix(rootPath + "/")
+        if !isInsideRoot {
+            latexWorkspaceState.workspaceRoot = parent
+        }
+    }
+
     private func persistWorkspaceState() {
         guard didRestoreWorkspace else { return }
 
-        var savedTabs = openTabs.compactMap(MainWindowWorkspaceState.SavedTab.init)
+        var savedTabs = openTabs
+            .filter { $0 != .editorWorkspace }
+            .compactMap(MainWindowWorkspaceState.SavedTab.init)
         if !savedTabs.contains(.library) {
             savedTabs.insert(.library, at: 0)
         }
@@ -215,7 +238,9 @@ struct MainWindow: View {
 
         guard let snapshot = WorkspaceSessionStore.shared.loadMainWindowState() else { return }
 
-        var restoredTabs = snapshot.openTabs.compactMap(\.tabItem)
+        var restoredTabs = snapshot.openTabs
+            .compactMap(\.tabItem)
+            .filter { $0 != .editorWorkspace }
         if !restoredTabs.contains(.library) {
             restoredTabs.insert(.library, at: 0)
         }
@@ -227,7 +252,7 @@ struct MainWindow: View {
         openTabs = restoredTabs
 
         if let restoredSelected = snapshot.selectedTab.tabItem {
-            if !openTabs.contains(restoredSelected) {
+            if restoredSelected != .editorWorkspace && !openTabs.contains(restoredSelected) {
                 openTabs.append(restoredSelected)
             }
             selectedTab = restoredSelected

@@ -5,19 +5,13 @@ import PDFKit
 
 struct LaTeXLandingView: View {
     var onOpenTeX: (URL) -> Void
+    var onOpenFolder: (() -> Void)?
+    let workspaceRoot: URL
     let allPapers: [Paper]
     let referencePaperIDs: [UUID]
     @Binding var selectedReferencePaperID: UUID?
     let referencePDFs: [UUID: PDFDocument]
     var onCloseReference: (UUID) -> Void = { _ in }
-
-    /// Root directory: parent of last opened .tex, or home as fallback
-    private var rootURL: URL {
-        if let lastPath = RecentTeXFilesStore.recentTeXFiles.first {
-            return URL(fileURLWithPath: lastPath).deletingLastPathComponent()
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-    }
 
     private var activeReferenceID: UUID? {
         if let selectedReferencePaperID, referencePaperIDs.contains(selectedReferencePaperID) {
@@ -36,7 +30,7 @@ struct LaTeXLandingView: View {
 
     var body: some View {
         HSplitView {
-            FileBrowserView(rootURL: rootURL) { url in
+            FileBrowserView(rootURL: workspaceRoot) { url in
                 if EditorFileSupport.isEditorDocument(url) {
                     onOpenTeX(url)
                 }
@@ -53,9 +47,17 @@ struct LaTeXLandingView: View {
                             .font(.title2)
                             .foregroundStyle(.secondary)
                         Text("Ouvrez un fichier .tex, .md, .py ou .R depuis l'arborescence\nou utilisez le menu + en haut à droite")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .multilineTextAlignment(.center)
+                        .multilineTextAlignment(.center)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    if let onOpenFolder {
+                        Button(action: onOpenFolder) {
+                            Label("Ouvrir un dossier", systemImage: "folder.badge.plus")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .tint(.secondary)
+                    }
 
                         let recents = RecentTeXFilesStore.recentTeXFiles
                         if !recents.isEmpty {

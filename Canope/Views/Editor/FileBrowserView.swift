@@ -204,6 +204,12 @@ struct FileBrowserView: View {
             refresh()
             isFocused = true
         }
+        .onChange(of: initialRootURL) {
+            expandedDirs.removeAll()
+            childDirectoryCache.removeAll()
+            selectedIndex = 0
+            currentDir = initialRootURL
+        }
         .onChange(of: currentDir) {
             refresh()
             selectedIndex = 0

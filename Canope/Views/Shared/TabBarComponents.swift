@@ -18,8 +18,12 @@ struct TabBar: View {
 
     /// Whether the selected tab is an editor tab
     private var isEditorSelected: Bool {
-        if case .editor = selectedTab { return true }
-        return false
+        switch selectedTab {
+        case .editorWorkspace, .editor:
+            return true
+        default:
+            return false
+        }
     }
 
     /// All open editor tabs (excluding the empty placeholder)
@@ -56,7 +60,7 @@ struct TabBar: View {
                 if let tab = editorTab {
                     selectedTab = tab
                 } else {
-                    selectedTab = .editor("")
+                    selectedTab = .editorWorkspace
                 }
             }
         }
@@ -69,6 +73,8 @@ struct TabBar: View {
         case .library: return "Bibliothèque"
         case .paper(let id):
             return allPapers.first(where: { $0.id == id })?.title ?? "Article"
+        case .editorWorkspace:
+            return "Éditeur"
         case .editor(let path):
             return URL(fileURLWithPath: path).lastPathComponent
         case .pdfFile(let path):
@@ -146,6 +152,7 @@ struct TabButton: View {
         switch tab {
         case .library: return "books.vertical"
         case .paper: return "doc.text"
+        case .editorWorkspace: return "chevron.left.forwardslash.chevron.right"
         case .editor: return "chevron.left.forwardslash.chevron.right"
         case .pdfFile: return "doc.richtext"
         }

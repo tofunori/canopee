@@ -43,6 +43,7 @@ struct MainWindowWorkspaceState: Codable, Equatable {
     enum SavedTab: Codable, Hashable {
         case library
         case paper(UUID)
+        case editorWorkspace
         case editor(String)
         case pdfFile(String)
 
@@ -55,6 +56,7 @@ struct MainWindowWorkspaceState: Codable, Equatable {
         private enum Kind: String, Codable {
             case library
             case paper
+            case editorWorkspace
             case editor
             case pdfFile
         }
@@ -67,8 +69,11 @@ struct MainWindowWorkspaceState: Codable, Equatable {
                 self = .library
             case .paper:
                 self = .paper(try container.decode(UUID.self, forKey: .uuid))
+            case .editorWorkspace:
+                self = .editorWorkspace
             case .editor:
-                self = .editor(try container.decode(String.self, forKey: .path))
+                let path = try container.decode(String.self, forKey: .path)
+                self = path.isEmpty ? .editorWorkspace : .editor(path)
             case .pdfFile:
                 self = .pdfFile(try container.decode(String.self, forKey: .path))
             }
@@ -82,6 +87,8 @@ struct MainWindowWorkspaceState: Codable, Equatable {
             case .paper(let id):
                 try container.encode(Kind.paper, forKey: .kind)
                 try container.encode(id, forKey: .uuid)
+            case .editorWorkspace:
+                try container.encode(Kind.editorWorkspace, forKey: .kind)
             case .editor(let path):
                 try container.encode(Kind.editor, forKey: .kind)
                 try container.encode(path, forKey: .path)
@@ -97,8 +104,9 @@ struct MainWindowWorkspaceState: Codable, Equatable {
                 self = .library
             case .paper(let id):
                 self = .paper(id)
+            case .editorWorkspace:
+                self = .editorWorkspace
             case .editor(let path):
-                guard !path.isEmpty else { return nil }
                 self = .editor(path)
             case .pdfFile(let path):
                 self = .pdfFile(path)
@@ -111,6 +119,8 @@ struct MainWindowWorkspaceState: Codable, Equatable {
                 return .library
             case .paper(let id):
                 return .paper(id)
+            case .editorWorkspace:
+                return .editorWorkspace
             case .editor(let path):
                 guard FileManager.default.fileExists(atPath: path) else { return nil }
                 return .editor(path)
@@ -143,6 +153,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var referencePaperIDs: [UUID]
     var selectedReferencePaperID: UUID?
     var layoutBeforeReference: String?
+    var workspaceRootPath: String?
 
     private enum CodingKeys: String, CodingKey {
         case showSidebar
@@ -160,6 +171,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         case referencePaperIDs
         case selectedReferencePaperID
         case layoutBeforeReference
+        case workspaceRootPath
     }
 
     init(
@@ -177,7 +189,8 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         editorTheme: Int,
         referencePaperIDs: [UUID],
         selectedReferencePaperID: UUID?,
-        layoutBeforeReference: String?
+        layoutBeforeReference: String?,
+        workspaceRootPath: String? = nil
     ) {
         self.showSidebar = showSidebar
         self.selectedSidebarSection = selectedSidebarSection
@@ -194,6 +207,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         self.referencePaperIDs = referencePaperIDs
         self.selectedReferencePaperID = selectedReferencePaperID
         self.layoutBeforeReference = layoutBeforeReference
+        self.workspaceRootPath = workspaceRootPath
     }
 
     init(from decoder: Decoder) throws {
@@ -213,6 +227,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         referencePaperIDs = try container.decode([UUID].self, forKey: .referencePaperIDs)
         selectedReferencePaperID = try container.decodeIfPresent(UUID.self, forKey: .selectedReferencePaperID)
         layoutBeforeReference = try container.decodeIfPresent(String.self, forKey: .layoutBeforeReference)
+        workspaceRootPath = try container.decodeIfPresent(String.self, forKey: .workspaceRootPath)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -232,5 +247,6 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         try container.encode(referencePaperIDs, forKey: .referencePaperIDs)
         try container.encodeIfPresent(selectedReferencePaperID, forKey: .selectedReferencePaperID)
         try container.encodeIfPresent(layoutBeforeReference, forKey: .layoutBeforeReference)
+        try container.encodeIfPresent(workspaceRootPath, forKey: .workspaceRootPath)
     }
 }
