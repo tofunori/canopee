@@ -1138,15 +1138,26 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
 
             let terminal = self.getTerminal()
 
-            // Mouse mode active: send SGR mouse wheel events to the TUI app
-            // (Claude Code, vim, tmux, etc.) and consume the event to prevent
-            // SwiftTerm's native scrollWheel from also shifting yDisp.
+            // Mouse mode active: prefer SGR mouse wheel events for the TUI app
+            // (Claude Code, vim, tmux, etc.). Only consume the event once we
+            // actually emitted a scroll action; otherwise leave room for
+            // alternate-screen fallbacks or native handling.
             if terminal.mouseMode != .off {
-                self.sendMouseWheelEvent(event, terminal: terminal)
-                return nil
+                if self.sendMouseWheelEvent(event, terminal: terminal) {
+                    return nil
+                }
+
+                if !self.canScroll {
+                    if self.sendAlternateBufferScrollFallback(event, terminal: terminal) {
+                        return nil
+                    }
+                }
+
+                return event
             }
 
-            // Alternate buffer without mouse mode (e.g. Codex): arrow key fallback
+            // Alternate buffer without native scrollback (e.g. Claude Code/Codex
+            // full-screen views): try paging first, then cursor-key fallback.
             if !self.canScroll {
                 if self.sendAlternateBufferScrollFallback(event, terminal: terminal) {
                     return nil
@@ -1237,25 +1248,6 @@ final class FocusAwareLocalProcessTerminalView: LocalProcessTerminalView, ChildP
         return true
     }
 
-    @discardableResult
-    private func sendArrowKeyScrollFallback(_ event: NSEvent, terminal: Terminal) -> Bool {
-        let deltaY = event.scrollingDeltaY
-        resetWheelAccumulatorsForDirectionChange(deltaY: deltaY)
-
-        let threshold: CGFloat = event.hasPreciseScrollingDeltas ? 12 : 1
-        alternateWheelAccumulator += deltaY
-        let steps = min(max(Int(abs(alternateWheelAccumulator) / threshold), 0), 5)
-        guard steps > 0 else { return false }
-        alternateWheelAccumulator -= CGFloat(steps) * threshold * (alternateWheelAccumulator >= 0 ? 1 : -1)
-
-        let up = terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal
-        let down = terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal
-        let sequence = deltaY > 0 ? up : down
-        for _ in 0..<steps {
-            send(data: sequence[...])
-        }
-        return true
-    }
 }
 
 @MainActor
