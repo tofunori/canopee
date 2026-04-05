@@ -7,6 +7,8 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     @State private var inputText = ""
     @State private var scrollProxy: ScrollViewProxy?
     @FocusState private var isInputFocused: Bool
+    @State private var selectedSlashIndex: Int?
+    @State private var showSessionPicker = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,6 +22,16 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
         .onAppear {
             if !provider.isConnected {
                 provider.start()
+            }
+        }
+        .sheet(isPresented: $showSessionPicker) {
+            SessionPickerView { sessionId in
+                showSessionPicker = false
+                if let p = provider as? ClaudeHeadlessProvider {
+                    p.resumeSession(id: sessionId)
+                }
+            } onCancel: {
+                showSessionPicker = false
             }
         }
     }
@@ -319,6 +331,45 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 Divider()
             }
 
+            // Slash command suggestions
+            if showSlashSuggestions, !filteredSlashCommands.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(filteredSlashCommands, id: \.self) { cmd in
+                            Button {
+                                inputText = "/\(cmd) "
+                                selectedSlashIndex = nil
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text("/")
+                                        .foregroundStyle(.orange)
+                                    Text(cmd)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                }
+                                .font(.system(size: 12, design: .monospaced))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    selectedSlashIndex == filteredSlashCommands.firstIndex(of: cmd)
+                                        ? AppChromePalette.tabSelectedFill
+                                        : Color.clear
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 180)
+                .background(AppChromePalette.surfaceSubbar)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(AppChromePalette.dividerSoft, lineWidth: 0.5)
+                )
+                .padding(.horizontal, 12)
+            }
+
             HStack(spacing: 8) {
                 TextField("Message à \(provider.providerName)…", text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -329,6 +380,9 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                         if NSApp.currentEvent?.modifierFlags.contains(.shift) != true {
                             send()
                         }
+                    }
+                    .onChange(of: inputText) {
+                        updateSlashSuggestions()
                     }
 
                 Button {
@@ -350,6 +404,30 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             .padding(.vertical, 8)
         }
         .background(AppChromePalette.surfaceSubbar)
+    }
+
+    // MARK: - Slash Commands
+
+    private var slashCommands: [String] { [
+        "resume", "continue",
+        "compact", "context", "cost", "help", "init", "review",
+        "commit", "simplify", "research", "plan-review", "diff-review",
+        "project-recap", "visual-explainer", "generate-slides",
+        "pdf-selection", "pdf-annotations", "style-qc", "revision",
+    ] }
+
+    private var showSlashSuggestions: Bool {
+        inputText.hasPrefix("/") && inputText.count >= 1
+    }
+
+    private var filteredSlashCommands: [String] {
+        let query = String(inputText.dropFirst()).lowercased()
+        if query.isEmpty { return slashCommands }
+        return slashCommands.filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    private func updateSlashSuggestions() {
+        selectedSlashIndex = nil
     }
 
     // MARK: - Selection State
@@ -380,6 +458,21 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputText = ""
+
+        // Handle /continue locally
+        if text == "/continue" {
+            if let p = provider as? ClaudeHeadlessProvider {
+                p.resumeLastSession()
+            }
+            return
+        }
+
+        // /resume shows the session picker
+        if text == "/resume" {
+            showSessionPicker = true
+            return
+        }
+
         provider.sendMessage(text)
     }
 
@@ -555,6 +648,7 @@ struct MarkdownBlockView: View {
         case code(language: String, content: String)
         case table(rows: [[String]])
         case rule
+        case insight(lines: [String])
         case paragraph(text: String)
     }
 
@@ -569,8 +663,28 @@ struct MarkdownBlockView: View {
             tableView(rows: rows)
         case .rule:
             Divider().padding(.vertical, 4)
+        case .insight(let lines):
+            insightView(lines: lines)
         case .paragraph(let text):
             paragraphView(text: text)
+        }
+    }
+
+    private func insightView(lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("★ Insight ─────────────────────────────────────")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color.purple)
+
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                Text(inlineMarkdown(line))
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+            }
+
+            Text("─────────────────────────────────────────────────")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Color.purple)
         }
     }
 
@@ -662,6 +776,26 @@ struct MarkdownBlockView: View {
 
         while i < lines.count {
             let line = lines[i]
+
+            // Insight block (★ Insight ──── ... ────)
+            if line.contains("★") && line.contains("─") {
+                var insightLines: [String] = []
+                i += 1
+                while i < lines.count {
+                    let l = lines[i]
+                    // Closing border line (all ─)
+                    if l.contains("─") && !l.contains("★") && l.filter({ $0 == "─" }).count > 5 {
+                        i += 1
+                        break
+                    }
+                    insightLines.append(l)
+                    i += 1
+                }
+                if !insightLines.isEmpty {
+                    blocks.append(.insight(lines: insightLines))
+                }
+                continue
+            }
 
             // Heading
             if let match = line.range(of: #"^(#{1,3})\s+(.+)$"#, options: .regularExpression) {
@@ -762,6 +896,104 @@ struct ThinkingDots: View {
                     active = (active + 1) % 3
                 }
             }
+        }
+    }
+}
+
+// MARK: - Session Picker
+
+struct SessionPickerView: View {
+    let onSelect: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var sessions: [ClaudeHeadlessProvider.SessionEntry] = []
+    @State private var search = ""
+
+    private var filtered: [ClaudeHeadlessProvider.SessionEntry] {
+        if search.isEmpty { return sessions }
+        let q = search.lowercased()
+        return sessions.filter {
+            $0.displayName.lowercased().contains(q) ||
+            $0.project.lowercased().contains(q) ||
+            $0.id.lowercased().contains(q)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Reprendre une session")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Button("Annuler") { onCancel() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            // Search
+            TextField("Rechercher…", text: $search)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+
+            Divider()
+
+            // Session list
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(filtered) { entry in
+                        Button {
+                            onSelect(entry.id)
+                        } label: {
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.displayName)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+
+                                    HStack(spacing: 6) {
+                                        Text(entry.id.prefix(8))
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+
+                                        if !entry.project.isEmpty && entry.project != entry.displayName {
+                                            Text("·")
+                                                .foregroundStyle(.secondary.opacity(0.5))
+                                            Text(entry.project)
+                                                .font(.system(size: 10))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+
+                                Spacer()
+
+                                Text(entry.dateString)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(Color.clear)
+
+                        Divider().padding(.leading, 16)
+                    }
+                }
+            }
+        }
+        .frame(width: 420, height: 350)
+        .background(AppChromePalette.surfaceBar)
+        .onAppear {
+            sessions = ClaudeHeadlessProvider.listSessions()
         }
     }
 }

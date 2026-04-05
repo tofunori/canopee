@@ -70,6 +70,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     private var outputBuffer = ""
     private let workingDirectory: URL
     private var currentAssistantIndex: Int?
+    private var useContinueForNextMessage = false
 
     init(workingDirectory: URL? = nil) {
         self.workingDirectory = workingDirectory
@@ -89,6 +90,146 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         currentProcess = nil
         isConnected = false
         isProcessing = false
+    }
+
+    /// Resume a specific session by ID. Loads message history and sets --resume for next message.
+    func resumeSession(id: String) {
+        session.id = id
+        messages.removeAll()
+        loadSessionHistory(id: id)
+        appendSystem("Session reprise : \(id.prefix(12))…")
+    }
+
+    /// Load conversation history from the JSONL file for a session.
+    private func loadSessionHistory(id: String) {
+        // Search all project dirs for the session JSONL
+        let claudeDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+        guard let projectDirs = try? FileManager.default.contentsOfDirectory(
+            at: claudeDir, includingPropertiesForKeys: nil
+        ) else { return }
+
+        var jsonlURL: URL?
+        for dir in projectDirs {
+            let candidate = dir.appendingPathComponent("\(id).jsonl")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                jsonlURL = candidate
+                break
+            }
+        }
+        guard let url = jsonlURL,
+              let content = try? String(contentsOf: url, encoding: .utf8)
+        else { return }
+
+        let lines = content.components(separatedBy: "\n")
+        for line in lines {
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty,
+                  let data = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = json["type"] as? String
+            else { continue }
+
+            guard type == "user" || type == "assistant" else { continue }
+            guard let msg = json["message"] as? [String: Any] else { continue }
+            let role = msg["role"] as? String ?? type
+            let contentVal = msg["content"]
+
+            if role == "user" {
+                if let text = contentVal as? String, !text.isEmpty {
+                    messages.append(ChatMessage(
+                        role: .user, content: text, timestamp: Date(),
+                        isStreaming: false, isCollapsed: false
+                    ))
+                } else if let blocks = contentVal as? [[String: Any]] {
+                    let text = blocks.compactMap { b -> String? in
+                        if b["type"] as? String == "text" { return b["text"] as? String }
+                        return nil
+                    }.joined(separator: "\n")
+                    if !text.isEmpty {
+                        messages.append(ChatMessage(
+                            role: .user, content: text, timestamp: Date(),
+                            isStreaming: false, isCollapsed: false
+                        ))
+                    }
+                }
+            } else if role == "assistant" {
+                guard let blocks = contentVal as? [[String: Any]] else { continue }
+                for block in blocks {
+                    let blockType = block["type"] as? String ?? ""
+                    if blockType == "text", let text = block["text"] as? String, !text.isEmpty {
+                        messages.append(ChatMessage(
+                            role: .assistant, content: text, timestamp: Date(),
+                            isStreaming: false, isCollapsed: false
+                        ))
+                    } else if blockType == "tool_use" {
+                        let toolName = block["name"] as? String ?? "tool"
+                        let summary = Self.toolSummary(name: toolName, input: block["input"] as? [String: Any])
+                        messages.append(ChatMessage(
+                            role: .toolUse, content: summary, timestamp: Date(),
+                            toolName: toolName,
+                            isStreaming: false, isCollapsed: true
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resume the most recent session.
+    func resumeLastSession() {
+        useContinueForNextMessage = true
+        session.id = nil
+        appendSystem("Mode reprise activé — ton prochain message reprendra la dernière session")
+    }
+
+    /// List available sessions from ~/.claude/sessions/
+    static func listSessions(limit: Int = 15) -> [SessionEntry] {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/sessions")
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return [] }
+
+        let jsonFiles = files.filter { $0.pathExtension == "json" }
+            .sorted {
+                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return d1 > d2
+            }
+            .prefix(limit)
+
+        return jsonFiles.compactMap { url -> SessionEntry? in
+            guard let data = try? Data(contentsOf: url),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sid = json["sessionId"] as? String
+            else { return nil }
+
+            let name = json["name"] as? String ?? ""
+            let cwd = (json["cwd"] as? String ?? "")
+            let project = (cwd as NSString).lastPathComponent
+            let ts = json["startedAt"] as? Double ?? 0
+            let date = ts > 0 ? Date(timeIntervalSince1970: ts / 1000) : nil
+
+            return SessionEntry(id: sid, name: name, project: project, date: date)
+        }
+    }
+
+    struct SessionEntry: Identifiable {
+        let id: String
+        let name: String
+        let project: String
+        let date: Date?
+
+        var displayName: String {
+            if !name.isEmpty { return name }
+            return project
+        }
+
+        var dateString: String {
+            guard let date else { return "" }
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MM-dd HH:mm"
+            return fmt.string(from: date)
+        }
     }
 
     func sendMessage(_ text: String) {
@@ -114,8 +255,11 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         let prompt = Self.buildPromptWithIDEContext(trimmed)
 
         var args = ["-p", prompt, "--output-format", "stream-json", "--verbose"]
-        // Resume session if we have one
-        if let sid = session.id {
+        // Resume: --continue for last session, --resume for current session
+        if useContinueForNextMessage {
+            args += ["--continue"]
+            useContinueForNextMessage = false
+        } else if let sid = session.id {
             args += ["--resume", sid]
         }
         // Connect to Canope's IDE bridge MCP server
