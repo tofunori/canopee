@@ -14,6 +14,7 @@
 		06EE728427877B00AFBB8D0A /* PaperRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F5330808F861EA6C2686A88 /* PaperRowView.swift */; };
 		085341ECE38ECACB0EC9A1E7 /* CodeOutputWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2168A22984A0573806D7375 /* CodeOutputWorkspace.swift */; };
 		08C11D9AD3D55B9EEECCD694 /* AnnotationTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 083BC2D172129785C6152114 /* AnnotationTool.swift */; };
+		095E8A059F42ED68E68962F4 /* MarkdownBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D97CEA0194F1F4829E2E11 /* MarkdownBlockView.swift */; };
 		0C3042306404BE1982B18799 /* LaTeXToolbarComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13A9A2F1AF101D865F019ED8 /* LaTeXToolbarComponents.swift */; };
 		11C7CAFDE5222CAEB518DCE8 /* AnnotationColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAA8E9FC6B60137A6822B07A /* AnnotationColor.swift */; };
 		14482E7BB530827BBA82E7B1 /* PDFReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2088594C9985A874B328F3 /* PDFReaderView.swift */; };
@@ -24,6 +25,7 @@
 		20EEBD23B2A917649748661B /* PaperInfoPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8096F8CCCE9D2A4786D22D0D /* PaperInfoPanel.swift */; };
 		21F48FB74A057ABF3322903A /* LaTeXAnnotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DB6386D580EA00D1FCBD94 /* LaTeXAnnotation.swift */; };
 		24F2D588DE8FEC5A8627F220 /* PaperListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99A2DC0425870E2AB2A007BD /* PaperListView.swift */; };
+		279F6A45E8847EC75E797096 /* LaTeXUnicode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E1AB66B0A3B251CFA072C38 /* LaTeXUnicode.swift */; };
 		2CC9CDCA03E977B2FAB69601 /* AnnotationToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1906D7A3427DFFCE569C97C8 /* AnnotationToolbar.swift */; };
 		3AAF798637E4A87DB4061B44 /* FileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C6E1C98265B6FD8F69A4D6 /* FileBrowserView.swift */; };
 		3B3A24AE001C83466A0A4F5E /* diff-match-patch in Frameworks */ = {isa = PBXBuildFile; productRef = A22AFD7EEA6F3B484C6AE288 /* diff-match-patch */; };
@@ -42,13 +44,16 @@
 		6E95467401766C2F88815BCD /* LaTeXEditorReferenceActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6618946B15E66FCAD408426A /* LaTeXEditorReferenceActions.swift */; };
 		777E23C22D1D291C6EF3A714 /* UnifiedEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F170D57B17CC00EA3EC557CD /* UnifiedEditorView.swift */; };
 		7C8E8AF16DD8ABF9EF0C6FAE /* DiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888AB1D2ECB6F588E3C27898 /* DiffEngine.swift */; };
+		83AB14EC9BBFAD46A828C0E0 /* SessionPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123E29AEB8DFB9A9FE4DFD2D /* SessionPickerView.swift */; };
 		8C3DEB6B453AF51C97EC537C /* ServiceParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB24F2BDDAE23B5540AA08A1 /* ServiceParsingTests.swift */; };
+		8FBB128A8486932DA0C8BCDC /* ChatSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD29038B45F072F61CB07A2F /* ChatSpinner.swift */; };
 		8FF2D8D280A74E5EA19E0F24 /* InteractivePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E5778DD51ECC862B0E522E3 /* InteractivePDFView.swift */; };
 		949854277CCAA69A13D285BF /* AnnotationCursorFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FD75E4A5D68AC9725D6DFD /* AnnotationCursorFactory.swift */; };
 		992B2AE06A1940F4E500F096 /* WorkspaceSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C57612B1DBD072F8ECA3D83D /* WorkspaceSessionStore.swift */; };
 		9954FA03F5616D657AB55EA2 /* CanopeContextFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B877091A70654C98A33D25D /* CanopeContextFiles.swift */; };
 		9B97BD5EED1DE5B084284D09 /* LaTeXUIState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10CEB9D3C002C939383D24AB /* LaTeXUIState.swift */; };
 		9D883E9407E041B255B54B3C /* PDFAnnotationMarkdownExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC4699D30A80C554574BB3A /* PDFAnnotationMarkdownExporter.swift */; };
+		9F067A1CA62636C40A701D9C /* ClaudeHeadlessProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9516CD22BCEDBB5CEC7272F9 /* ClaudeHeadlessProvider.swift */; };
 		A10BF479A0655F2FB695D7EB /* canope_claude_ide_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 072AB3955BD28ED994A248C2 /* canope_claude_ide_bridge.py */; };
 		A3D3FF987F65AFE09623739A /* PDFPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38C3B2C3057BF4BF27EA2E49 /* PDFPreviewView.swift */; };
 		A605E18AA76EE105F898A2AE /* LaTeXEditorPDFPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1D81331F539462C7C3673E /* LaTeXEditorPDFPane.swift */; };
@@ -56,12 +61,14 @@
 		A9928870D20F145473EB59BA /* RatingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C72B0AB2DE4CB5ADFBD4F4 /* RatingView.swift */; };
 		AB47630463A76B43C287698A /* PDFKitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F49AD7E417225E7720D493C5 /* PDFKitView.swift */; };
 		AC71B1B032FCC7FC91511099 /* MarkdownPreviewRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E33D2548F1DC7AA906538177 /* MarkdownPreviewRenderer.swift */; };
+		B029D2C9BAE9A10FEF614973 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6863275D849EA554D73845B /* ChatMessage.swift */; };
 		B16CD80407DDAF29CB6A131C /* PDFFileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A4DC9894C16B5FB4C79B498 /* PDFFileManager.swift */; };
 		B19CA309BF8858244F4FDCE8 /* LaTeXEditorAnnotationExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B57071B4DCB48AFE3F0C4E19 /* LaTeXEditorAnnotationExport.swift */; };
 		BA1CC7C393692A6F0E92B75E /* ClaudeIDEBridgeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46E0CF6500C50097F0D77FF5 /* ClaudeIDEBridgeService.swift */; };
 		BA26CC6387AE6CC2E7447200 /* LaTeXTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64494B3369625558447F0913 /* LaTeXTextEditor.swift */; };
 		BA4F8E1EC05941E3D78F64CF /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB6807CBA5694C83AE1A3317 /* LibraryView.swift */; };
 		BAA58AD3F47FBC5419FD4533 /* ThreePaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E3551EFCEDED294A25C2CF8 /* ThreePaneLayout.swift */; };
+		BE3D76265A86CFFB2CE2A157 /* AIHeadlessProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E7451D1F83D2C977E175D1 /* AIHeadlessProvider.swift */; };
 		BF63157CD6C69DE2472A3C0B /* MetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F63CE44FF6158ED19809BED5 /* MetadataExtractor.swift */; };
 		C0CCD66691C04566F42D8A46 /* PaperTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9150735813E3A10D61D07D74 /* PaperTableView.swift */; };
 		C143C9F848CA1F82B914653C /* AnnotationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1190F7AF51184A02BE7D55D /* AnnotationService.swift */; };
@@ -74,7 +81,6 @@
 		CA3F4A168A3C3EB102E6FE47 /* SelectionOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AD029C9213831829CA33D75 /* SelectionOverlayView.swift */; };
 		CA8210EA442BB5C7B991E685 /* CodeTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B29836069A5EA8CAA41CDDE /* CodeTextEditor.swift */; };
 		DC524768FC0FE9132D96AF41 /* CodeSyntaxSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 455079B786FB26CBD1E28853 /* CodeSyntaxSupport.swift */; };
-		E148852051EE0C7891A079FD /* AIHeadlessService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C09EA26CB28C2150CC25581F /* AIHeadlessService.swift */; };
 		E282F51EE6ACB9CE12273AF4 /* LaTeXLandingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60D85B0F6F272FE9FB671B5B /* LaTeXLandingView.swift */; };
 		E3D04912305A19669C61147F /* StandalonePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293F7C980E5E160F1348EB20 /* StandalonePDFView.swift */; };
 		E4CEBC85E4ADC05A4374A1AC /* CanopeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22CE0F3F75B2FB0F7F0FB46 /* CanopeApp.swift */; };
@@ -106,7 +112,9 @@
 		072AB3955BD28ED994A248C2 /* canope_claude_ide_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = canope_claude_ide_bridge.py; sourceTree = "<group>"; };
 		083BC2D172129785C6152114 /* AnnotationTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationTool.swift; sourceTree = "<group>"; };
 		0A4DC9894C16B5FB4C79B498 /* PDFFileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFFileManager.swift; sourceTree = "<group>"; };
+		0E1AB66B0A3B251CFA072C38 /* LaTeXUnicode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXUnicode.swift; sourceTree = "<group>"; };
 		10CEB9D3C002C939383D24AB /* LaTeXUIState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXUIState.swift; sourceTree = "<group>"; };
+		123E29AEB8DFB9A9FE4DFD2D /* SessionPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPickerView.swift; sourceTree = "<group>"; };
 		13A9A2F1AF101D865F019ED8 /* LaTeXToolbarComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXToolbarComponents.swift; sourceTree = "<group>"; };
 		147D738B285299272F460392 /* ReaderWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderWindow.swift; sourceTree = "<group>"; };
 		15DC1B3735C2E1C0321A8F01 /* AIChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatView.swift; sourceTree = "<group>"; };
@@ -144,6 +152,7 @@
 		79F2AFB9672171E0D8B26550 /* ClaudeCLIWrapperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLIWrapperService.swift; sourceTree = "<group>"; };
 		7D23447DD7875D5F755F284E /* CanopeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CanopeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8096F8CCCE9D2A4786D22D0D /* PaperInfoPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperInfoPanel.swift; sourceTree = "<group>"; };
+		81D97CEA0194F1F4829E2E11 /* MarkdownBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockView.swift; sourceTree = "<group>"; };
 		86E472B4EC8C837F4FB0A749 /* ShapeAnnotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShapeAnnotations.swift; sourceTree = "<group>"; };
 		87C72B0AB2DE4CB5ADFBD4F4 /* RatingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RatingView.swift; sourceTree = "<group>"; };
 		888AB1D2ECB6F588E3C27898 /* DiffEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffEngine.swift; sourceTree = "<group>"; };
@@ -152,6 +161,7 @@
 		8C7D3AE3E860936DB5CB1AE6 /* CompilationErrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompilationErrorView.swift; sourceTree = "<group>"; };
 		8CD3FA75BF9C25FA63230DB4 /* SyncTeXService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTeXService.swift; sourceTree = "<group>"; };
 		9150735813E3A10D61D07D74 /* PaperTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperTableView.swift; sourceTree = "<group>"; };
+		9516CD22BCEDBB5CEC7272F9 /* ClaudeHeadlessProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHeadlessProvider.swift; sourceTree = "<group>"; };
 		96986385B4F523201C2ACD51 /* WorkspaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceState.swift; sourceTree = "<group>"; };
 		990C6DE7DF5D83B0FEF46EE9 /* PaperCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperCollection.swift; sourceTree = "<group>"; };
 		99A2DC0425870E2AB2A007BD /* PaperListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperListView.swift; sourceTree = "<group>"; };
@@ -161,9 +171,10 @@
 		A1190F7AF51184A02BE7D55D /* AnnotationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationService.swift; sourceTree = "<group>"; };
 		A22CE0F3F75B2FB0F7F0FB46 /* CanopeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanopeApp.swift; sourceTree = "<group>"; };
 		AAA8E9FC6B60137A6822B07A /* AnnotationColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationColor.swift; sourceTree = "<group>"; };
+		B4E7451D1F83D2C977E175D1 /* AIHeadlessProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIHeadlessProvider.swift; sourceTree = "<group>"; };
 		B57071B4DCB48AFE3F0C4E19 /* LaTeXEditorAnnotationExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXEditorAnnotationExport.swift; sourceTree = "<group>"; };
+		B6863275D849EA554D73845B /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
 		BF2088594C9985A874B328F3 /* PDFReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFReaderView.swift; sourceTree = "<group>"; };
-		C09EA26CB28C2150CC25581F /* AIHeadlessService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIHeadlessService.swift; sourceTree = "<group>"; };
 		C2168A22984A0573806D7375 /* CodeOutputWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeOutputWorkspace.swift; sourceTree = "<group>"; };
 		C57612B1DBD072F8ECA3D83D /* WorkspaceSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSessionStore.swift; sourceTree = "<group>"; };
 		C97A471E5ABAA4E7B828E80D /* AppChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppChrome.swift; sourceTree = "<group>"; };
@@ -173,6 +184,7 @@
 		D8FD75E4A5D68AC9725D6DFD /* AnnotationCursorFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationCursorFactory.swift; sourceTree = "<group>"; };
 		D9374D4066FF6C281C46D277 /* TextNoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextNoteEditorView.swift; sourceTree = "<group>"; };
 		DB6807CBA5694C83AE1A3317 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		DD29038B45F072F61CB07A2F /* ChatSpinner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSpinner.swift; sourceTree = "<group>"; };
 		E33D2548F1DC7AA906538177 /* MarkdownPreviewRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPreviewRenderer.swift; sourceTree = "<group>"; };
 		F170D57B17CC00EA3EC557CD /* UnifiedEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEditorView.swift; sourceTree = "<group>"; };
 		F49AD7E417225E7720D493C5 /* PDFKitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFKitView.swift; sourceTree = "<group>"; };
@@ -320,13 +332,14 @@
 		A1E776E22E3D4367C383F170 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				C09EA26CB28C2150CC25581F /* AIHeadlessService.swift */,
+				B4E7451D1F83D2C977E175D1 /* AIHeadlessProvider.swift */,
 				A1190F7AF51184A02BE7D55D /* AnnotationService.swift */,
 				3DEAC7B9756A5000BDA58583 /* ArtifactSupport.swift */,
 				65641D21C00AF173744B276C /* BridgeCommandWatcher.swift */,
 				9B877091A70654C98A33D25D /* CanopeContextFiles.swift */,
 				4BF6482676052643C5005496 /* ChildProcessRegistry.swift */,
 				79F2AFB9672171E0D8B26550 /* ClaudeCLIWrapperService.swift */,
+				9516CD22BCEDBB5CEC7272F9 /* ClaudeHeadlessProvider.swift */,
 				46E0CF6500C50097F0D77FF5 /* ClaudeIDEBridgeService.swift */,
 				CE7CABB496A722FDA2F4D18E /* ClaudeIDESelectionState.swift */,
 				1F0E3A4CBD7E0C8753DA44D0 /* ClaudeService.swift */,
@@ -351,6 +364,7 @@
 		A7EBC95C6D8BFDDF343C4E1D /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				B6863275D849EA554D73845B /* ChatMessage.swift */,
 				75DB6386D580EA00D1FCBD94 /* LaTeXAnnotation.swift */,
 				046014EEA7227AD6E73526F5 /* NavigationTypes.swift */,
 				8A821013C94B5DDD27B1BDB9 /* Paper.swift */,
@@ -423,6 +437,10 @@
 			isa = PBXGroup;
 			children = (
 				15DC1B3735C2E1C0321A8F01 /* AIChatView.swift */,
+				DD29038B45F072F61CB07A2F /* ChatSpinner.swift */,
+				0E1AB66B0A3B251CFA072C38 /* LaTeXUnicode.swift */,
+				81D97CEA0194F1F4829E2E11 /* MarkdownBlockView.swift */,
+				123E29AEB8DFB9A9FE4DFD2D /* SessionPickerView.swift */,
 			);
 			path = Chat;
 			sourceTree = "<group>";
@@ -534,7 +552,7 @@
 			files = (
 				FE130E105ECA994104D8FF62 /* AIChatPanel.swift in Sources */,
 				00760E4EB5F0D3170EB16F1D /* AIChatView.swift in Sources */,
-				E148852051EE0C7891A079FD /* AIHeadlessService.swift in Sources */,
+				BE3D76265A86CFFB2CE2A157 /* AIHeadlessProvider.swift in Sources */,
 				11C7CAFDE5222CAEB518DCE8 /* AnnotationColor.swift in Sources */,
 				949854277CCAA69A13D285BF /* AnnotationCursorFactory.swift in Sources */,
 				C143C9F848CA1F82B914653C /* AnnotationService.swift in Sources */,
@@ -546,8 +564,11 @@
 				58BE54C5E0F8743CAD064A0B /* BridgeCommandWatcher.swift in Sources */,
 				E4CEBC85E4ADC05A4374A1AC /* CanopeApp.swift in Sources */,
 				9954FA03F5616D657AB55EA2 /* CanopeContextFiles.swift in Sources */,
+				B029D2C9BAE9A10FEF614973 /* ChatMessage.swift in Sources */,
+				8FBB128A8486932DA0C8BCDC /* ChatSpinner.swift in Sources */,
 				4C5AB91C6BB49CDBBDFE77CE /* ChildProcessRegistry.swift in Sources */,
 				C6B70CAEA7F3EDC17BEFCE75 /* ClaudeCLIWrapperService.swift in Sources */,
+				9F067A1CA62636C40A701D9C /* ClaudeHeadlessProvider.swift in Sources */,
 				BA1CC7C393692A6F0E92B75E /* ClaudeIDEBridgeService.swift in Sources */,
 				5A5C3C970350B253F747E628 /* ClaudeIDESelectionState.swift in Sources */,
 				1B24B40C25F526C875AF959A /* ClaudeService.swift in Sources */,
@@ -573,9 +594,11 @@
 				BA26CC6387AE6CC2E7447200 /* LaTeXTextEditor.swift in Sources */,
 				0C3042306404BE1982B18799 /* LaTeXToolbarComponents.swift in Sources */,
 				9B97BD5EED1DE5B084284D09 /* LaTeXUIState.swift in Sources */,
+				279F6A45E8847EC75E797096 /* LaTeXUnicode.swift in Sources */,
 				BA4F8E1EC05941E3D78F64CF /* LibraryView.swift in Sources */,
 				5758CFDE7E5BD7CDB63CE42D /* MainWindow.swift in Sources */,
 				F14246A9D812FF0E8F672034 /* MainWindowTitleBarBehavior.swift in Sources */,
+				095E8A059F42ED68E68962F4 /* MarkdownBlockView.swift in Sources */,
 				AC71B1B032FCC7FC91511099 /* MarkdownPreviewRenderer.swift in Sources */,
 				BF63157CD6C69DE2472A3C0B /* MetadataExtractor.swift in Sources */,
 				46604D86F75C2FA8E8CFF70B /* NavigationTypes.swift in Sources */,
@@ -596,6 +619,7 @@
 				05DC7906E8C40724A4AD9E41 /* RecentTeXFilesStore.swift in Sources */,
 				3C7F8F4C59A8487A06693974 /* ReferencePDFComponents.swift in Sources */,
 				CA3F4A168A3C3EB102E6FE47 /* SelectionOverlayView.swift in Sources */,
+				83AB14EC9BBFAD46A828C0E0 /* SessionPickerView.swift in Sources */,
 				676D9C605B9AB759B62B8459 /* ShapeAnnotations.swift in Sources */,
 				47901DCCA17ED3B6787099A7 /* SidebarView.swift in Sources */,
 				A6F49C0AA6B11002FE08720F /* SplitViewGrabHelper.swift in Sources */,

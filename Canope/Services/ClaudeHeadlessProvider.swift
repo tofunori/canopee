@@ -1,58 +1,6 @@
 import Foundation
 import Combine
 
-// MARK: - Common Chat Models
-
-struct ChatMessage: Identifiable, Equatable {
-    let id = UUID()
-    let role: Role
-    var content: String
-    let timestamp: Date
-    var toolName: String?
-    var toolInput: String?
-    var toolOutput: String?
-    var isStreaming: Bool
-    var isCollapsed: Bool
-
-    enum Role: Equatable {
-        case user
-        case assistant
-        case toolUse
-        case toolResult
-        case system
-    }
-
-    static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool {
-        lhs.id == rhs.id && lhs.content == rhs.content && lhs.isStreaming == rhs.isStreaming
-            && lhs.isCollapsed == rhs.isCollapsed
-    }
-}
-
-struct SessionInfo: Equatable {
-    var id: String?
-    var model: String?
-    var costUSD: Double = 0
-    var turns: Int = 0
-    var durationMs: Int = 0
-}
-
-// MARK: - Provider Protocol
-
-/// Abstracts the headless CLI process (Claude, Codex, etc.)
-@MainActor
-protocol AIHeadlessProvider: ObservableObject {
-    var messages: [ChatMessage] { get set }
-    var isProcessing: Bool { get set }
-    var isConnected: Bool { get }
-    var session: SessionInfo { get }
-    var providerName: String { get }
-    var providerIcon: String { get } // SF Symbol name
-
-    func start()
-    func stop()
-    func sendMessage(_ text: String)
-}
-
 // MARK: - Claude Headless Provider
 
 @MainActor
