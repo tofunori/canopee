@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 
 // MARK: - Claude Headless Provider
 
@@ -75,8 +76,10 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         Task.detached { [weak self] in
             let loaded = Self.parseSessionHistory(id: id)
             await MainActor.run { [weak self] in
-                self?.messages.removeAll()
-                self?.messages = loaded
+                // Skip SwiftUI diff animation for bulk load
+                withAnimation(nil) {
+                    self?.messages = loaded
+                }
                 self?.appendSystem("Session reprise : \(id.prefix(12))…")
             }
         }
@@ -129,7 +132,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
         // Only parse the tail of the file to avoid freezing on large sessions
         let allLines = content.components(separatedBy: "\n")
-        let lines = allLines.suffix(30) // last ~30 JSONL entries ≈ last few exchanges
+        let lines = allLines.suffix(15) // last ~15 JSONL entries ≈ last few messages
         for line in lines {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty,
                   let data = line.data(using: .utf8),
@@ -146,7 +149,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                 if let text = contentVal as? String, !text.isEmpty {
                     messages.append(ChatMessage(
                         role: .user, content: text, timestamp: Date(),
-                        isStreaming: false, isCollapsed: false
+                        isStreaming: false, isCollapsed: false, isFromHistory: true
                     ))
                 } else if let blocks = contentVal as? [[String: Any]] {
                     let text = blocks.compactMap { b -> String? in
@@ -156,7 +159,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                     if !text.isEmpty {
                         messages.append(ChatMessage(
                             role: .user, content: text, timestamp: Date(),
-                            isStreaming: false, isCollapsed: false
+                            isStreaming: false, isCollapsed: false, isFromHistory: true
                         ))
                     }
                 }
@@ -167,7 +170,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                     if blockType == "text", let text = block["text"] as? String, !text.isEmpty {
                         messages.append(ChatMessage(
                             role: .assistant, content: text, timestamp: Date(),
-                            isStreaming: false, isCollapsed: false
+                            isStreaming: false, isCollapsed: false, isFromHistory: true
                         ))
                     } else if blockType == "tool_use" {
                         let toolName = block["name"] as? String ?? "tool"

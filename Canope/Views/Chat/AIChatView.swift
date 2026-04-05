@@ -42,6 +42,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
         .sheet(isPresented: $showSessionPicker) {
             SessionPickerView { sessionId in
                 showSessionPicker = false
+                listResetID = UUID() // Skip diffing — fresh list
                 if let p = provider as? ClaudeHeadlessProvider {
                     p.resumeSession(id: sessionId)
                 }
@@ -150,10 +151,9 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
+                LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(provider.messages) { message in
                         messageRow(message)
-                            .id(message.id)
                     }
 
                     // Thinking indicator while waiting for response
@@ -172,6 +172,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
             }
+            .id(listResetID)
             .onAppear { scrollProxy = proxy }
             .onChange(of: provider.messages.count) {
                 if shouldAutoScroll {
@@ -284,11 +285,17 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 if message.isStreaming {
-                    Text(message.content.contains("$") ? LaTeXUnicode.convert(message.content) : message.content)
+                    Text(message.content)
                         .font(.system(size: 13))
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
                     streamingCursor
+                } else if message.isFromHistory {
+                    // Plain text for history — no expensive markdown parsing
+                    Text(message.content)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
                 } else {
                     MarkdownBlockView(text: message.content)
                 }
@@ -556,6 +563,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     // MARK: - Helpers
 
     @State private var shouldAutoScroll = false
+    @State private var listResetID = UUID()
 
     private func startAutoScroll(proxy: ScrollViewProxy) {
         shouldAutoScroll = true

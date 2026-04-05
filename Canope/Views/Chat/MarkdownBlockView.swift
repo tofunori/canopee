@@ -2,13 +2,33 @@ import SwiftUI
 
 // MARK: - Markdown Block Renderer
 
+// Global cache so LazyVStack recycling doesn't re-parse
+private let markdownCache = MarkdownBlockCache()
+
+@MainActor
+final class MarkdownBlockCache {
+    private var cache: [String: [MarkdownBlockView.Block]] = [:]
+
+    func blocks(for text: String) -> [MarkdownBlockView.Block] {
+        if let cached = cache[text] { return cached }
+        let parsed = MarkdownBlockView.parseBlocks(text)
+        cache[text] = parsed
+        // Limit cache size
+        if cache.count > 200 {
+            cache.removeAll()
+            cache[text] = parsed
+        }
+        return parsed
+    }
+}
+
 struct MarkdownBlockView: View {
     let text: String
-    @State private var blocks: [Block] = []
+
+    private var blocks: [Block] { markdownCache.blocks(for: text) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Group consecutive text blocks into one selectable Text view
             let groups = Self.groupBlocks(blocks)
             ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                 switch group {
@@ -19,11 +39,6 @@ struct MarkdownBlockView: View {
                 case .special(let block):
                     blockView(block)
                 }
-            }
-        }
-        .onAppear {
-            if blocks.isEmpty {
-                blocks = Self.parseBlocks(text)
             }
         }
     }
@@ -116,7 +131,7 @@ struct MarkdownBlockView: View {
         return result
     }
 
-    private enum Block {
+    enum Block {
         case heading(level: Int, text: String)
         case code(language: String, content: String)
         case table(rows: [[String]])
@@ -248,7 +263,7 @@ struct MarkdownBlockView: View {
 
     // MARK: - Parser
 
-    private static func parseBlocks(_ text: String) -> [Block] {
+    static func parseBlocks(_ text: String) -> [Block] {
         let lines = text.components(separatedBy: "\n")
         var blocks: [Block] = []
         var i = 0

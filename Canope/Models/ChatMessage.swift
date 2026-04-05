@@ -12,6 +12,7 @@ struct ChatMessage: Identifiable, Equatable {
     var toolOutput: String?
     var isStreaming: Bool
     var isCollapsed: Bool
+    var isFromHistory: Bool = false
 
     enum Role: Equatable {
         case user
