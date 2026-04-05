@@ -44,11 +44,53 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            if let model = provider.session.model {
-                Text(model.replacingOccurrences(of: "claude-", with: "")
-                    .components(separatedBy: "[").first ?? model)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            if let claudeProvider = provider as? ClaudeHeadlessProvider {
+                // Model picker
+                Menu {
+                    ForEach(ClaudeHeadlessProvider.availableModels, id: \.self) { model in
+                        Button {
+                            claudeProvider.selectedModel = model
+                        } label: {
+                            HStack {
+                                Text(model)
+                                if claudeProvider.selectedModel == model {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text(claudeProvider.selectedModel)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.orange)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
+                Text("·")
+                    .foregroundStyle(.secondary.opacity(0.5))
+
+                // Effort picker
+                Menu {
+                    ForEach(ClaudeHeadlessProvider.availableEfforts, id: \.self) { effort in
+                        Button {
+                            claudeProvider.selectedEffort = effort
+                        } label: {
+                            HStack {
+                                Text(effort)
+                                if claudeProvider.selectedEffort == effort {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text(claudeProvider.selectedEffort)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
 
             if provider.session.turns > 0 {
@@ -390,15 +432,10 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundStyle(
-                            inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                ? Color.secondary.opacity(0.4)
-                                : Color.accentColor
-                        )
+                        .foregroundStyle(canSend ? Color.accentColor : Color.secondary.opacity(0.4))
                 }
                 .buttonStyle(.plain)
-                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || provider.isProcessing)
-                .keyboardShortcut(.return, modifiers: [])
+                .disabled(!canSend)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -454,9 +491,14 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
 
     // MARK: - Helpers
 
+    private var canSend: Bool {
+        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !provider.isProcessing
+    }
+
     private func send() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        guard !provider.isProcessing else { return }
         inputText = ""
 
         // Handle /continue locally
