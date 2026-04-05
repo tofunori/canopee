@@ -10,7 +10,6 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     @State private var selectedSlashIndex: Int?
     @State private var showSessionPicker = false
     @State private var cachedSelection: SelectionInfo?
-    @State private var scrollMonitor: Any?
     @State private var editingMessageID: UUID?
     @State private var editingText = ""
     @State private var selectionTimer: Timer?
@@ -29,23 +28,15 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 provider.start()
             }
             cachedSelection = readSelectionFromDisk()
-            selectionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            selectionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
                 Task { @MainActor in
                     cachedSelection = readSelectionFromDisk()
                 }
-            }
-            // Disable auto-scroll when user scrolls up
-            scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
-                if event.scrollingDeltaY > 0 {
-                    shouldAutoScroll = false
-                }
-                return event
             }
         }
         .onDisappear {
             selectionTimer?.invalidate()
             selectionTimer = nil
-            if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
         }
         // Cmd+N handled via menu item or button — SwiftUI doesn't support view-level Cmd shortcuts well
         .sheet(isPresented: $showSessionPicker) {
@@ -183,18 +174,14 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             }
             .onAppear { scrollProxy = proxy }
             .onChange(of: provider.messages.count) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                if shouldAutoScroll {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                    }
                 }
             }
             .onChange(of: provider.isProcessing) {
                 if provider.isProcessing { shouldAutoScroll = true }
-            }
-            .onChange(of: provider.messages.last?.content) {
-                // Auto-scroll only if user hasn't scrolled away
-                if shouldAutoScroll {
-                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
-                }
             }
         }
     }
