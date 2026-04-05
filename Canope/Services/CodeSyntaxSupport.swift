@@ -36,21 +36,96 @@ struct CodeSyntaxTheme: Equatable {
 
     static let monokai = CodeSyntaxTheme(
         name: "Monokai",
-        backgroundColor: NSColor(hex: 0x272822),
-        foregroundColor: NSColor(hex: 0xF8F8F2),
-        selectionColor: NSColor(hex: 0x49483E),
-        cursorColor: NSColor(hex: 0xF8F8F0),
+        backgroundColor: NSColor(srgbRed: 0.15, green: 0.16, blue: 0.13, alpha: 1),
+        foregroundColor: NSColor(srgbRed: 0.97, green: 0.97, blue: 0.94, alpha: 1),
+        selectionColor: NSColor(srgbRed: 0.30, green: 0.30, blue: 0.25, alpha: 1),
+        cursorColor: NSColor(srgbRed: 0.97, green: 0.97, blue: 0.94, alpha: 1),
         tokenColors: [
-            .comment: NSColor(hex: 0x75715E),
-            .keyword: NSColor(hex: 0xF92672),
-            .string: NSColor(hex: 0xE6DB74),
-            .number: NSColor(hex: 0xAE81FF),
-            .function: NSColor(hex: 0xA6E22E),
-            .type: NSColor(hex: 0x66D9EF),
-            .decorator: NSColor(hex: 0xF92672),
-            .oper: NSColor(hex: 0xF92672),
+            .comment: NSColor(srgbRed: 0.45, green: 0.45, blue: 0.39, alpha: 1),
+            .keyword: NSColor(srgbRed: 0.40, green: 0.85, blue: 0.94, alpha: 1),
+            .string: NSColor(srgbRed: 0.90, green: 0.86, blue: 0.45, alpha: 1),
+            .number: NSColor(srgbRed: 0.70, green: 0.56, blue: 0.75, alpha: 1),
+            .function: NSColor(srgbRed: 0.65, green: 0.89, blue: 0.18, alpha: 1),
+            .type: NSColor(srgbRed: 0.40, green: 0.85, blue: 0.94, alpha: 1),
+            .decorator: NSColor(srgbRed: 0.98, green: 0.15, blue: 0.45, alpha: 1),
+            .oper: NSColor(srgbRed: 0.98, green: 0.15, blue: 0.45, alpha: 1),
         ]
     )
+
+    static let kakuDark = CodeSyntaxTheme(
+        name: "Kaku Dark",
+        backgroundColor: NSColor(srgbRed: 0.082, green: 0.078, blue: 0.106, alpha: 1),
+        foregroundColor: NSColor(srgbRed: 0.929, green: 0.925, blue: 0.933, alpha: 1),
+        selectionColor: NSColor(srgbRed: 0.2, green: 0.2, blue: 0.25, alpha: 1),
+        cursorColor: NSColor(srgbRed: 0.929, green: 0.925, blue: 0.933, alpha: 1),
+        tokenColors: [
+            .comment: NSColor(srgbRed: 0.43, green: 0.43, blue: 0.43, alpha: 1),
+            .keyword: NSColor(srgbRed: 0.37, green: 0.66, blue: 1.0, alpha: 1),
+            .string: NSColor(srgbRed: 0.38, green: 1.0, blue: 0.79, alpha: 1),
+            .number: NSColor(srgbRed: 0.635, green: 0.467, blue: 1.0, alpha: 1),
+            .function: NSColor(srgbRed: 0.635, green: 0.467, blue: 1.0, alpha: 1),
+            .type: NSColor(srgbRed: 0.37, green: 0.66, blue: 1.0, alpha: 1),
+            .decorator: NSColor(srgbRed: 1.0, green: 0.79, blue: 0.52, alpha: 1),
+            .oper: NSColor(srgbRed: 1.0, green: 0.79, blue: 0.52, alpha: 1),
+        ]
+    )
+
+    static let dracula = CodeSyntaxTheme(
+        name: "Dracula",
+        backgroundColor: NSColor(srgbRed: 0.16, green: 0.16, blue: 0.21, alpha: 1),
+        foregroundColor: NSColor(srgbRed: 0.97, green: 0.97, blue: 0.95, alpha: 1),
+        selectionColor: NSColor(srgbRed: 0.26, green: 0.26, blue: 0.35, alpha: 1),
+        cursorColor: NSColor(srgbRed: 0.97, green: 0.97, blue: 0.95, alpha: 1),
+        tokenColors: [
+            .comment: NSColor(srgbRed: 0.38, green: 0.45, blue: 0.55, alpha: 1),
+            .keyword: NSColor(srgbRed: 0.94, green: 0.47, blue: 0.60, alpha: 1),
+            .string: NSColor(srgbRed: 0.94, green: 0.98, blue: 0.55, alpha: 1),
+            .number: NSColor(srgbRed: 0.70, green: 0.56, blue: 0.75, alpha: 1),
+            .function: NSColor(srgbRed: 0.51, green: 0.93, blue: 0.98, alpha: 1),
+            .type: NSColor(srgbRed: 0.51, green: 0.93, blue: 0.98, alpha: 1),
+            .decorator: NSColor(srgbRed: 0.94, green: 0.47, blue: 0.60, alpha: 1),
+            .oper: NSColor(srgbRed: 1.0, green: 0.72, blue: 0.42, alpha: 1),
+        ]
+    )
+
+    static let nord = CodeSyntaxTheme(
+        name: "Nord",
+        backgroundColor: NSColor(srgbRed: 0.18, green: 0.20, blue: 0.25, alpha: 1),
+        foregroundColor: NSColor(srgbRed: 0.85, green: 0.87, blue: 0.91, alpha: 1),
+        selectionColor: NSColor(srgbRed: 0.26, green: 0.30, blue: 0.37, alpha: 1),
+        cursorColor: NSColor(srgbRed: 0.85, green: 0.87, blue: 0.91, alpha: 1),
+        tokenColors: [
+            .comment: NSColor(srgbRed: 0.42, green: 0.48, blue: 0.55, alpha: 1),
+            .keyword: NSColor(srgbRed: 0.53, green: 0.75, blue: 0.82, alpha: 1),
+            .string: NSColor(srgbRed: 0.71, green: 0.81, blue: 0.66, alpha: 1),
+            .number: NSColor(srgbRed: 0.70, green: 0.56, blue: 0.75, alpha: 1),
+            .function: NSColor(srgbRed: 0.53, green: 0.75, blue: 0.82, alpha: 1),
+            .type: NSColor(srgbRed: 0.53, green: 0.75, blue: 0.82, alpha: 1),
+            .decorator: NSColor(srgbRed: 0.70, green: 0.56, blue: 0.75, alpha: 1),
+            .oper: NSColor(srgbRed: 0.81, green: 0.63, blue: 0.48, alpha: 1),
+        ]
+    )
+
+    static let solarized = CodeSyntaxTheme(
+        name: "Solarized",
+        backgroundColor: NSColor(srgbRed: 0.0, green: 0.17, blue: 0.21, alpha: 1),
+        foregroundColor: NSColor(srgbRed: 0.51, green: 0.58, blue: 0.59, alpha: 1),
+        selectionColor: NSColor(srgbRed: 0.07, green: 0.26, blue: 0.33, alpha: 1),
+        cursorColor: NSColor(srgbRed: 0.51, green: 0.58, blue: 0.59, alpha: 1),
+        tokenColors: [
+            .comment: NSColor(srgbRed: 0.35, green: 0.43, blue: 0.46, alpha: 1),
+            .keyword: NSColor(srgbRed: 0.15, green: 0.55, blue: 0.82, alpha: 1),
+            .string: NSColor(srgbRed: 0.71, green: 0.54, blue: 0.0, alpha: 1),
+            .number: NSColor(srgbRed: 0.83, green: 0.21, blue: 0.51, alpha: 1),
+            .function: NSColor(srgbRed: 0.15, green: 0.55, blue: 0.82, alpha: 1),
+            .type: NSColor(srgbRed: 0.15, green: 0.55, blue: 0.82, alpha: 1),
+            .decorator: NSColor(srgbRed: 0.83, green: 0.21, blue: 0.51, alpha: 1),
+            .oper: NSColor(srgbRed: 0.80, green: 0.29, blue: 0.09, alpha: 1),
+        ]
+    )
+
+    /// All themes indexed to match the LaTeX editor theme array order.
+    static let allThemes: [CodeSyntaxTheme] = [.kakuDark, .monokai, .dracula, .nord, .solarized]
 }
 
 enum CodeSyntaxHighlighter {

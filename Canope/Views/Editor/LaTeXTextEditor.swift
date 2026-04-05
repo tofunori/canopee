@@ -20,6 +20,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
+        scrollView.contentView.drawsBackground = false
         // Scroll view stays dark for scrollbar appearance
         scrollView.appearance = NSAppearance(named: .darkAqua)
         scrollView.scrollerStyle = .overlay
@@ -44,9 +45,15 @@ struct LaTeXTextEditor: NSViewRepresentable {
         // Force aqua on textView only — prevents dark mode from dimming syntax colors
         textView.appearance = NSAppearance(named: .aqua)
         textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.backgroundColor = NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1)
-        textView.textColor = NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1)
-        textView.insertionPointColor = NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1)
+        let bg = theme?.bg ?? NSColor(srgbRed: 0.082, green: 0.078, blue: 0.106, alpha: 1)
+        let fg = theme?.fg ?? NSColor(srgbRed: 0.929, green: 0.925, blue: 0.933, alpha: 1)
+        let cursor = theme?.command ?? NSColor(srgbRed: 0.635, green: 0.467, blue: 1.0, alpha: 1)
+        textView.backgroundColor = bg
+        textView.textColor = fg
+        textView.insertionPointColor = cursor
+        textView.gutterBackgroundColor = bg.blended(withFraction: 0.16, of: .black) ?? bg
+        textView.lineNumberColor = fg.withAlphaComponent(0.38)
+        textView.dividerColor = fg.withAlphaComponent(0.10)
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
@@ -71,10 +78,11 @@ struct LaTeXTextEditor: NSViewRepresentable {
         textView.changeCoordinator = context.coordinator
         scrollView.documentView = textView
 
-        // Set initial text
+        // Set initial text and theme
         textView.string = text
         context.coordinator.applyTheme(to: textView)
         context.coordinator.applyHighlighting()
+        textView.needsDisplay = true
         context.coordinator.cacheHighlightInputs(
             themeName: theme?.name,
             fontSize: fontSize,
@@ -121,9 +129,12 @@ struct LaTeXTextEditor: NSViewRepresentable {
         }
         context.coordinator.errorLines = errorLines
         context.coordinator.resolvedAnnotations = resolvedAnnotations
-        if themeChanged || fontChanged {
-            context.coordinator.applyTheme(to: textView)
-        }
+        // Always re-apply theme colors — NSTextView's internal rendering under
+        // forced .aqua appearance can silently alter backgroundColor between
+        // makeNSView and subsequent updateNSView passes.  CodeTextEditor already
+        // does this unconditionally, which is why it never shows the grayed-out
+        // background bug after a tab switch.
+        context.coordinator.applyTheme(to: textView)
 
         if textChanged || baselineChanged {
             context.coordinator.refreshChangeTracking()
@@ -229,9 +240,9 @@ struct LaTeXTextEditor: NSViewRepresentable {
         @MainActor
         fileprivate func applyTheme(to textView: ChangeTrackingTextView) {
             let t = theme
-            let fg = t?.fg ?? NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1)
-            let bg = t?.bg ?? NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1)
-            let cursor = t?.env ?? NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1)
+            let fg = t?.fg ?? NSColor(srgbRed: 0.929, green: 0.925, blue: 0.933, alpha: 1)
+            let bg = t?.bg ?? NSColor(srgbRed: 0.082, green: 0.078, blue: 0.106, alpha: 1)
+            let cursor = t?.env ?? NSColor(srgbRed: 0.635, green: 0.467, blue: 1.0, alpha: 1)
             let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 
             textView.backgroundColor = bg
@@ -247,7 +258,9 @@ struct LaTeXTextEditor: NSViewRepresentable {
                 .font: font,
                 .foregroundColor: fg,
             ]
-            textView.gutterBackgroundColor = bg
+            textView.gutterBackgroundColor = bg.blended(withFraction: 0.16, of: .black) ?? bg
+            textView.lineNumberColor = fg.withAlphaComponent(0.38)
+            textView.dividerColor = fg.withAlphaComponent(0.10)
             textView.markerColor = NSColor.systemGreen.withAlphaComponent(0.92)
             textView.deletedMarkerColor = NSColor.systemRed.withAlphaComponent(0.92)
             textView.dividerColor = fg.withAlphaComponent(0.025)
@@ -333,12 +346,12 @@ struct LaTeXTextEditor: NSViewRepresentable {
             defer { isUpdating = false }
 
             let t = theme
-            let fg = t?.fg ?? NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1)
-            let commentColor = t?.comment ?? NSColor(red: 0.43, green: 0.43, blue: 0.43, alpha: 1)
-            let commandColor = t?.command ?? NSColor(red: 0.37, green: 0.66, blue: 1.0, alpha: 1)
-            let mathColor = t?.math ?? NSColor(red: 0.38, green: 1.0, blue: 0.79, alpha: 1)
-            let envColor = t?.env ?? NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1)
-            let braceColor = t?.brace ?? NSColor(red: 1.0, green: 0.79, blue: 0.52, alpha: 1)
+            let fg = t?.fg ?? NSColor(srgbRed: 0.929, green: 0.925, blue: 0.933, alpha: 1)
+            let commentColor = t?.comment ?? NSColor(srgbRed: 0.43, green: 0.43, blue: 0.43, alpha: 1)
+            let commandColor = t?.command ?? NSColor(srgbRed: 0.37, green: 0.66, blue: 1.0, alpha: 1)
+            let mathColor = t?.math ?? NSColor(srgbRed: 0.38, green: 1.0, blue: 0.79, alpha: 1)
+            let envColor = t?.env ?? NSColor(srgbRed: 0.635, green: 0.467, blue: 1.0, alpha: 1)
+            let braceColor = t?.brace ?? NSColor(srgbRed: 1.0, green: 0.79, blue: 0.52, alpha: 1)
 
             let text = textView.string
             guard !text.isEmpty else { return }
@@ -710,8 +723,8 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
         didSet { needsDisplay = true }
     }
 
-    var gutterBackgroundColor = NSColor(calibratedWhite: 0.15, alpha: 1)
-    var lineNumberColor = NSColor.white.withAlphaComponent(0.25)
+    var gutterBackgroundColor = NSColor(srgbRed: 0.082, green: 0.078, blue: 0.106, alpha: 1).blended(withFraction: 0.16, of: .black) ?? NSColor(calibratedWhite: 0.08, alpha: 1)
+    var lineNumberColor = NSColor(srgbRed: 0.929, green: 0.925, blue: 0.933, alpha: 1).withAlphaComponent(0.38)
     var markerColor = NSColor.systemPurple
     var deletedMarkerColor = NSColor.systemRed
     var dividerColor = NSColor.white.withAlphaComponent(0.08)
@@ -744,7 +757,12 @@ fileprivate final class ChangeTrackingTextView: NSTextView {
     }
 
     override func drawBackground(in rect: NSRect) {
-        super.drawBackground(in: rect)
+        // Do NOT call super — NSTextView.drawBackground(in:) resolves
+        // backgroundColor through the view's effective appearance (.aqua),
+        // which can silently lighten dark sRGB background colors.
+        // Drawing the fill ourselves guarantees the exact sRGB value is used.
+        backgroundColor.setFill()
+        rect.fill()
         drawGutter(in: rect)
     }
 

@@ -82,45 +82,45 @@ struct UnifiedEditorView: View {
 
     static let editorThemes: [(name: String, bg: NSColor, fg: NSColor, comment: NSColor, command: NSColor, math: NSColor, env: NSColor, brace: NSColor)] = [
         ("Kaku Dark",
-         NSColor(red: 0.082, green: 0.078, blue: 0.106, alpha: 1),
-         NSColor(red: 0.929, green: 0.925, blue: 0.933, alpha: 1),
-         NSColor(red: 0.43, green: 0.43, blue: 0.43, alpha: 1),
-         NSColor(red: 0.37, green: 0.66, blue: 1.0, alpha: 1),
-         NSColor(red: 0.38, green: 1.0, blue: 0.79, alpha: 1),
-         NSColor(red: 0.635, green: 0.467, blue: 1.0, alpha: 1),
-         NSColor(red: 1.0, green: 0.79, blue: 0.52, alpha: 1)),
+         NSColor(srgbRed: 0.082, green: 0.078, blue: 0.106, alpha: 1),
+         NSColor(srgbRed: 0.929, green: 0.925, blue: 0.933, alpha: 1),
+         NSColor(srgbRed: 0.43, green: 0.43, blue: 0.43, alpha: 1),
+         NSColor(srgbRed: 0.37, green: 0.66, blue: 1.0, alpha: 1),
+         NSColor(srgbRed: 0.38, green: 1.0, blue: 0.79, alpha: 1),
+         NSColor(srgbRed: 0.635, green: 0.467, blue: 1.0, alpha: 1),
+         NSColor(srgbRed: 1.0, green: 0.79, blue: 0.52, alpha: 1)),
         ("Monokai",
-         NSColor(red: 0.15, green: 0.16, blue: 0.13, alpha: 1),
-         NSColor(red: 0.97, green: 0.97, blue: 0.94, alpha: 1),
-         NSColor(red: 0.45, green: 0.45, blue: 0.39, alpha: 1),
-         NSColor(red: 0.40, green: 0.85, blue: 0.94, alpha: 1),
-         NSColor(red: 0.90, green: 0.86, blue: 0.45, alpha: 1),
-         NSColor(red: 0.65, green: 0.89, blue: 0.18, alpha: 1),
-         NSColor(red: 0.98, green: 0.15, blue: 0.45, alpha: 1)),
+         NSColor(srgbRed: 0.15, green: 0.16, blue: 0.13, alpha: 1),
+         NSColor(srgbRed: 0.97, green: 0.97, blue: 0.94, alpha: 1),
+         NSColor(srgbRed: 0.45, green: 0.45, blue: 0.39, alpha: 1),
+         NSColor(srgbRed: 0.40, green: 0.85, blue: 0.94, alpha: 1),
+         NSColor(srgbRed: 0.90, green: 0.86, blue: 0.45, alpha: 1),
+         NSColor(srgbRed: 0.65, green: 0.89, blue: 0.18, alpha: 1),
+         NSColor(srgbRed: 0.98, green: 0.15, blue: 0.45, alpha: 1)),
         ("Dracula",
-         NSColor(red: 0.16, green: 0.16, blue: 0.21, alpha: 1),
-         NSColor(red: 0.97, green: 0.97, blue: 0.95, alpha: 1),
-         NSColor(red: 0.38, green: 0.45, blue: 0.55, alpha: 1),
-         NSColor(red: 0.51, green: 0.93, blue: 0.98, alpha: 1),
-         NSColor(red: 0.94, green: 0.98, blue: 0.55, alpha: 1),
-         NSColor(red: 0.94, green: 0.47, blue: 0.60, alpha: 1),
-         NSColor(red: 1.0, green: 0.72, blue: 0.42, alpha: 1)),
+         NSColor(srgbRed: 0.16, green: 0.16, blue: 0.21, alpha: 1),
+         NSColor(srgbRed: 0.97, green: 0.97, blue: 0.95, alpha: 1),
+         NSColor(srgbRed: 0.38, green: 0.45, blue: 0.55, alpha: 1),
+         NSColor(srgbRed: 0.51, green: 0.93, blue: 0.98, alpha: 1),
+         NSColor(srgbRed: 0.94, green: 0.98, blue: 0.55, alpha: 1),
+         NSColor(srgbRed: 0.94, green: 0.47, blue: 0.60, alpha: 1),
+         NSColor(srgbRed: 1.0, green: 0.72, blue: 0.42, alpha: 1)),
         ("Nord",
-         NSColor(red: 0.18, green: 0.20, blue: 0.25, alpha: 1),
-         NSColor(red: 0.85, green: 0.87, blue: 0.91, alpha: 1),
-         NSColor(red: 0.42, green: 0.48, blue: 0.55, alpha: 1),
-         NSColor(red: 0.53, green: 0.75, blue: 0.82, alpha: 1),
-         NSColor(red: 0.71, green: 0.81, blue: 0.66, alpha: 1),
-         NSColor(red: 0.70, green: 0.56, blue: 0.75, alpha: 1),
-         NSColor(red: 0.81, green: 0.63, blue: 0.48, alpha: 1)),
+         NSColor(srgbRed: 0.18, green: 0.20, blue: 0.25, alpha: 1),
+         NSColor(srgbRed: 0.85, green: 0.87, blue: 0.91, alpha: 1),
+         NSColor(srgbRed: 0.42, green: 0.48, blue: 0.55, alpha: 1),
+         NSColor(srgbRed: 0.53, green: 0.75, blue: 0.82, alpha: 1),
+         NSColor(srgbRed: 0.71, green: 0.81, blue: 0.66, alpha: 1),
+         NSColor(srgbRed: 0.70, green: 0.56, blue: 0.75, alpha: 1),
+         NSColor(srgbRed: 0.81, green: 0.63, blue: 0.48, alpha: 1)),
         ("Solarized",
-         NSColor(red: 0.0, green: 0.17, blue: 0.21, alpha: 1),
-         NSColor(red: 0.51, green: 0.58, blue: 0.59, alpha: 1),
-         NSColor(red: 0.35, green: 0.43, blue: 0.46, alpha: 1),
-         NSColor(red: 0.15, green: 0.55, blue: 0.82, alpha: 1),
-         NSColor(red: 0.71, green: 0.54, blue: 0.0, alpha: 1),
-         NSColor(red: 0.83, green: 0.21, blue: 0.51, alpha: 1),
-         NSColor(red: 0.80, green: 0.29, blue: 0.09, alpha: 1)),
+         NSColor(srgbRed: 0.0, green: 0.17, blue: 0.21, alpha: 1),
+         NSColor(srgbRed: 0.51, green: 0.58, blue: 0.59, alpha: 1),
+         NSColor(srgbRed: 0.35, green: 0.43, blue: 0.46, alpha: 1),
+         NSColor(srgbRed: 0.15, green: 0.55, blue: 0.82, alpha: 1),
+         NSColor(srgbRed: 0.71, green: 0.54, blue: 0.0, alpha: 1),
+         NSColor(srgbRed: 0.83, green: 0.21, blue: 0.51, alpha: 1),
+         NSColor(srgbRed: 0.80, green: 0.29, blue: 0.09, alpha: 1)),
     ]
 
     // MARK: - Computed: LaTeX properties
@@ -204,7 +204,10 @@ struct UnifiedEditorView: View {
         }
     }
 
-    var codeTheme: CodeSyntaxTheme { .monokai }
+    var codeTheme: CodeSyntaxTheme {
+        let index = min(max(editorTheme, 0), CodeSyntaxTheme.allThemes.count - 1)
+        return CodeSyntaxTheme.allThemes[index]
+    }
 
     var outputDirectoryURL: URL {
         if let manualPreviewArtifact = codeDocumentState.manualPreviewArtifact {
@@ -404,10 +407,15 @@ struct UnifiedEditorView: View {
             }
         }
         .onChange(of: fileURL) {
-            if documentMode.isRunnableCode {
-                stopFileWatcher(); toolbarStatus = .idle; loadFile()
-                if isActive { startFileWatcher() }
-            } else { reloadActiveFileState() }
+            stopFileWatcher()
+            toolbarStatus = .idle
+            loadFile()
+            if !documentMode.isRunnableCode {
+                loadExistingPDF()
+                latexAnnotations = documentMode == .latex ? LaTeXAnnotationStore.load(for: fileURL) : []
+                reconcileAnnotations()
+            }
+            if isActive { startFileWatcher() }
         }
         .onChange(of: panelArrangement) {
             threePaneLeftWidth = nil; threePaneRightWidth = nil

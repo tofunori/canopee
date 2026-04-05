@@ -15,6 +15,7 @@ struct CodeTextEditor: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
+        scrollView.contentView.drawsBackground = false
         scrollView.appearance = NSAppearance(named: .darkAqua)
         scrollView.scrollerStyle = .overlay
 
@@ -175,7 +176,11 @@ final class CodeTextView: NSTextView {
     var dividerColor = NSColor.white.withAlphaComponent(0.08)
 
     override func drawBackground(in rect: NSRect) {
-        super.drawBackground(in: rect)
+        // Do NOT call super — NSTextView.drawBackground(in:) resolves
+        // backgroundColor through the view's effective appearance (.aqua),
+        // which can lighten dark sRGB background colors.
+        backgroundColor.setFill()
+        rect.fill()
         drawGutter(in: rect)
     }
 
