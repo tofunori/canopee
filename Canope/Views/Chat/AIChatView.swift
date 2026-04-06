@@ -366,13 +366,23 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .textSelection(.enabled)
                     streamingCursor
                 } else if message.isFromHistory {
-                    Text(message.content)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.primary.opacity(0.7))
-                        .textSelection(.enabled)
-                } else if message.preRenderedMarkdown != nil {
+                    if messageNeedsBlockMarkdown(message.content) {
+                        DeferredMarkdownView(
+                            text: message.content,
+                            skipFullRender: ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content),
+                            allowPromoteToFullBlock: true,
+                            promotionDelayNanoseconds: 0
+                        )
+                    } else {
+                        Text(message.content)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.primary.opacity(0.7))
+                            .textSelection(.enabled)
+                    }
+                } else if let preRenderedMarkdown = message.preRenderedMarkdown,
+                          !messageNeedsBlockMarkdown(message.content) {
                     // Pre-rendered in background — instant display with markdown
-                    Text(message.preRenderedMarkdown!)
+                    Text(preRenderedMarkdown)
                         .font(.system(size: 13))
                         .textSelection(.enabled)
                 } else {
@@ -400,8 +410,26 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             skipFullRender: overLimit,
             // If pre-render was evicted, visible older messages can still upgrade to full block markdown on demand.
             allowPromoteToFullBlock: !overLimit,
-            promotionDelayNanoseconds: 450_000_000
+            promotionDelayNanoseconds: messageNeedsBlockMarkdown(message.content) ? 0 : 450_000_000
         )
+    }
+
+    private func messageNeedsBlockMarkdown(_ text: String) -> Bool {
+        let lines = text.components(separatedBy: "\n")
+        guard lines.count >= 2 else { return text.contains("```") }
+
+        for idx in 0..<(lines.count - 1) {
+            let line = lines[idx]
+            let nextLine = lines[idx + 1]
+            if MarkdownBlockView.parseBlocks([line, nextLine].joined(separator: "\n")).contains(where: {
+                if case .table = $0 { return true }
+                return false
+            }) {
+                return true
+            }
+        }
+
+        return text.contains("```")
     }
 
     private func toolCard(_ message: ChatMessage) -> some View {

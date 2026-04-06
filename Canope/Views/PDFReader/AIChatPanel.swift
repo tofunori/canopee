@@ -377,9 +377,14 @@ extension NSColor {
 
 // MARK: - Terminal Tab
 
+enum NativeChatProviderKind: Equatable, Hashable {
+    case claude
+    case codex
+}
+
 enum TerminalTabKind: Equatable {
     case terminal
-    case claudeChat
+    case nativeChat(NativeChatProviderKind)
 }
 
 struct TerminalTab: Identifiable {
@@ -399,7 +404,8 @@ final class TerminalWorkspaceState: ObservableObject {
     @Published var splitTabs: [TerminalTab]
     @Published var focusedPane: TerminalPanel.PaneID
     @Published var splitFraction: CGFloat
-    @Published var chatProviders: [UUID: ClaudeHeadlessProvider] = [:]
+    @Published var claudeChatProviders: [UUID: ClaudeHeadlessProvider] = [:]
+    @Published var codexChatProviders: [UUID: CodexAppServerProvider] = [:]
 
     init() {
         let initialTab = TerminalTab()
@@ -417,21 +423,35 @@ final class TerminalWorkspaceState: ObservableObject {
         tabs.first { $0.id == selectedTabID }
     }
 
-    func chatProvider(for tabID: UUID, workingDirectory: URL?) -> ClaudeHeadlessProvider {
-        if let existing = chatProviders[tabID] {
+    func claudeChatProvider(for tabID: UUID, workingDirectory: URL?) -> ClaudeHeadlessProvider {
+        if let existing = claudeChatProviders[tabID] {
             if let wd = workingDirectory {
                 existing.updateWorkingDirectory(wd)
             }
             return existing
         }
         let provider = ClaudeHeadlessProvider(workingDirectory: workingDirectory)
-        chatProviders[tabID] = provider
+        claudeChatProviders[tabID] = provider
+        return provider
+    }
+
+    func codexChatProvider(for tabID: UUID, workingDirectory: URL?) -> CodexAppServerProvider {
+        if let existing = codexChatProviders[tabID] {
+            if let wd = workingDirectory {
+                existing.updateWorkingDirectory(wd)
+            }
+            return existing
+        }
+        let provider = CodexAppServerProvider(workingDirectory: workingDirectory)
+        codexChatProviders[tabID] = provider
         return provider
     }
 
     func removeTab(id: UUID) {
-        chatProviders[id]?.stop()
-        chatProviders.removeValue(forKey: id)
+        claudeChatProviders[id]?.stop()
+        claudeChatProviders.removeValue(forKey: id)
+        codexChatProviders[id]?.stop()
+        codexChatProviders.removeValue(forKey: id)
         tabs.removeAll { $0.id == id }
         if selectedTabID == id {
             selectedTabID = tabs.last?.id
@@ -492,7 +512,7 @@ struct TerminalPanel: View {
                 AppChromeDivider(role: .shell)
             }
 
-            // Tab bar
+            // Tab bar — scroll des onglets à gauche; raccourcis chat toujours visibles à droite (libellés)
             HStack(spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
@@ -501,17 +521,46 @@ struct TerminalPanel: View {
                         }
                     }
                 }
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
-                Spacer()
-
-                Button(action: addClaudeChatTab) {
-                    Image(systemName: "sparkle")
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
+                HStack(spacing: 4) {
+                    Button(action: { addNativeChatTab(.claude) }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 9))
+                            Text("Claude")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
                         .foregroundStyle(.orange)
-                }
-                .buttonStyle(.plain)
-                .help("Nouveau chat Claude")
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Color.orange.opacity(0.14))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nouveau chat Claude")
+                    .accessibilityLabel("Nouveau chat Claude")
+
+                    Button(action: { addNativeChatTab(.codex) }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "curlybraces")
+                                .font(.system(size: 9))
+                            Text("Codex")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundStyle(.cyan)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Color.cyan.opacity(0.14))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nouveau chat Codex")
+                    .accessibilityLabel("Nouveau chat Codex")
 
                 if showsInlineControls {
                     Button(action: toggleOptionAsMetaForFocusedPane) {
@@ -543,6 +592,8 @@ struct TerminalPanel: View {
                     .buttonStyle(.plain)
                     .help("Réglages du terminal")
                 }
+                }
+                .fixedSize(horizontal: true, vertical: false)
 
                 Spacer()
                     .frame(width: 6)
@@ -553,7 +604,7 @@ struct TerminalPanel: View {
             AppChromeDivider(role: .panel)
 
             Group {
-                if workspaceState.selectedTab?.kind == .claudeChat {
+                if case .nativeChat = workspaceState.selectedTab?.kind {
                     if isVisible {
                         chatPaneContent
                     }
@@ -581,12 +632,19 @@ struct TerminalPanel: View {
         .onReceive(NotificationCenter.default.publisher(for: .canopeSendPromptToTerminal)) { notification in
             guard isVisible else { return }
             guard let prompt = notification.userInfo?["prompt"] as? String else { return }
-            // If the active tab is a Claude chat, send to it instead of the terminal
-            if let selectedTab = workspaceState.selectedTab, selectedTab.kind == .claudeChat,
+            // If the active tab is a native chat, send to it instead of the terminal
+            if let selectedTab = workspaceState.selectedTab,
+               case .nativeChat(let chatKind) = selectedTab.kind,
                let tabID = workspaceState.selectedTabID
             {
-                let provider = workspaceState.chatProvider(for: tabID, workingDirectory: startupWorkingDirectory)
-                provider.sendMessage(prompt)
+                switch chatKind {
+                case .claude:
+                    let provider = workspaceState.claudeChatProvider(for: tabID, workingDirectory: startupWorkingDirectory)
+                    provider.sendMessage(prompt)
+                case .codex:
+                    let provider = workspaceState.codexChatProvider(for: tabID, workingDirectory: startupWorkingDirectory)
+                    provider.sendMessage(prompt)
+                }
             } else {
                 sendPromptToFocusedTerminal(prompt)
             }
@@ -613,10 +671,20 @@ struct TerminalPanel: View {
 
     // MARK: - Tab Button
 
+    private func terminalTabIconAndColor(for tab: TerminalTab) -> (String, SwiftUI.Color) {
+        switch tab.kind {
+        case .terminal:
+            return ("terminal", AppChromePalette.tabIndicator(for: .terminal))
+        case .nativeChat(.claude):
+            return ("sparkle", .orange)
+        case .nativeChat(.codex):
+            return ("chevron.left.forwardslash.chevron.right", .cyan)
+        }
+    }
+
     @ViewBuilder
     private func terminalTabButton(_ tab: TerminalTab) -> some View {
-        let iconName = tab.kind == .claudeChat ? "sparkle" : "terminal"
-        let indicatorColor = tab.kind == .claudeChat ? Color.orange : AppChromePalette.tabIndicator(for: .terminal)
+        let (iconName, indicatorColor) = terminalTabIconAndColor(for: tab)
 
         HStack(spacing: 4) {
             Image(systemName: iconName)
@@ -837,30 +905,48 @@ struct TerminalPanel: View {
         workspaceState.selectedTabID = tab.id
     }
 
-    private func addClaudeChatTab() {
-        let tab = TerminalTab(title: "Claude", kind: .claudeChat)
+    private func addNativeChatTab(_ chat: NativeChatProviderKind) {
+        let title: String
+        switch chat {
+        case .claude: title = "Claude"
+        case .codex: title = "Codex"
+        }
+        let tab = TerminalTab(title: title, kind: .nativeChat(chat))
         workspaceState.tabs.append(tab)
         workspaceState.selectedTabID = tab.id
     }
 
     @ViewBuilder
     private var chatPaneContent: some View {
-        if let tabID = workspaceState.selectedTabID {
-            let provider = workspaceState.chatProvider(
-                for: tabID,
-                workingDirectory: startupWorkingDirectory
-            )
-            AIChatView(
-                provider: provider,
-                fileRootURL: startupWorkingDirectory
-            )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .onAppear {
-                    // Keep working directory in sync with current project
-                    if let dir = startupWorkingDirectory {
-                        provider.updateWorkingDirectory(dir)
+        if let tab = workspaceState.selectedTab,
+           case .nativeChat(let chatKind) = tab.kind
+        {
+            switch chatKind {
+            case .claude:
+                let provider = workspaceState.claudeChatProvider(
+                    for: tab.id,
+                    workingDirectory: startupWorkingDirectory
+                )
+                AIChatView(provider: provider, fileRootURL: startupWorkingDirectory)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .onAppear {
+                        if let dir = startupWorkingDirectory {
+                            provider.updateWorkingDirectory(dir)
+                        }
                     }
-                }
+            case .codex:
+                let provider = workspaceState.codexChatProvider(
+                    for: tab.id,
+                    workingDirectory: startupWorkingDirectory
+                )
+                AIChatView(provider: provider, fileRootURL: startupWorkingDirectory)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .onAppear {
+                        if let dir = startupWorkingDirectory {
+                            provider.updateWorkingDirectory(dir)
+                        }
+                    }
+            }
         }
     }
 
@@ -886,8 +972,10 @@ struct TerminalPanel: View {
         guard workspaceState.tabs.count > 1 else { return }
         if let index = workspaceState.tabs.firstIndex(where: { $0.id == tab.id }) {
             // Clean up chat provider if it's a chat tab
-            workspaceState.chatProviders[tab.id]?.stop()
-            workspaceState.chatProviders.removeValue(forKey: tab.id)
+            workspaceState.claudeChatProviders[tab.id]?.stop()
+            workspaceState.claudeChatProviders.removeValue(forKey: tab.id)
+            workspaceState.codexChatProviders[tab.id]?.stop()
+            workspaceState.codexChatProviders.removeValue(forKey: tab.id)
 
             workspaceState.tabs.remove(at: index)
             if let terminal = workspaceState.terminalViews.removeValue(forKey: tab.id) {

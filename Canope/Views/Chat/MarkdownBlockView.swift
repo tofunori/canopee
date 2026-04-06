@@ -312,23 +312,34 @@ struct MarkdownBlockView: View {
     }
 
     private func tableView(rows: [[String]]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { rowIdx, row in
-                HStack(spacing: 0) {
-                    ForEach(Array(row.enumerated()), id: \.offset) { colIdx, cell in
-                        Text(inlineMarkdown(cell.trimmingCharacters(in: .whitespaces)))
-                            .font(.system(size: 12, weight: rowIdx == 0 ? .semibold : .regular))
-                            .foregroundStyle(rowIdx == 0 ? .primary : .secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                        if colIdx < row.count - 1 {
-                            Divider()
+        let normalizedRows = rows.map { $0.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
+        return Group {
+            if Self.shouldUseLightweightTableFallback(rows: normalizedRows) {
+                lightweightTableView(rows: normalizedRows)
+            } else {
+                let columnWidths = Self.preferredTableColumnWidths(rows: normalizedRows)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(normalizedRows.enumerated()), id: \.offset) { rowIdx, row in
+                            HStack(spacing: 0) {
+                                ForEach(Array(row.enumerated()), id: \.offset) { colIdx, cell in
+                                    Text(verbatim: cell)
+                                        .font(.system(size: 12, weight: rowIdx == 0 ? .semibold : .regular))
+                                        .foregroundStyle(rowIdx == 0 ? .primary : .secondary)
+                                        .frame(width: columnWidths[colIdx], alignment: .leading)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 6)
+                                        .background(rowIdx == 0 ? AppChromePalette.surfaceBar.opacity(0.45) : Color.clear)
+                                    if colIdx < row.count - 1 {
+                                        Divider()
+                                    }
+                                }
+                            }
+                            if rowIdx < normalizedRows.count - 1 {
+                                Divider()
+                            }
                         }
                     }
-                }
-                if rowIdx < rows.count - 1 {
-                    Divider()
                 }
             }
         }
@@ -340,6 +351,18 @@ struct MarkdownBlockView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(AppChromePalette.dividerSoft, lineWidth: 0.5)
         )
+    }
+
+    private func lightweightTableView(rows: [[String]]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Text(verbatim: Self.lightweightTableText(rows: rows))
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func paragraphView(text: String) -> some View {
@@ -418,23 +441,20 @@ struct MarkdownBlockView: View {
             }
 
             // Table
-            if line.contains("|") && i + 1 < lines.count && lines[i + 1].contains("---") {
+            if i + 1 < lines.count,
+               let headerCells = parseMarkdownTableRow(line),
+               isMarkdownTableSeparator(lines[i + 1], expectedColumnCount: headerCells.count)
+            {
                 var tableRows: [[String]] = []
-                while i < lines.count && lines[i].contains("|") {
-                    let cells = lines[i]
-                        .split(separator: "|", omittingEmptySubsequences: false)
-                        .map(String.init)
-                        .dropFirst()
-                        .dropLast()
-                        .map { $0.trimmingCharacters(in: .whitespaces) }
-                    // Skip separator row
-                    if !cells.allSatisfy({ $0.range(of: #"^-+$"#, options: .regularExpression) != nil }) {
-                        tableRows.append(Array(cells))
-                    }
+                tableRows.append(headerCells)
+                i += 2 // consume header + separator
+
+                while i < lines.count, let cells = parseMarkdownTableRow(lines[i]), cells.count == headerCells.count {
+                    tableRows.append(cells)
                     i += 1
                 }
                 if !tableRows.isEmpty {
-                    blocks.append(.table(rows: tableRows))
+                    blocks.append(.table(rows: normalizeMarkdownTableRows(tableRows)))
                 }
                 continue
             }
@@ -491,7 +511,9 @@ struct MarkdownBlockView: View {
                 let l = lines[i]
                 let trimmed = l.trimmingCharacters(in: .whitespaces)
                 if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix("```")
-                    || (trimmed.contains("|") && i + 1 < lines.count && lines[i + 1].contains("---"))
+                    || (i + 1 < lines.count
+                        && parseMarkdownTableRow(l) != nil
+                        && isMarkdownTableSeparator(lines[i + 1], expectedColumnCount: parseMarkdownTableRow(l)?.count ?? 0))
                     || trimmed.range(of: #"^-{3,}$|^\*{3,}$"#, options: .regularExpression) != nil
                 {
                     break
@@ -504,6 +526,102 @@ struct MarkdownBlockView: View {
             }
         }
         return blocks
+    }
+
+    nonisolated private static func parseMarkdownTableRow(_ line: String) -> [String]? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|") else { return nil }
+
+        let rawCells: [Substring]
+        if trimmed.hasPrefix("|") || trimmed.hasSuffix("|") {
+            rawCells = trimmed
+                .split(separator: "|", omittingEmptySubsequences: false)
+                .dropFirst(trimmed.hasPrefix("|") ? 1 : 0)
+                .dropLast(trimmed.hasSuffix("|") ? 1 : 0)
+        } else {
+            rawCells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+        }
+
+        let cells = rawCells.map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count >= 2, cells.contains(where: { !$0.isEmpty }) else { return nil }
+        return cells
+    }
+
+    nonisolated private static func isMarkdownTableSeparator(_ line: String, expectedColumnCount: Int) -> Bool {
+        guard expectedColumnCount >= 2, let cells = parseMarkdownTableRow(line), cells.count == expectedColumnCount else {
+            return false
+        }
+        return cells.allSatisfy { cell in
+            let trimmed = cell.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return false }
+            return trimmed.range(of: #"^:?-{3,}:?$"#, options: .regularExpression) != nil
+        }
+    }
+
+    nonisolated private static func normalizeMarkdownTableRows(_ rows: [[String]]) -> [[String]] {
+        let maxColumns = rows.map(\.count).max() ?? 0
+        guard maxColumns > 0 else { return rows }
+        return rows.map { row in
+            row + Array(repeating: "", count: max(0, maxColumns - row.count))
+        }
+    }
+
+    nonisolated private static func shouldUseLightweightTableFallback(rows: [[String]]) -> Bool {
+        let rowCount = rows.count
+        let columnCount = rows.map(\.count).max() ?? 0
+        let cellCount = rows.reduce(0) { $0 + $1.count }
+        let characterCount = rows.flatMap { $0 }.reduce(0) { $0 + $1.count }
+        return rowCount > 20 || columnCount > 8 || cellCount > 120 || characterCount > 3_000
+    }
+
+    nonisolated private static func preferredTableColumnWidths(rows: [[String]]) -> [CGFloat] {
+        let maxColumns = rows.map(\.count).max() ?? 0
+        guard maxColumns > 0 else { return [] }
+        return (0..<maxColumns).map { column in
+            let maxChars = rows.reduce(0) { width, row in
+                max(width, row[column].replacingOccurrences(of: "\n", with: " ").count)
+            }
+            let clampedChars = min(max(maxChars, 8), 28)
+            return CGFloat(clampedChars) * 7.2
+        }
+    }
+
+    nonisolated private static func lightweightTableText(rows: [[String]]) -> String {
+        let maxColumns = rows.map(\.count).max() ?? 0
+        guard maxColumns > 0 else { return "" }
+
+        let paddedRows = normalizeMarkdownTableRows(rows)
+        let columnWidths = (0..<maxColumns).map { column in
+            paddedRows.reduce(1) { width, row in
+                max(width, min(28, row[column].count))
+            }
+        }
+
+        func clipped(_ text: String, width: Int) -> String {
+            guard text.count > width else { return text }
+            guard width > 1 else { return String(text.prefix(width)) }
+            return String(text.prefix(width - 1)) + "…"
+        }
+
+        func renderRow(_ row: [String]) -> String {
+            row.enumerated().map { index, cell in
+                let width = columnWidths[index]
+                let value = clipped(cell.replacingOccurrences(of: "\n", with: " "), width: width)
+                return value.padding(toLength: width, withPad: " ", startingAt: 0)
+            }
+            .joined(separator: " | ")
+        }
+
+        var lines: [String] = []
+        if let header = paddedRows.first {
+            lines.append(renderRow(header))
+            let separator = columnWidths.map { String(repeating: "-", count: max(3, $0)) }.joined(separator: "-|-")
+            lines.append(separator)
+            for row in paddedRows.dropFirst() {
+                lines.append(renderRow(row))
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Single attributed preview (shared with ChatMessage / tests)
