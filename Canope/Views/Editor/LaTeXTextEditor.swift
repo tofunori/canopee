@@ -369,7 +369,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
             highlight(storage, text: text, pattern: #"[{}]"#, color: braceColor)
             highlight(storage, text: text, pattern: #"[\[\]]"#, color: braceColor.withAlphaComponent(0.7))
             // Comments last — overwrites commands/braces inside comment regions
-            highlight(storage, text: text, pattern: #"(?<!\\)%[^\n]*"#, color: commentColor)
+            highlight(storage, text: text, pattern: #"(?<!\\)%[^\r\n\u{2028}\u{2029}]*"#, color: commentColor)
             applyAnnotationHighlights(to: storage)
             storage.endEditing()
             textView.typingAttributes = [
