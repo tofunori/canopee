@@ -70,6 +70,7 @@ struct UnifiedEditorView: View {
     @State private var pendingAnnotation: LaTeXEditorPendingAnnotation?
     @State var annotationExportError: String?
     @State var referenceContextWriteID = UUID()
+    @StateObject var compiledPDFSearchState = PDFSearchUIState()
     @Namespace var pdfTabIndicatorNamespace
 
     // MARK: - State: Code specific
@@ -375,11 +376,14 @@ struct UnifiedEditorView: View {
     private var bodyCore: some View {
         VStack(spacing: 0) {
             editorToolbar
+                .zIndex(30)
             AppChromeDivider(role: .shell)
+                .zIndex(20)
             HSplitView {
                 sidebarPane
                 workAreaPane
             }
+            .zIndex(0)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -877,6 +881,15 @@ struct UnifiedEditorView: View {
         selectedPdfTab
     }
 
+    private var activePDFSearchState: PDFSearchUIState? {
+        switch selectedContentTab {
+        case .compiled:
+            return compiledPDF == nil ? nil : compiledPDFSearchState
+        case .reference(let id):
+            return workspaceState.referencePDFUIStates[id]?.searchState
+        }
+    }
+
     @ViewBuilder
     private var primaryContentView: some View {
         if documentMode.isRunnableCode {
@@ -887,7 +900,8 @@ struct UnifiedEditorView: View {
                 syncTarget: documentMode == .latex && selectedPdfTab == .compiled ? syncTarget : nil,
                 onInverseSync: documentMode == .latex ? { result in inverseSyncResult = result } : nil,
                 allowsInverseSync: documentMode == .latex,
-                fitToWidthTrigger: selectedPdfTab == .compiled ? fitToWidthTrigger : false
+                fitToWidthTrigger: selectedPdfTab == .compiled ? fitToWidthTrigger : false,
+                searchState: compiledPDFSearchState
             )
         } else {
             ContentUnavailableView(
@@ -1043,6 +1057,7 @@ struct UnifiedEditorView: View {
             } else {
                 activeReferenceToolbarView
             }
+            activePDFSearchToolbarView
 
             Spacer(minLength: 8)
 
@@ -1056,6 +1071,12 @@ struct UnifiedEditorView: View {
         .padding(.vertical, 4)
         .frame(height: AppChromeMetrics.toolbarHeight)
         .background(AppChromePalette.surfaceBar)
+        .zIndex(30)
+        .background {
+            Button("") { openActivePDFSearch() }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+        }
     }
 
     /// Mode-specific document actions (compile/run, save, errors/logs)
@@ -1076,7 +1097,7 @@ struct UnifiedEditorView: View {
             }
             .buttonStyle(.plain)
             .disabled(codeDocumentState.isRunning)
-            .help("Exécuter (⌘B)")
+            .appChromeQuickHelp("Exécuter (⌘B)")
             .keyboardShortcut("b", modifiers: .command)
 
             Button(action: saveFile) {
@@ -1084,14 +1105,14 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Enregistrer")
+            .appChromeQuickHelp("Enregistrer")
 
             Button(action: { codeDocumentState.showLogs.toggle() }) {
                 Image(systemName: codeDocumentState.showLogs ? "list.bullet.rectangle.fill" : "list.bullet.rectangle")
                     .foregroundStyle(codeDocumentState.showLogs ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .help("Journal d'exécution")
+            .appChromeQuickHelp("Journal d'exécution")
         }
     }
 
@@ -1111,7 +1132,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .help("Fichiers")
+            .appChromeQuickHelp("Fichiers")
 
             Button(action: {
                 AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
@@ -1122,7 +1143,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(showEditorPane ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .help("Éditeur")
+            .appChromeQuickHelp("Éditeur")
             .disabled(showEditorPane && !showTerminal && !isContentPaneVisible)
 
             Button(action: {
@@ -1134,7 +1155,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(showTerminal ? AppChromePalette.success : .secondary)
             }
             .buttonStyle(.plain)
-            .help("Terminal")
+            .appChromeQuickHelp("Terminal")
 
             Button(action: {
                 AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
@@ -1151,7 +1172,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(isContentPaneVisible ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .help(documentMode.isRunnableCode ? "Output" : "PDF")
+            .appChromeQuickHelp(documentMode.isRunnableCode ? "Output" : "PDF")
         }
     }
 
@@ -1179,7 +1200,7 @@ struct UnifiedEditorView: View {
                 Image(systemName: "rectangle.3.group")
             }
             .buttonStyle(.plain)
-            .help("Disposition des panneaux")
+            .appChromeQuickHelp("Disposition des panneaux")
         }
     }
 
@@ -1190,7 +1211,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Ouvrir un dossier (⇧⌘O)")
+            .appChromeQuickHelp("Ouvrir un dossier (⇧⌘O)")
 
             if !hasNoFile {
                 Image(systemName: "doc.plaintext")
@@ -1210,7 +1231,7 @@ struct UnifiedEditorView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Créer un nouveau fichier éditable")
+                .appChromeQuickHelp("Créer un nouveau fichier éditable")
             }
         }
     }
@@ -1261,7 +1282,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(pdfPaneTabs.count > 1 ? .blue : .secondary)
             }
             .buttonStyle(.plain)
-            .help("Ouvrir un article de référence")
+            .appChromeQuickHelp("Ouvrir un article de référence")
         }
     }
 
@@ -1285,6 +1306,10 @@ struct UnifiedEditorView: View {
         )
     }
 
+    private var activePDFSearchToolbarView: some View {
+        ActivePDFSearchToolbarView(searchState: activePDFSearchState)
+    }
+
     private var editorAppearanceToolbarClusterView: some View {
         toolbarCluster(zone: .trailing, title: "Ed.") {
             Menu {
@@ -1302,7 +1327,7 @@ struct UnifiedEditorView: View {
                 Image(systemName: "textformat.size")
             }
             .buttonStyle(.plain)
-            .help("Taille police")
+            .appChromeQuickHelp("Taille police")
 
             Menu {
                 ForEach(0..<Self.editorThemes.count, id: \.self) { i in
@@ -1319,7 +1344,7 @@ struct UnifiedEditorView: View {
                 Image(systemName: "paintpalette")
             }
             .buttonStyle(.plain)
-            .help("Thème éditeur")
+            .appChromeQuickHelp("Thème éditeur")
         }
     }
 
@@ -1332,14 +1357,14 @@ struct UnifiedEditorView: View {
                         .foregroundStyle(.green)
                 }
                 .buttonStyle(.plain)
-                .help("Nouveau terminal")
+                .appChromeQuickHelp("Nouveau terminal")
 
                 Button(action: terminalAppearanceStore.presentSettings) {
                     Image(systemName: "slider.horizontal.3")
                         .foregroundStyle(.green)
                 }
                 .buttonStyle(.plain)
-                .help("Réglages du terminal")
+                .appChromeQuickHelp("Réglages du terminal")
             }
         }
     }
@@ -1363,6 +1388,10 @@ struct UnifiedEditorView: View {
             onDeleteAll: codeDeleteAllReferenceAnnotations,
             onToggleAnnotations: {}
         )
+    }
+
+    private func openActivePDFSearch() {
+        activePDFSearchState?.present()
     }
 
     // MARK: - Shared Toolbar Helpers

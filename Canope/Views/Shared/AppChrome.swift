@@ -15,7 +15,7 @@ enum AppChromeMetrics {
     static let tabIndicatorHeight: CGFloat = 2
     static let dividerThickness: CGFloat = 1
     static let statusCapsuleHeight: CGFloat = 18
-    static let hoverHintDelay: TimeInterval = 0.08
+    static let hoverHintDelay: TimeInterval = 0.02
 }
 
 enum AppChromeTabRole {
@@ -406,7 +406,7 @@ struct AppChromeHoverHintBubble: View {
         Text(text)
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(.primary)
-            .lineLimit(2)
+            .lineLimit(3)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -419,7 +419,7 @@ struct AppChromeHoverHintBubble: View {
                     .stroke(AppChromePalette.clusterStroke, lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
-            .fixedSize(horizontal: false, vertical: true)
+            .fixedSize(horizontal: true, vertical: false)
             .allowsHitTesting(false)
     }
 }
@@ -433,10 +433,10 @@ private struct AppChromeQuickHelpModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .overlay(alignment: .top) {
+            .overlay(alignment: .bottom) {
                 if isPresented {
                     AppChromeHoverHintBubble(text: text)
-                        .offset(y: -34)
+                        .offset(y: 34)
                         .transition(.opacity)
                         .zIndex(10)
                 }
@@ -471,11 +471,7 @@ private struct AppChromeQuickHelpModifier: ViewModifier {
 extension View {
     @ViewBuilder
     func appChromeSystemHelp(_ text: String?) -> some View {
-        if let text, !text.isEmpty {
-            help(text)
-        } else {
-            self
-        }
+        self
     }
 
     @ViewBuilder

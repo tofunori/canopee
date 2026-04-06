@@ -1,5 +1,138 @@
 import SwiftUI
 
+struct PDFSearchToolbarCluster: View {
+    @ObservedObject var searchState: PDFSearchUIState
+    @FocusState private var isSearchFieldFocused: Bool
+
+    var body: some View {
+        AppChromeToolbarCluster(zone: .primary, title: "Recherche") {
+            HStack(spacing: 6) {
+                ToolbarIconButton(
+                    systemName: "magnifyingglass",
+                    isSelected: searchState.isVisible,
+                    foregroundStyle: .secondary,
+                    selectedFillTint: AppChromePalette.info,
+                    helpText: "Rechercher dans le PDF (⌘F)"
+                ) {
+                    if searchState.isVisible {
+                        searchState.requestFocus()
+                    } else {
+                        searchState.present()
+                    }
+                }
+
+                if searchState.isVisible {
+                    TextField("Rechercher dans le PDF", text: $searchState.query)
+                        .textFieldStyle(.plain)
+                        .frame(width: 190)
+                        .padding(.horizontal, 8)
+                        .frame(height: AppChromeMetrics.toolbarButtonSize)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
+                                .fill(AppChromePalette.hoverFill)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
+                                .stroke(AppChromePalette.clusterStroke, lineWidth: 1)
+                        )
+                        .focused($isSearchFieldFocused)
+                        .onSubmit {
+                            searchState.goToNextResult()
+                        }
+                        .onKeyPress(phases: .down) { press in
+                            handleSearchFieldKeyPress(press)
+                        }
+
+                    Text(searchSummary)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(searchSummaryColor)
+                        .frame(minWidth: 44, alignment: .trailing)
+
+                    ToolbarIconButton(
+                        systemName: "chevron.up",
+                        foregroundStyle: .secondary,
+                        helpText: "Résultat précédent (⇧↩)"
+                    ) {
+                        searchState.goToPreviousResult()
+                    }
+                    .disabled(!searchState.hasResults)
+
+                    ToolbarIconButton(
+                        systemName: "chevron.down",
+                        foregroundStyle: .secondary,
+                        helpText: "Résultat suivant (↩)"
+                    ) {
+                        searchState.goToNextResult()
+                    }
+                    .disabled(!searchState.hasResults)
+
+                    ToolbarIconButton(
+                        systemName: "xmark",
+                        foregroundStyle: .secondary,
+                        helpText: "Fermer la recherche (Esc)"
+                    ) {
+                        searchState.dismiss()
+                    }
+                }
+            }
+        }
+        .onAppear {
+            if searchState.isVisible {
+                isSearchFieldFocused = true
+            }
+        }
+        .onChange(of: searchState.focusRequestToken) {
+            guard searchState.isVisible else { return }
+            isSearchFieldFocused = true
+        }
+    }
+
+    private var searchSummary: String {
+        "\(searchState.currentMatchIndex)/\(searchState.matchCount)"
+    }
+
+    private var searchSummaryColor: Color {
+        if searchState.query.isEmpty || searchState.hasResults {
+            return .secondary
+        }
+        return .red
+    }
+
+    private func handleSearchFieldKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        if press.key == .return {
+            if press.modifiers.contains(.shift) {
+                searchState.goToPreviousResult()
+            } else {
+                searchState.goToNextResult()
+            }
+            return .handled
+        }
+
+        if press.key == .escape {
+            if searchState.query.isEmpty {
+                searchState.dismiss()
+            } else {
+                searchState.clearSearch()
+            }
+            return .handled
+        }
+
+        return .ignored
+    }
+}
+
+struct ActivePDFSearchToolbarView: View {
+    let searchState: PDFSearchUIState?
+
+    var body: some View {
+        Group {
+            if let searchState {
+                PDFSearchToolbarCluster(searchState: searchState)
+            }
+        }
+    }
+}
+
 struct EditorDocumentToolbarClusterView: View {
     let title: String
     let showsLatexActions: Bool
@@ -211,7 +344,6 @@ struct ReferencePDFToolbarIconButton: View {
                 .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help(help)
         .appChromeQuickHelp(help)
         .onHover { isHovered = $0 }
         .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
@@ -259,7 +391,6 @@ struct ReferencePDFToolbarIconLabel: View {
                     .stroke(isActive ? AppChromePalette.selectedAccentStroke : (isHovered ? AppChromePalette.clusterStroke : .clear), lineWidth: 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous))
-            .appChromeSystemHelp(helpText)
             .appChromeQuickHelp(helpText)
             .onHover { isHovered = $0 }
             .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)

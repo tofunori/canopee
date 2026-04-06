@@ -10,6 +10,23 @@ struct PDFPreviewView: NSViewRepresentable {
     var onInverseSync: ((SyncTeXInverseResult) -> Void)?
     var allowsInverseSync: Bool = true
     var fitToWidthTrigger: Bool = false
+    @ObservedObject var searchState: PDFSearchUIState
+
+    init(
+        document: PDFDocument,
+        syncTarget: SyncTeXForwardResult? = nil,
+        onInverseSync: ((SyncTeXInverseResult) -> Void)? = nil,
+        allowsInverseSync: Bool = true,
+        fitToWidthTrigger: Bool = false,
+        searchState: PDFSearchUIState = PDFSearchUIState()
+    ) {
+        self.document = document
+        self.syncTarget = syncTarget
+        self.onInverseSync = onInverseSync
+        self.allowsInverseSync = allowsInverseSync
+        self.fitToWidthTrigger = fitToWidthTrigger
+        self._searchState = ObservedObject(wrappedValue: searchState)
+    }
 
     func makeNSView(context: Context) -> NSView {
         let container = PDFPreviewContainerView()
@@ -37,7 +54,10 @@ struct PDFPreviewView: NSViewRepresentable {
         let clickGesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleClick(_:)))
         clickGesture.numberOfClicksRequired = 1
         pdfView.addGestureRecognizer(clickGesture)
+        context.coordinator.searchState = searchState
         context.coordinator.configureSelectionObservation(for: pdfView)
+        context.coordinator.configureSearchState(for: pdfView)
+        context.coordinator.syncSearchQuery(in: pdfView, force: true)
 
         return container
     }
@@ -47,6 +67,7 @@ struct PDFPreviewView: NSViewRepresentable {
         let pdfView = container.pdfView
         if pdfView.document !== document {
             pdfView.document = document
+            context.coordinator.resetSearchQueryCache()
             // Fit to view first, then allow manual zoom
             pdfView.autoScales = true
             DispatchQueue.main.async {
@@ -55,7 +76,9 @@ struct PDFPreviewView: NSViewRepresentable {
         }
         context.coordinator.onInverseSync = onInverseSync
         context.coordinator.allowsInverseSync = allowsInverseSync
+        context.coordinator.searchState = searchState
         context.coordinator.configureSelectionObservation(for: pdfView)
+        context.coordinator.configureSearchState(for: pdfView)
 
         // Fit to width
         if fitToWidthTrigger != context.coordinator.lastFitTrigger {
@@ -81,9 +104,11 @@ struct PDFPreviewView: NSViewRepresentable {
             )
             pdfView.go(to: rect, on: page)
         }
+
+        context.coordinator.syncSearchQuery(in: pdfView, force: false)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(searchState: searchState) }
 
     @MainActor
     class Coordinator: NSObject {
@@ -91,11 +116,19 @@ struct PDFPreviewView: NSViewRepresentable {
 
         weak var pdfView: PDFView?
         weak var observedSelectionPDFView: PDFView?
+        var searchState: PDFSearchUIState?
         var onInverseSync: ((SyncTeXInverseResult) -> Void)?
         var allowsInverseSync = true
         var lastFitTrigger: Bool = false
         private var hadSelectionAtMouseDown = false
         private var clickedInsideSelectionAtMouseDown = false
+        private var searchMatches: [PDFSelection] = []
+        private var lastSearchQuery = ""
+        private var isUpdatingSearchSelection = false
+
+        init(searchState: PDFSearchUIState? = nil) {
+            self.searchState = searchState
+        }
 
         func shouldConsumeDeselectionClick(at locationInView: NSPoint, event: NSEvent, in pdfView: PDFView) -> Bool {
             guard event.type == .leftMouseDown,
@@ -133,6 +166,35 @@ struct PDFPreviewView: NSViewRepresentable {
                 name: Notification.Name.PDFViewSelectionChanged,
                 object: pdfView
             )
+        }
+
+        func configureSearchState(for pdfView: PDFView) {
+            self.pdfView = pdfView
+            searchState?.configureActions(
+                next: { [weak self, weak pdfView] in
+                    guard let self, let pdfView else { return }
+                    self.navigateSearch(step: 1, in: pdfView)
+                },
+                previous: { [weak self, weak pdfView] in
+                    guard let self, let pdfView else { return }
+                    self.navigateSearch(step: -1, in: pdfView)
+                },
+                clear: { [weak self, weak pdfView] in
+                    guard let self, let pdfView else { return }
+                    self.clearSearchResults(in: pdfView)
+                }
+            )
+        }
+
+        func syncSearchQuery(in pdfView: PDFView, force: Bool) {
+            let query = searchState?.query ?? ""
+            guard force || query != lastSearchQuery else { return }
+            lastSearchQuery = query
+            updateSearchResults(for: query, in: pdfView)
+        }
+
+        func resetSearchQueryCache() {
+            lastSearchQuery = ""
         }
 
         @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
@@ -194,6 +256,9 @@ struct PDFPreviewView: NSViewRepresentable {
 
         @objc
         private func handleSelectionChangedNotification(_ notification: Notification) {
+            if isUpdatingSearchSelection {
+                return
+            }
             guard let pdfView,
                   let fileURL = pdfView.document?.documentURL else {
                 return
@@ -289,6 +354,54 @@ struct PDFPreviewView: NSViewRepresentable {
                 CanopeContextFiles.writeIDESelectionState(state)
                 CanopeContextFiles.clearLegacySelectionMirror()
             }
+        }
+
+        private func updateSearchResults(for query: String, in pdfView: PDFView) {
+            let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmedQuery.isEmpty == false else {
+                clearSearchResults(in: pdfView)
+                return
+            }
+
+            searchMatches = pdfView.document?.findString(trimmedQuery, withOptions: [.caseInsensitive]) ?? []
+            searchState?.matchCount = searchMatches.count
+
+            guard searchMatches.isEmpty == false else {
+                searchState?.currentMatchIndex = 0
+                clearSelection(in: pdfView)
+                return
+            }
+
+            showSearchMatch(at: 0, in: pdfView)
+        }
+
+        private func clearSearchResults(in pdfView: PDFView) {
+            searchMatches = []
+            searchState?.matchCount = 0
+            searchState?.currentMatchIndex = 0
+            clearSelection(in: pdfView)
+        }
+
+        private func navigateSearch(step: Int, in pdfView: PDFView) {
+            guard searchMatches.isEmpty == false else { return }
+            let currentIndex = max(searchState?.currentMatchIndex ?? 1, 1) - 1
+            let nextIndex = (currentIndex + step + searchMatches.count) % searchMatches.count
+            showSearchMatch(at: nextIndex, in: pdfView)
+        }
+
+        private func showSearchMatch(at index: Int, in pdfView: PDFView) {
+            guard searchMatches.indices.contains(index) else { return }
+            let selection = searchMatches[index]
+            isUpdatingSearchSelection = true
+            pdfView.setCurrentSelection(selection, animate: true)
+            if let page = selection.pages.first {
+                let bounds = selection.bounds(for: page).insetBy(dx: -24, dy: -24)
+                if bounds.isNull == false, bounds.isEmpty == false {
+                    pdfView.go(to: bounds, on: page)
+                }
+            }
+            isUpdatingSearchSelection = false
+            searchState?.currentMatchIndex = index + 1
         }
     }
 }

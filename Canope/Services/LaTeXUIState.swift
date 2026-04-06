@@ -2,6 +2,60 @@ import Foundation
 import PDFKit
 
 @MainActor
+final class PDFSearchUIState: ObservableObject {
+    @Published var isVisible = false
+    @Published var query = ""
+    @Published var matchCount = 0
+    @Published var currentMatchIndex = 0
+    @Published var focusRequestToken = UUID()
+
+    private var nextResultAction: (() -> Void)?
+    private var previousResultAction: (() -> Void)?
+    private var clearSearchAction: (() -> Void)?
+
+    var hasResults: Bool { matchCount > 0 }
+
+    func configureActions(
+        next: (() -> Void)?,
+        previous: (() -> Void)?,
+        clear: (() -> Void)?
+    ) {
+        nextResultAction = next
+        previousResultAction = previous
+        clearSearchAction = clear
+    }
+
+    func present() {
+        isVisible = true
+        requestFocus()
+    }
+
+    func dismiss() {
+        clearSearch()
+        isVisible = false
+    }
+
+    func requestFocus() {
+        focusRequestToken = UUID()
+    }
+
+    func clearSearch() {
+        query = ""
+        matchCount = 0
+        currentMatchIndex = 0
+        clearSearchAction?()
+    }
+
+    func goToNextResult() {
+        nextResultAction?()
+    }
+
+    func goToPreviousResult() {
+        previousResultAction?()
+    }
+}
+
+@MainActor
 final class ReferencePDFUIState: ObservableObject {
     @Published var currentTool: AnnotationTool = .pointer
     @Published var currentColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
@@ -18,6 +72,7 @@ final class ReferencePDFUIState: ObservableObject {
     @Published var isEditingNote = false
     @Published var editingNoteText = ""
     @Published var bridgeCommandRegistrationToken = UUID()
+    let searchState = PDFSearchUIState()
 
     var pendingSaveWorkItem: DispatchWorkItem?
     private var pdfViewUndoAction: (() -> Void)?

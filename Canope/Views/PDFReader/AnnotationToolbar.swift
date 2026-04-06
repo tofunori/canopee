@@ -286,7 +286,6 @@ struct ToolbarIconButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(foregroundStyle)
-        .help(helpText)
         .appChromeQuickHelp(helpText)
         .onHover { hovering in
             isHovered = hovering
@@ -322,7 +321,6 @@ struct ToolbarIconLabel: View {
             .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius))
             .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius))
             .foregroundStyle(.primary)
-            .help(helpText)
             .appChromeQuickHelp(helpText)
             .onHover { hovering in
                 isHovered = hovering
