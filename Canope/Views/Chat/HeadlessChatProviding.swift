@@ -4,6 +4,8 @@ import Foundation
 @MainActor
 protocol HeadlessChatProviding: AIHeadlessProvider {
     var chatWorkingDirectory: URL { get }
+    var chatSessionDisplayName: String { get }
+    var chatCanRenameCurrentSession: Bool { get }
 
     var chatAvailableModels: [String] { get }
     var chatSelectedModel: String { get set }
@@ -13,6 +15,7 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     func newChatSession()
     func resumeLastChatSession(matchingDirectory: URL?)
     func resumeChatSession(id: String)
+    func renameCurrentChatSession(to name: String)
     func editAndResendLastUser(newText: String)
     func sendMessageWithDisplay(displayText: String, prompt: String)
     func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem]
@@ -42,6 +45,12 @@ struct ChatSessionListItem: Identifiable, Hashable {
 
 extension ClaudeHeadlessProvider: HeadlessChatProviding {
     var chatWorkingDirectory: URL { workingDirectoryURL }
+    var chatSessionDisplayName: String {
+        let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty { return trimmed }
+        return session.id == nil ? "Nouvelle conversation" : "Conversation"
+    }
+    var chatCanRenameCurrentSession: Bool { session.id != nil }
 
     var chatAvailableModels: [String] { Self.availableModels }
     var chatSelectedModel: String {
@@ -59,6 +68,7 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
         resumeLastSession(matchingDirectory: matchingDirectory ?? workingDirectory)
     }
     func resumeChatSession(id: String) { resumeSession(id: id) }
+    func renameCurrentChatSession(to name: String) { renameCurrentSession(to: name) }
     func editAndResendLastUser(newText: String) { editAndResend(newText: newText) }
     func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem] {
         Self.listSessions(limit: limit, matchingDirectory: matchingDirectory ?? workingDirectory).map {

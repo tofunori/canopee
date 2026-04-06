@@ -8,22 +8,110 @@ let markdownCache = MarkdownBlockCache()
 @MainActor
 final class MarkdownBlockCache {
     private var blockCache: [String: [MarkdownBlockView.Block]] = [:]
+    private var blockInsertionOrder: [String] = []
     private var attrCache: [String: AttributedString] = [:]
+    private var attrInsertionOrder: [String] = []
+    private var attrKeysBySourceText: [String: Set<String>] = [:]
+    private var approximateBytes: Int = 0
 
     func blocks(for text: String) -> [MarkdownBlockView.Block] {
-        if let cached = blockCache[text] { return cached }
+        if let cached = blockCache[text] {
+            bumpBlockOrder(text)
+            return cached
+        }
         let parsed = MarkdownBlockView.parseBlocks(text)
         blockCache[text] = parsed
-        if blockCache.count > 200 { blockCache.removeAll(); blockCache[text] = parsed }
+        bumpBlockOrder(text)
+        approximateBytes += Self.estimatedBlockEntryBytes(text: text, blocks: parsed)
+        evictBlockCacheIfNeeded(retaining: text)
         return parsed
     }
 
-    func attributedString(for segments: [MarkdownBlockView.Block], key: String, builder: () -> AttributedString) -> AttributedString {
+    /// Cache key includes source `text` so evictions can drop related attributed runs.
+    func cacheKeyForTextRun(text: String, groupIndex: Int) -> String {
+        "\(text.hashValue)_\(groupIndex)"
+    }
+
+    func attributedString(
+        for text: String,
+        segments: [MarkdownBlockView.Block],
+        groupIndex: Int,
+        builder: () -> AttributedString
+    ) -> AttributedString {
+        let key = cacheKeyForTextRun(text: text, groupIndex: groupIndex)
         if let cached = attrCache[key] { return cached }
         let result = builder()
         attrCache[key] = result
-        if attrCache.count > 200 { attrCache.removeAll(); attrCache[key] = result }
+        attrInsertionOrder.append(key)
+        if attrKeysBySourceText[text] == nil { attrKeysBySourceText[text] = [] }
+        attrKeysBySourceText[text]?.insert(key)
+        approximateBytes += key.utf8.count + result.characters.count * 3
+        evictAttrCacheIfNeeded(retainingKey: key)
         return result
+    }
+
+    private func bumpBlockOrder(_ text: String) {
+        blockInsertionOrder.removeAll { $0 == text }
+        blockInsertionOrder.append(text)
+    }
+
+    private func evictBlockCacheIfNeeded(retaining text: String) {
+        while (blockCache.count > ChatMarkdownPolicy.maxBlockTextKeys
+            || approximateBytes > ChatMarkdownPolicy.maxApproximateCacheBytes),
+            blockCache.count > 1
+        {
+            let victim = blockInsertionOrder.first { $0 != text } ?? blockInsertionOrder.first!
+            removeBlockEntry(victim)
+        }
+    }
+
+    private func removeBlockEntry(_ text: String) {
+        blockInsertionOrder.removeAll { $0 == text }
+        if let blocks = blockCache.removeValue(forKey: text) {
+            approximateBytes -= Self.estimatedBlockEntryBytes(text: text, blocks: blocks)
+        }
+        if let keys = attrKeysBySourceText.removeValue(forKey: text) {
+            for k in keys {
+                removeAttrEntry(k)
+            }
+        }
+    }
+
+    private func evictAttrCacheIfNeeded(retainingKey: String) {
+        while attrCache.count > ChatMarkdownPolicy.maxAttributedRunCacheEntries
+            || approximateBytes > ChatMarkdownPolicy.maxApproximateCacheBytes
+        {
+            if attrInsertionOrder.count == 1, attrInsertionOrder.first == retainingKey { break }
+            guard let victim = attrInsertionOrder.first(where: { $0 != retainingKey }) else { break }
+            removeAttrEntry(victim)
+        }
+    }
+
+    private func removeAttrEntry(_ key: String) {
+        attrInsertionOrder.removeAll { $0 == key }
+        guard let attr = attrCache.removeValue(forKey: key) else { return }
+        approximateBytes -= key.utf8.count + attr.characters.count * 3
+        for (src, var keys) in attrKeysBySourceText where keys.contains(key) {
+            keys.remove(key)
+            attrKeysBySourceText[src] = keys
+        }
+    }
+
+    private static func estimatedBlockEntryBytes(text: String, blocks: [MarkdownBlockView.Block]) -> Int {
+        var n = text.utf8.count
+        for b in blocks {
+            switch b {
+            case .heading(_, let t): n += t.utf8.count
+            case .code(_, let c): n += c.utf8.count
+            case .table(let rows): n += rows.flatMap { $0 }.joined().utf8.count
+            case .insight(let lines): n += lines.joined().utf8.count
+            case .list(let items, _): n += items.joined().utf8.count
+            case .blockquote(let t): n += t.utf8.count
+            case .paragraph(let t): n += t.utf8.count
+            case .rule: break
+            }
+        }
+        return max(n, text.utf8.count * 2)
     }
 }
 
@@ -35,11 +123,10 @@ struct MarkdownBlockView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             let groups = Self.groupBlocks(blocks)
-            ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+            ForEach(Array(groups.enumerated()), id: \.offset) { groupIndex, group in
                 switch group {
                 case .textRun(let segments):
-                    let key = segments.map { "\($0)" }.joined()
-                    Text(markdownCache.attributedString(for: segments, key: key) {
+                    Text(markdownCache.attributedString(for: text, segments: segments, groupIndex: groupIndex) {
                         Self.buildAttributedString(segments: segments, inlineMarkdown: inlineMarkdown)
                     })
                         .font(.system(size: 13))
@@ -56,7 +143,7 @@ struct MarkdownBlockView: View {
         case special(Block)              // code, table, rule — need custom rendering
     }
 
-    private static func groupBlocks(_ blocks: [Block]) -> [BlockGroup] {
+    nonisolated private static func groupBlocks(_ blocks: [Block]) -> [BlockGroup] {
         var groups: [BlockGroup] = []
         var currentRun: [Block] = []
 
@@ -80,7 +167,7 @@ struct MarkdownBlockView: View {
         return groups
     }
 
-    private static func buildAttributedString(
+    nonisolated private static func buildAttributedString(
         segments: [Block],
         inlineMarkdown: (String) -> AttributedString
     ) -> AttributedString {
@@ -271,7 +358,7 @@ struct MarkdownBlockView: View {
 
     // MARK: - Parser
 
-    static func parseBlocks(_ text: String) -> [Block] {
+    nonisolated static func parseBlocks(_ text: String) -> [Block] {
         let lines = text.components(separatedBy: "\n")
         var blocks: [Block] = []
         var i = 0
@@ -417,5 +504,69 @@ struct MarkdownBlockView: View {
             }
         }
         return blocks
+    }
+
+    // MARK: - Single attributed preview (shared with ChatMessage / tests)
+
+    /// Rich-text preview using the same parse path and text-run styling as the block view.
+    @MainActor
+    static func attributedPreview(for text: String) -> AttributedString {
+        let blocks = markdownCache.blocks(for: text)
+        let groups = groupBlocks(blocks)
+        var combined = AttributedString()
+        for (groupIndex, group) in groups.enumerated() {
+            switch group {
+            case .textRun(let segments):
+                let piece = markdownCache.attributedString(for: text, segments: segments, groupIndex: groupIndex) {
+                    buildAttributedString(segments: segments, inlineMarkdown: inlineMarkdownStatic)
+                }
+                combined += piece
+            case .special(let block):
+                combined += AttributedString("\n")
+                combined += fallbackAttributed(for: block)
+            }
+        }
+        return combined
+    }
+
+    /// Same output as `attributedPreview` but does not use `markdownCache`; safe for background pre-render.
+    nonisolated static func renderAttributedPreviewForBackground(_ text: String) -> AttributedString {
+        let blocks = parseBlocks(text)
+        let groups = groupBlocks(blocks)
+        var combined = AttributedString()
+        for group in groups {
+            switch group {
+            case .textRun(let segments):
+                combined += buildAttributedString(segments: segments, inlineMarkdown: inlineMarkdownStatic)
+            case .special(let block):
+                combined += AttributedString("\n")
+                combined += fallbackAttributed(for: block)
+            }
+        }
+        return combined
+    }
+
+    nonisolated private static func inlineMarkdownStatic(_ text: String) -> AttributedString {
+        let converted = text.contains("$") ? LaTeXUnicode.convert(text) : text
+        return (try? AttributedString(markdown: converted, options: .init(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        ))) ?? AttributedString(converted)
+    }
+
+    nonisolated private static func fallbackAttributed(for block: Block) -> AttributedString {
+        switch block {
+        case .code(_, let content):
+            var a = AttributedString(content)
+            a.font = .system(size: 12).monospaced()
+            return a
+        case .table(let rows):
+            return AttributedString(rows.map { $0.joined(separator: " | ") }.joined(separator: "\n"))
+        case .rule:
+            var r = AttributedString("────────────────────────")
+            r.foregroundColor = .secondary
+            return r
+        default:
+            return AttributedString("")
+        }
     }
 }

@@ -86,14 +86,25 @@ A native macOS scientific paper reader, annotator, LaTeX editor, and AI assistan
 - **SwiftData** — modern data persistence (replaces Core Data)
 - **SwiftTerm** — terminal emulator with Metal GPU rendering
 - **CrossRef API** — automatic metadata lookup by DOI
-- **latexmk / pdflatex** — LaTeX compilation (requires MacTeX)
+- **latexmk / pdflatex** — LaTeX compilation (optional; see Requirements)
 
 ## Requirements
 
+### Required to build and run the app
 - macOS 14 (Sonoma) or later
 - Xcode 16+
 - Apple Silicon or Intel Mac
-- [MacTeX](https://tug.org/mactex/) (for LaTeX compilation)
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate `Canope.xcodeproj` from [`project.yml`](project.yml) (see Building)
+
+### Optional — enable specific features
+| Feature | Requirement |
+|--------|-------------|
+| **LaTeX compile / PDF preview** | [MacTeX](https://tug.org/mactex/) or another TeX distribution that provides `latexmk` / `pdflatex` on your `PATH` |
+| **DOI metadata lookup** | Network access when fetching from CrossRef |
+| **Claude CLI (`claude --print`)** | [Claude Code](https://code.claude.com/) CLI installed and on your `PATH` (used by [`ClaudeService`](Canope/Services/ClaudeService.swift)) |
+| **IDE bridge / integrated terminal workflows** | Claude Code (or Codex) as you configure in-app; bridge writes MCP config under `/tmp` |
+
+You can use the library and PDF reader without LaTeX or Claude; those paths simply stay unavailable until the tools are installed.
 
 ## Building
 
@@ -101,18 +112,21 @@ A native macOS scientific paper reader, annotator, LaTeX editor, and AI assistan
 # Install xcodegen if needed
 brew install xcodegen
 
-# Clone and build
-git clone https://github.com/tofunori/canopee.git
-cd canopee
+# From the repository root
 xcodegen generate
 
 # Build from command line
 xcodebuild -project Canope.xcodeproj -scheme Canope -destination 'platform=macOS' build
 
+# Run tests (same command as CI)
+xcodebuild -project Canope.xcodeproj -scheme Canope -destination 'platform=macOS' test
+
 # Or open in Xcode
 open Canope.xcodeproj
 # Then Cmd+R to build and run
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor setup.
 
 ## Releases
 
@@ -126,7 +140,7 @@ That creates a distributable DMG in `build/release/`.
 
 ### Publish a GitHub release
 
-The repo now includes a workflow at `.github/workflows/release-dmg.yml`.
+The repo includes a workflow at `.github/workflows/release-dmg.yml`.
 
 - Push a tag like `v0.1.0`, or run the workflow manually from GitHub.
 - The workflow builds `Canope.app`, packages it as a `.dmg`, uploads it as an artifact, and attaches it to a GitHub Release.
@@ -138,59 +152,56 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-### Important macOS distribution note
+### Distribution: unsigned vs signed / notarized
 
-The workflow can publish a DMG immediately, but a smooth macOS install experience needs Apple signing and notarization.
+| Situation | What users see |
+|-----------|----------------|
+| **No Apple Developer Program** (unsigned or ad-hoc signed DMG) | macOS **Gatekeeper** may block or warn on first open. Users can still install by right-click → Open, or via **System Settings → Privacy & Security** after a blocked launch. |
+| **Developer ID signing + notarization** (recommended for public releases) | Smoother first launch; users are not trained to bypass Gatekeeper. |
 
-- Without Apple Developer signing/notarization, users can still download the app, but macOS Gatekeeper will warn them.
-- To ship a cleaner public release, add these GitHub repository secrets:
-  - `APPLE_DEVELOPER_CERTIFICATE_P12`
-  - `APPLE_DEVELOPER_CERTIFICATE_PASSWORD`
-  - `APPLE_DEVELOPER_IDENTITY`
-  - `APPLE_TEAM_ID`
-  - `APPLE_ID`
-  - `APPLE_APP_SPECIFIC_PASSWORD`
+The release workflow can publish a DMG immediately. For a cleaner public experience, configure Apple signing and notarization using these GitHub repository secrets:
 
-When those secrets are present, the release workflow will sign the app, notarize the DMG, and staple the notarization ticket automatically.
+- `APPLE_DEVELOPER_CERTIFICATE_P12`
+- `APPLE_DEVELOPER_CERTIFICATE_PASSWORD`
+- `APPLE_DEVELOPER_IDENTITY`
+- `APPLE_TEAM_ID`
+- `APPLE_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+
+When those secrets are present, the release workflow signs the app, notarizes the DMG, and staples the notarization ticket automatically.
 
 ## Architecture
 
+Generated with XcodeGen; sources live under [`Canope/`](Canope/). High-level layout:
+
 ```
 Canope/
-├── CanopeApp.swift                  # App entry point, process cleanup
-├── ContentView.swift                # Main window: tabs, split view, terminal
+├── CanopeApp.swift              # @main, SwiftData container, app delegate, IDE bridge startup
+├── MainWindow.swift             # Primary window: tabs, split view, terminal, workspace restore
 ├── Models/
-│   ├── Paper.swift                  # SwiftData model (title, authors, DOI, rating, labels...)
-│   └── PaperCollection.swift       # Hierarchical collection model
+│   ├── Paper.swift              # SwiftData: library items
+│   ├── PaperCollection.swift    # Hierarchical collections
+│   ├── ChatMessage.swift
+│   ├── LaTeXAnnotation.swift
+│   └── NavigationTypes.swift    # TabItem, SidebarSelection
 ├── Views/
-│   ├── Library/
-│   │   ├── PaperTableView.swift        # Papers-style sortable table
-│   │   └── PaperInfoPanel.swift        # Inspector panel for metadata
+│   ├── Library/                 # Library + table + inspector
+│   ├── PaperList/
 │   ├── Sidebar/
-│   │   └── SidebarView.swift           # Collection tree view with sub-collections
-│   ├── PDFReader/
-│   │   ├── PDFReaderView.swift         # Reader container with annotation toolbar
-│   │   ├── PDFKitView.swift            # NSViewRepresentable PDFView + overlay system
-│   │   ├── AnnotationToolbar.swift     # Tool & color selection bar
-│   │   ├── AnnotationSidebarView.swift # Annotation list by page
-│   │   └── AIChatPanel.swift           # Terminal panel (SwiftTerm + Metal)
-│   ├── Editor/
-│   │   ├── LaTeXEditorView.swift       # LaTeX editor main view
-│   │   ├── LaTeXTextEditor.swift       # NSTextView with syntax highlighting
-│   │   ├── FileBrowserView.swift       # Project file tree browser
-│   │   └── CompilationErrorView.swift  # Error/warning list panel
-│   └── Common/
-│       └── RatingView.swift            # 5-star rating widget
+│   ├── PDFReader/               # Reader, annotations, terminal/chat panel
+│   ├── Editor/                  # LaTeX / code editor, preview, file browser
+│   ├── Chat/                    # AI chat UI
+│   ├── Shared/                  # Tab bar, chrome, layout helpers
+│   └── Reader/
 ├── Services/
-│   ├── AnnotationService.swift         # PDF annotation creation (markup, shapes, arrows)
-│   ├── MetadataExtractor.swift         # DOI extraction + CrossRef API lookup
-│   ├── PDFFileManager.swift            # PDF import and storage
-│   ├── ClaudeService.swift             # Claude CLI integration
-│   └── LaTeXCompiler.swift             # latexmk/pdflatex compilation + error parsing
+│   ├── MainWindowTabController.swift  # Tab list, selection, split state
+│   ├── AnnotationService.swift, PDFFileManager.swift, MetadataExtractor.swift
+│   ├── LaTeXCompiler.swift, SyncTeXService.swift
+│   ├── ClaudeService.swift, ClaudeIDEBridgeService.swift, ClaudeCLIWrapperService.swift
+│   ├── WorkspaceState.swift, WorkspaceSessionStore.swift
+│   └── …                        # Code run, diff, markdown export, etc.
 └── Utilities/
-    ├── AnnotationTool.swift            # Tool enum (pointer, highlight, shapes, arrow...)
-    ├── AnnotationColor.swift           # Color palette with UserDefaults persistence
-    └── ShapeAnnotations.swift          # Custom PDFAnnotation subclasses (rect, oval, arrow)
+    ├── AnnotationTool.swift, AnnotationColor.swift, ShapeAnnotations.swift
 ```
 
 ## Claude Code Integration

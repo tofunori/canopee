@@ -96,6 +96,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         currentAssistantIndex = nil
 
         session.id = id
+        session.name = Self.sessionEntry(id: id, defaultDirectory: workingDirectory)?.name
         messages.removeAll()
 
         // Load cwd + last few messages in background
@@ -255,6 +256,13 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         appendSystem("Nouvelle conversation")
     }
 
+    func renameCurrentSession(to name: String) {
+        guard let id = session.id else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        Self.renameSession(id: id, name: trimmed, fallbackCwd: workingDirectory)
+        session.name = trimmed.isEmpty ? nil : trimmed
+    }
+
     /// Resume the most recent session for the provided project root only.
     func resumeLastSession(matchingDirectory: URL? = nil) {
         cancelInFlightWork()
@@ -407,6 +415,15 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         return String(singleLine.prefix(maxLength - 1)) + "…"
     }
 
+    private nonisolated static func sessionEntry(id: String, defaultDirectory: URL? = nil) -> SessionEntry? {
+        let metadata = sessionMetadataIndex()[id]
+        let header = findSessionJSONLURL(id: id).flatMap { jsonlHeader(at: $0) }
+        let cwdURL = metadata?.cwd ?? header?.cwd ?? defaultDirectory
+        let name = metadata?.name.isEmpty == false ? (metadata?.name ?? "") : (header?.title ?? "")
+        let project = cwdURL?.lastPathComponent ?? ""
+        return SessionEntry(id: id, name: name, project: project, date: metadata?.date, cwd: cwdURL)
+    }
+
     struct SessionEntry: Identifiable {
         let id: String
         let name: String
@@ -427,13 +444,15 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
-    /// Rename a session by updating the JSON file in ~/.claude/sessions/
-    nonisolated static func renameSession(id: String, name: String) {
+    /// Rename a session by updating or creating metadata in ~/.claude/sessions/
+    nonisolated static func renameSession(id: String, name: String, fallbackCwd: URL? = nil) {
         let sessionsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/sessions")
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: sessionsDir, includingPropertiesForKeys: nil
-        ) else { return }
+        try? FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existing = sessionEntry(id: id, defaultDirectory: fallbackCwd)
+        let files = (try? FileManager.default.contentsOfDirectory(at: sessionsDir, includingPropertiesForKeys: nil)) ?? []
 
         for file in files where file.pathExtension == "json" {
             guard let data = try? Data(contentsOf: file),
@@ -441,12 +460,31 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                   let sid = json["sessionId"] as? String, sid == id
             else { continue }
 
-            json["name"] = name
+            json["name"] = trimmedName
+            if json["cwd"] == nil, let cwd = existing?.cwd?.path {
+                json["cwd"] = cwd
+            }
+            if json["startedAt"] == nil, let startedAt = existing?.date?.timeIntervalSince1970 {
+                json["startedAt"] = startedAt * 1000
+            }
             guard let updated = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
             else { return }
             try? updated.write(to: file, options: .atomic)
             return
         }
+
+        var json: [String: Any] = ["sessionId": id]
+        if !trimmedName.isEmpty { json["name"] = trimmedName }
+        if let cwd = existing?.cwd?.path ?? fallbackCwd?.path {
+            json["cwd"] = cwd
+        }
+        if let startedAt = existing?.date?.timeIntervalSince1970 {
+            json["startedAt"] = startedAt * 1000
+        }
+        guard let updated = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) else {
+            return
+        }
+        try? updated.write(to: sessionsDir.appendingPathComponent("\(id).json"), options: .atomic)
     }
 
     /// Send with a different display text than what's sent to Claude
@@ -693,6 +731,9 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         guard let subtype = json["subtype"] as? String else { return }
         if subtype == "init" {
             session.id = json["session_id"] as? String
+            if let id = session.id {
+                session.name = Self.sessionEntry(id: id, defaultDirectory: workingDirectory)?.name
+            }
             session.model = json["model"] as? String
             let shortModel = session.model?
                 .replacingOccurrences(of: "claude-", with: "")

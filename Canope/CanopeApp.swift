@@ -57,6 +57,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.windows.forEach { configureWindow($0) }
     }
 
+    /// Avoid quitting when the last window closes (SwiftUI default can terminate the app, which feels like an instant close if the window fails briefly).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Only terminate children launched by the app itself.
         ChildProcessRegistry.shared.terminateAllTrackedChildren()

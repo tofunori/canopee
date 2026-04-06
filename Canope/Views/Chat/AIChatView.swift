@@ -26,6 +26,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var editingMessageID: UUID?
     @State private var editingText = ""
     @State private var fileListTask: Task<Void, Never>?
+    @State private var isRenamingCurrentSession = false
+    @State private var currentSessionNameDraft = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,6 +67,31 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 showSessionPicker = false
             }
         }
+        .sheet(isPresented: $isRenamingCurrentSession) {
+            VStack(spacing: 12) {
+                Text("Renommer la conversation")
+                    .font(.system(size: 13, weight: .semibold))
+
+                TextField("Nom", text: $currentSessionNameDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+
+                HStack {
+                    Button("Annuler") { isRenamingCurrentSession = false }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Renommer") {
+                        provider.renameCurrentChatSession(to: currentSessionNameDraft)
+                        isRenamingCurrentSession = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+            .padding(20)
+            .frame(width: 320)
+        }
     }
 
     private func refreshSelectionCache() {
@@ -82,6 +109,23 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             Image(systemName: provider.providerIcon)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
+
+            Text(provider.chatSessionDisplayName)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+
+            if provider.chatCanRenameCurrentSession {
+                Button {
+                    currentSessionNameDraft = provider.chatSessionDisplayName
+                    isRenamingCurrentSession = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Renommer la conversation")
+            }
 
             // Model picker
             Menu {
@@ -134,11 +178,6 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 Text("·")
                     .foregroundStyle(.secondary.opacity(0.5))
                 Text("\(provider.session.turns) échanges")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Text("·")
-                    .foregroundStyle(.secondary.opacity(0.5))
-                Text(String(format: "$%.2f", provider.session.costUSD))
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
