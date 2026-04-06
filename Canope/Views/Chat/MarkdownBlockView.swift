@@ -3,22 +3,27 @@ import SwiftUI
 // MARK: - Markdown Block Renderer
 
 // Global cache so LazyVStack recycling doesn't re-parse
-private let markdownCache = MarkdownBlockCache()
+let markdownCache = MarkdownBlockCache()
 
 @MainActor
 final class MarkdownBlockCache {
-    private var cache: [String: [MarkdownBlockView.Block]] = [:]
+    private var blockCache: [String: [MarkdownBlockView.Block]] = [:]
+    private var attrCache: [String: AttributedString] = [:]
 
     func blocks(for text: String) -> [MarkdownBlockView.Block] {
-        if let cached = cache[text] { return cached }
+        if let cached = blockCache[text] { return cached }
         let parsed = MarkdownBlockView.parseBlocks(text)
-        cache[text] = parsed
-        // Limit cache size
-        if cache.count > 200 {
-            cache.removeAll()
-            cache[text] = parsed
-        }
+        blockCache[text] = parsed
+        if blockCache.count > 200 { blockCache.removeAll(); blockCache[text] = parsed }
         return parsed
+    }
+
+    func attributedString(for segments: [MarkdownBlockView.Block], key: String, builder: () -> AttributedString) -> AttributedString {
+        if let cached = attrCache[key] { return cached }
+        let result = builder()
+        attrCache[key] = result
+        if attrCache.count > 200 { attrCache.removeAll(); attrCache[key] = result }
+        return result
     }
 }
 
@@ -33,7 +38,10 @@ struct MarkdownBlockView: View {
             ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                 switch group {
                 case .textRun(let segments):
-                    Text(Self.buildAttributedString(segments: segments, inlineMarkdown: inlineMarkdown))
+                    let key = segments.map { "\($0)" }.joined()
+                    Text(markdownCache.attributedString(for: segments, key: key) {
+                        Self.buildAttributedString(segments: segments, inlineMarkdown: inlineMarkdown)
+                    })
                         .font(.system(size: 13))
                         .textSelection(.enabled)
                 case .special(let block):

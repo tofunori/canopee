@@ -54,7 +54,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         currentAssistantIndex = nil
     }
 
-    /// Resume a specific session by ID. Loads message history and sets --resume for next message.
+    /// Resume a specific session by ID. Shows last few messages as plain text preview.
     func resumeSession(id: String) {
         // Clean up any running process
         readTask?.cancel()
@@ -67,25 +67,36 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
         session.id = id
         messages.removeAll()
-        appendSystem("Chargement…")
 
-        // Find the session's original cwd so --resume works
-        resumeWorkingDirectory = Self.findSessionCwd(id: id)
-
-        // Load history in background to avoid freezing
+        // Load cwd + last few messages in background
         Task.detached { [weak self] in
-            let loaded = Self.parseSessionHistory(id: id)
+            let cwd = Self.findSessionCwd(id: id)
+            let history = Self.parseSessionHistory(id: id)
+            // Only keep the last 5 user/assistant messages as plain text preview
+            // Load messages from the end until we hit a character budget
+            let charBudget = 3000
+            var preview: [ChatMessage] = []
+            var totalChars = 0
+            for msg in history.reversed() {
+                if totalChars + msg.content.count > charBudget && !preview.isEmpty { break }
+                var m = msg
+                m.isFromHistory = true
+                preview.insert(m, at: 0)
+                totalChars += msg.content.count
+            }
+            // Last assistant message gets full markdown rendering
+            if let lastIdx = preview.lastIndex(where: { $0.role == .assistant }) {
+                preview[lastIdx].isFromHistory = false
+            }
             await MainActor.run { [weak self] in
-                // Skip SwiftUI diff animation for bulk load
-                withAnimation(nil) {
-                    self?.messages = loaded
-                }
+                self?.resumeWorkingDirectory = cwd
+                self?.messages = Array(preview)
                 self?.appendSystem("Session reprise : \(id.prefix(12))…")
             }
         }
     }
 
-    private static func findSessionCwd(id: String) -> URL? {
+    private nonisolated static func findSessionCwd(id: String) -> URL? {
         let sessionsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/sessions")
         guard let files = try? FileManager.default.contentsOfDirectory(
@@ -132,7 +143,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
         // Only parse the tail of the file to avoid freezing on large sessions
         let allLines = content.components(separatedBy: "\n")
-        let lines = allLines.suffix(15) // last ~15 JSONL entries ≈ last few messages
+        let lines = allLines.suffix(20) // last ~20 JSONL entries
         for line in lines {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty,
                   let data = line.data(using: .utf8),

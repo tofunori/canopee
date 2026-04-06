@@ -1,5 +1,57 @@
 import SwiftUI
 
+// MARK: - Inline Markdown Cache (lightweight, for history messages)
+
+@MainActor
+final class InlineMarkdownCache {
+    static let shared = InlineMarkdownCache()
+    private var cache: [String: AttributedString] = [:]
+
+    func get(_ text: String) -> AttributedString {
+        if let cached = cache[text] { return cached }
+        let converted = text.contains("$") ? LaTeXUnicode.convert(text) : text
+        let result = (try? AttributedString(markdown: converted, options: .init(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        ))) ?? AttributedString(converted)
+        cache[text] = result
+        if cache.count > 150 { cache.removeAll() }
+        return result
+    }
+}
+
+// MARK: - Deferred Markdown (inline first, full render after visible)
+
+/// Shows inline markdown instantly, upgrades to full block markdown after appearing.
+/// This prevents freeze when loading many messages at once.
+struct DeferredMarkdownView: View {
+    let text: String
+    let skipFullRender: Bool
+
+    init(text: String, skipFullRender: Bool = false) {
+        self.text = text
+        self.skipFullRender = skipFullRender
+    }
+
+    @State private var showFull = false
+
+    var body: some View {
+        if showFull && !skipFullRender {
+            MarkdownBlockView(text: text)
+        } else {
+            Text(InlineMarkdownCache.shared.get(text))
+                .font(.system(size: 13))
+                .textSelection(.enabled)
+                .task {
+                    guard !skipFullRender else { return }
+                    await Task.yield()
+                    if !Task.isCancelled {
+                        showFull = true
+                    }
+                }
+        }
+    }
+}
+
 // MARK: - AI Chat View (Native headless chat panel)
 
 struct AIChatView<Provider: AIHeadlessProvider>: View {
@@ -156,7 +208,6 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                         messageRow(message)
                     }
 
-                    // Thinking indicator while waiting for response
                     if provider.isProcessing,
                        provider.messages.last?.role == .user || provider.messages.last?.isStreaming == false
                     {
@@ -164,7 +215,6 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                             .id("thinking")
                     }
 
-                    // Invisible anchor for auto-scroll
                     Color.clear
                         .frame(height: 1)
                         .id("bottom_anchor")
@@ -291,13 +341,17 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                         .textSelection(.enabled)
                     streamingCursor
                 } else if message.isFromHistory {
-                    // Plain text for history — no expensive markdown parsing
                     Text(message.content)
                         .font(.system(size: 13))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.primary.opacity(0.7))
+                        .textSelection(.enabled)
+                } else if message.preRenderedMarkdown != nil {
+                    // Pre-rendered in background — instant display with markdown
+                    Text(message.preRenderedMarkdown!)
+                        .font(.system(size: 13))
                         .textSelection(.enabled)
                 } else {
-                    MarkdownBlockView(text: message.content)
+                    DeferredMarkdownView(text: message.content)
                 }
             }
 
@@ -564,6 +618,10 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
 
     @State private var shouldAutoScroll = false
     @State private var listResetID = UUID()
+
+    private func cachedInlineMarkdown(_ text: String) -> AttributedString {
+        InlineMarkdownCache.shared.get(text)
+    }
 
     private func startAutoScroll(proxy: ScrollViewProxy) {
         shouldAutoScroll = true
