@@ -5,77 +5,27 @@ struct PDFSearchToolbarCluster: View {
     @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
-        AppChromeToolbarCluster(zone: .primary, title: "Recherche") {
-            HStack(spacing: 6) {
-                ToolbarIconButton(
-                    systemName: "magnifyingglass",
-                    isSelected: searchState.isVisible,
-                    foregroundStyle: .secondary,
-                    selectedFillTint: AppChromePalette.info,
-                    helpText: "Rechercher dans le PDF (⌘F)"
-                ) {
-                    if searchState.isVisible {
-                        searchState.requestFocus()
-                    } else {
-                        searchState.present()
-                    }
-                }
-
+        AppChromeToolbarCluster(zone: .primary) {
+            ToolbarIconButton(
+                systemName: "magnifyingglass",
+                isSelected: searchState.isVisible,
+                foregroundStyle: .secondary,
+                selectedFillTint: AppChromePalette.info,
+                helpText: "Rechercher dans le PDF (⌘F)"
+            ) {
                 if searchState.isVisible {
-                    TextField("Rechercher dans le PDF", text: $searchState.query)
-                        .textFieldStyle(.plain)
-                        .frame(width: 190)
-                        .padding(.horizontal, 8)
-                        .frame(height: AppChromeMetrics.toolbarButtonSize)
-                        .background(
-                            RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
-                                .fill(AppChromePalette.hoverFill)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
-                                .stroke(AppChromePalette.clusterStroke, lineWidth: 1)
-                        )
-                        .focused($isSearchFieldFocused)
-                        .onSubmit {
-                            searchState.goToNextResult()
-                        }
-                        .onKeyPress(phases: .down) { press in
-                            handleSearchFieldKeyPress(press)
-                        }
-
-                    Text(searchSummary)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(searchSummaryColor)
-                        .frame(minWidth: 44, alignment: .trailing)
-
-                    ToolbarIconButton(
-                        systemName: "chevron.up",
-                        foregroundStyle: .secondary,
-                        helpText: "Résultat précédent (⇧↩)"
-                    ) {
-                        searchState.goToPreviousResult()
-                    }
-                    .disabled(!searchState.hasResults)
-
-                    ToolbarIconButton(
-                        systemName: "chevron.down",
-                        foregroundStyle: .secondary,
-                        helpText: "Résultat suivant (↩)"
-                    ) {
-                        searchState.goToNextResult()
-                    }
-                    .disabled(!searchState.hasResults)
-
-                    ToolbarIconButton(
-                        systemName: "xmark",
-                        foregroundStyle: .secondary,
-                        helpText: "Fermer la recherche (Esc)"
-                    ) {
-                        searchState.dismiss()
-                    }
+                    searchState.requestFocus()
+                } else {
+                    searchState.present()
                 }
             }
         }
+        .overlay(alignment: .leading) {
+            if searchState.isVisible {
+                expandedSearchCluster
+            }
+        }
+        .zIndex(40)
         .onAppear {
             if searchState.isVisible {
                 isSearchFieldFocused = true
@@ -85,6 +35,75 @@ struct PDFSearchToolbarCluster: View {
             guard searchState.isVisible else { return }
             isSearchFieldFocused = true
         }
+    }
+
+    private var expandedSearchCluster: some View {
+        AppChromeToolbarCluster(zone: .primary, title: "Recherche") {
+            HStack(spacing: 6) {
+                ToolbarIconButton(
+                    systemName: "magnifyingglass",
+                    isSelected: true,
+                    foregroundStyle: .secondary,
+                    selectedFillTint: AppChromePalette.info,
+                    helpText: "Rechercher dans le PDF (⌘F)"
+                ) {
+                    searchState.requestFocus()
+                }
+
+                TextField("Rechercher dans le PDF", text: $searchState.query)
+                    .textFieldStyle(.plain)
+                    .frame(width: 190)
+                    .padding(.horizontal, 8)
+                    .frame(height: AppChromeMetrics.toolbarButtonSize)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
+                            .fill(AppChromePalette.hoverFill)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
+                            .stroke(AppChromePalette.clusterStroke, lineWidth: 1)
+                    )
+                    .focused($isSearchFieldFocused)
+                    .onSubmit {
+                        searchState.goToNextResult()
+                    }
+                    .onKeyPress(phases: .down) { press in
+                        handleSearchFieldKeyPress(press)
+                    }
+
+                Text(searchSummary)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(searchSummaryColor)
+                    .frame(minWidth: 44, alignment: .trailing)
+
+                ToolbarIconButton(
+                    systemName: "chevron.up",
+                    foregroundStyle: .secondary,
+                    helpText: "Résultat précédent (⇧↩)"
+                ) {
+                    searchState.goToPreviousResult()
+                }
+                .disabled(!searchState.hasResults)
+
+                ToolbarIconButton(
+                    systemName: "chevron.down",
+                    foregroundStyle: .secondary,
+                    helpText: "Résultat suivant (↩)"
+                ) {
+                    searchState.goToNextResult()
+                }
+                .disabled(!searchState.hasResults)
+
+                ToolbarIconButton(
+                    systemName: "xmark",
+                    foregroundStyle: .secondary,
+                    helpText: "Fermer la recherche (Esc)"
+                ) {
+                    searchState.dismiss()
+                }
+            }
+        }
+        .shadow(color: .black.opacity(0.14), radius: 8, y: 2)
     }
 
     private var searchSummary: String {
