@@ -205,13 +205,19 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private var resumeWorkingDirectory: URL?
     private var rpc: CodexAppServerRPCSession?
     private var initialized = false
+    private var connectTask: Task<Void, Never>?
     private var currentThreadId: String?
     private var currentTurnId: String?
     private var currentAssistantMessageIndex: Int?
     private var currentAgentItemId: String?
     private var lastRetryStatusMessage: String?
+    private var pendingAssistantDelta = ""
+    private var assistantDeltaFlushTask: Task<Void, Never>?
     private var pendingMarkdown: [(UUID, String)] = []
     private var markdownTask: Task<Void, Never>?
+
+    private static let assistantDeltaThrottleNanoseconds: UInt64 = 60_000_000
+    private static let markdownPreRenderDelayNanoseconds: UInt64 = 80_000_000
 
     init(workingDirectory: URL? = nil) {
         if let wd = workingDirectory {
@@ -230,13 +236,23 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
     var workingDirectoryURL: URL { resumeWorkingDirectory ?? workingDirectory }
 
+    deinit {
+        connectTask?.cancel()
+        assistantDeltaFlushTask?.cancel()
+        markdownTask?.cancel()
+        rpc?.terminate()
+    }
+
     func start() {
         isConnected = true
-        Task { await ensureSession() }
+        _ = beginConnectionIfNeeded()
     }
 
     func stop() {
         Task { await interruptIfNeeded() }
+        flushPendingAssistantDelta()
+        clearAssistantDeltaWork()
+        clearMarkdownPreRenderWork()
         isProcessing = false
         if let idx = currentAssistantMessageIndex, idx < messages.count {
             messages[idx].isStreaming = false
@@ -262,15 +278,30 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     // MARK: - Connection
 
     private func ensureSession() async {
-        if !initialized {
-            await connectAndHandshake()
+        if let task = beginConnectionIfNeeded() {
+            await task.value
         }
     }
 
     private func ensureConnected() async {
-        if !initialized {
-            await connectAndHandshake()
+        if let task = beginConnectionIfNeeded() {
+            await task.value
         }
+    }
+
+    @discardableResult
+    private func beginConnectionIfNeeded() -> Task<Void, Never>? {
+        if initialized { return nil }
+        if let connectTask { return connectTask }
+
+        let task = Task { [weak self] in
+            await self?.connectAndHandshake()
+            await MainActor.run { [weak self] in
+                self?.connectTask = nil
+            }
+        }
+        connectTask = task
+        return task
     }
 
     private func connectAndHandshake() async {
@@ -354,10 +385,6 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     // MARK: - Send flow
 
     private func sendUserMessage(_ prompt: String, display: String) async {
-        await ensureConnected()
-        guard let rpc else { return }
-
-        let fullPrompt = Self.buildPromptWithIDEContext(prompt)
         messages.append(
             ChatMessage(
                 role: .user,
@@ -372,6 +399,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         currentAssistantMessageIndex = nil
         currentAgentItemId = nil
         lastRetryStatusMessage = nil
+
+        await ensureConnected()
+        guard let rpc else {
+            isProcessing = false
+            return
+        }
+
+        let fullPrompt = Self.buildPromptWithIDEContext(prompt)
 
         do {
             if currentThreadId == nil {
@@ -431,6 +466,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             if let item = params["item"] as? [String: Any],
                let type = item["type"] as? String {
                 if type == "agentMessage" {
+                    clearAssistantDeltaWork()
                     let iid = (item["id"] as? String) ?? UUID().uuidString
                     currentAgentItemId = iid
                     let msg = ChatMessage(
@@ -443,6 +479,8 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                     messages.append(msg)
                     currentAssistantMessageIndex = messages.count - 1
                 } else if type == "mcpToolCall" {
+                    flushPendingAssistantDelta()
+                    clearAssistantDeltaWork()
                     let name = (item["tool"] as? String) ?? "mcp"
                     let summary = (item["server"] as? String).map { "\($0) · \(name)" } ?? name
                     messages.append(
@@ -460,10 +498,10 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             }
         case "item/agentMessage/delta":
             let delta = extractDeltaText(params) ?? ""
-            guard !delta.isEmpty, let idx = currentAssistantMessageIndex, idx < messages.count else { return }
-            messages[idx].content += delta
-            messages[idx].isStreaming = true
+            bufferAssistantDelta(delta)
         case "item/completed":
+            flushPendingAssistantDelta()
+            clearAssistantDeltaWork()
             if let item = params["item"] as? [String: Any],
                (item["type"] as? String) == "agentMessage",
                let idx = currentAssistantMessageIndex, idx < messages.count {
@@ -473,6 +511,8 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 currentAgentItemId = nil
             }
         case "turn/completed":
+            flushPendingAssistantDelta()
+            clearAssistantDeltaWork()
             if let idx = currentAssistantMessageIndex, idx < messages.count {
                 messages[idx].isStreaming = false
                 enqueueMarkdownPreRender(for: messages[idx].id, text: messages[idx].content)
@@ -495,6 +535,8 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 .joined(separator: "\n")
             let willRetry = params["willRetry"] as? Bool ?? false
 
+            flushPendingAssistantDelta()
+            clearAssistantDeltaWork()
             if !willRetry || lastRetryStatusMessage != rendered {
                 appendSystem(rendered)
             }
@@ -530,7 +572,46 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         )
     }
 
+    private func bufferAssistantDelta(_ delta: String) {
+        guard !delta.isEmpty,
+              let idx = currentAssistantMessageIndex,
+              idx < messages.count
+        else { return }
+        pendingAssistantDelta += delta
+        messages[idx].isStreaming = true
+        scheduleAssistantDeltaFlushIfNeeded()
+    }
+
+    private func scheduleAssistantDeltaFlushIfNeeded() {
+        guard assistantDeltaFlushTask == nil else { return }
+        assistantDeltaFlushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.assistantDeltaThrottleNanoseconds)
+            guard let self, !Task.isCancelled else { return }
+            self.assistantDeltaFlushTask = nil
+            self.flushPendingAssistantDelta()
+        }
+    }
+
+    private func flushPendingAssistantDelta() {
+        guard !pendingAssistantDelta.isEmpty else { return }
+        guard let idx = currentAssistantMessageIndex, idx < messages.count else {
+            pendingAssistantDelta.removeAll()
+            return
+        }
+        messages[idx].content += pendingAssistantDelta
+        messages[idx].isStreaming = true
+        pendingAssistantDelta.removeAll()
+    }
+
+    private func clearAssistantDeltaWork() {
+        assistantDeltaFlushTask?.cancel()
+        assistantDeltaFlushTask = nil
+        pendingAssistantDelta.removeAll()
+    }
+
     private func enqueueMarkdownPreRender(for id: UUID, text: String) {
+        guard !text.isEmpty else { return }
+        guard !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: text) else { return }
         pendingMarkdown.append((id, text))
         scheduleMarkdownPreRender()
     }
@@ -538,7 +619,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private func scheduleMarkdownPreRender() {
         markdownTask?.cancel()
         markdownTask = Task.detached { [weak self] in
-            try? await Task.sleep(nanoseconds: 80_000_000)
+            try? await Task.sleep(nanoseconds: Self.markdownPreRenderDelayNanoseconds)
             await MainActor.run { [weak self] in
                 self?.flushMarkdownPreRender()
             }
@@ -552,7 +633,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         Task.detached { [weak self] in
             var results: [(UUID, AttributedString)] = []
             for (id, text) in batch {
-                let attr = await ChatMessage.attributedPreview(for: text)
+                let attr = MarkdownBlockView.renderAttributedPreviewForBackground(text)
                 results.append((id, attr))
             }
             await MainActor.run { [weak self] in
@@ -560,10 +641,18 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 for (id, attr) in results {
                     if let idx = self.messages.firstIndex(where: { $0.id == id }) {
                         self.messages[idx].preRenderedMarkdown = attr
+                        ChatMarkdownPolicy.applyPreRenderedMarkdownRetentionBudget(to: &self.messages)
                     }
                 }
+                self.markdownTask = nil
             }
         }
+    }
+
+    private func clearMarkdownPreRenderWork() {
+        pendingMarkdown.removeAll()
+        markdownTask?.cancel()
+        markdownTask = nil
     }
 
     private static func jsonString(_ obj: Any?) -> String? {
@@ -737,6 +826,10 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     // MARK: - Private session helpers
 
     private func disconnectAndReset() async {
+        connectTask?.cancel()
+        connectTask = nil
+        clearAssistantDeltaWork()
+        clearMarkdownPreRenderWork()
         rpc?.terminate()
         rpc = nil
         initialized = false
@@ -903,3 +996,46 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         return CanopeContextFiles.claudeIDEBridgeURL
     }
 }
+
+#if DEBUG
+extension CodexAppServerProvider {
+    func testReceiveAssistantDelta(_ delta: String) {
+        handleNotification(method: "item/agentMessage/delta", params: ["delta": delta])
+    }
+
+    func testBeginAssistantMessage() {
+        handleNotification(method: "item/started", params: ["item": ["type": "agentMessage", "id": UUID().uuidString]])
+    }
+
+    func testCompleteAssistantMessage() {
+        handleNotification(method: "item/completed", params: ["item": ["type": "agentMessage"]])
+    }
+
+    func testFlushPendingAssistantDelta() {
+        flushPendingAssistantDelta()
+        clearAssistantDeltaWork()
+    }
+
+    func testFlushMarkdownPreRender() {
+        flushMarkdownPreRender()
+    }
+
+    func testResolvePendingMarkdownSynchronously() {
+        guard !pendingMarkdown.isEmpty else { return }
+        let batch = pendingMarkdown
+        pendingMarkdown.removeAll()
+        for (id, text) in batch {
+            let attr = MarkdownBlockView.renderAttributedPreviewForBackground(text)
+            if let idx = messages.firstIndex(where: { $0.id == id }) {
+                messages[idx].preRenderedMarkdown = attr
+                ChatMarkdownPolicy.applyPreRenderedMarkdownRetentionBudget(to: &messages)
+            }
+        }
+        markdownTask = nil
+    }
+
+    var testPendingMarkdownCount: Int {
+        pendingMarkdown.count
+    }
+}
+#endif

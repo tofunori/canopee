@@ -628,6 +628,7 @@ struct TerminalPanel: View {
             } else if workspaceState.selectedTabID == nil {
                 workspaceState.selectedTabID = workspaceState.tabs.first?.id
             }
+            prepareSelectedChatProviderIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .canopeSendPromptToTerminal)) { notification in
             guard isVisible else { return }
@@ -660,10 +661,14 @@ struct TerminalPanel: View {
             }
         }
         .onChange(of: workspaceState.selectedTabID) {
+            prepareSelectedChatProviderIfNeeded()
             guard isVisible else { return }
             DispatchQueue.main.async {
                 focusVisibleTerminal()
             }
+        }
+        .onChange(of: startupWorkingDirectory?.path) {
+            prepareSelectedChatProviderIfNeeded()
         }
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: workspaceState.isSplit)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: appearance)
@@ -923,29 +928,45 @@ struct TerminalPanel: View {
         {
             switch chatKind {
             case .claude:
-                let provider = workspaceState.claudeChatProvider(
-                    for: tab.id,
-                    workingDirectory: startupWorkingDirectory
-                )
-                AIChatView(provider: provider, fileRootURL: startupWorkingDirectory)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .onAppear {
-                        if let dir = startupWorkingDirectory {
-                            provider.updateWorkingDirectory(dir)
-                        }
-                    }
+                if let provider = workspaceState.claudeChatProviders[tab.id] {
+                    AIChatView(provider: provider, fileRootURL: startupWorkingDirectory)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else {
+                    chatProviderPlaceholder
+                }
             case .codex:
-                let provider = workspaceState.codexChatProvider(
-                    for: tab.id,
-                    workingDirectory: startupWorkingDirectory
-                )
-                AIChatView(provider: provider, fileRootURL: startupWorkingDirectory)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .onAppear {
-                        if let dir = startupWorkingDirectory {
-                            provider.updateWorkingDirectory(dir)
-                        }
-                    }
+                if let provider = workspaceState.codexChatProviders[tab.id] {
+                    AIChatView(provider: provider, fileRootURL: startupWorkingDirectory)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else {
+                    chatProviderPlaceholder
+                }
+            }
+        }
+    }
+
+    private var chatProviderPlaceholder: some View {
+        ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func prepareSelectedChatProviderIfNeeded() {
+        guard isVisible,
+              let tab = workspaceState.selectedTab,
+              case .nativeChat(let chatKind) = tab.kind
+        else { return }
+
+        switch chatKind {
+        case .claude:
+            let provider = workspaceState.claudeChatProvider(for: tab.id, workingDirectory: startupWorkingDirectory)
+            if let dir = startupWorkingDirectory {
+                provider.updateWorkingDirectory(dir)
+            }
+        case .codex:
+            let provider = workspaceState.codexChatProvider(for: tab.id, workingDirectory: startupWorkingDirectory)
+            if let dir = startupWorkingDirectory {
+                provider.updateWorkingDirectory(dir)
             }
         }
     }

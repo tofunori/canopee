@@ -28,6 +28,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var fileListTask: Task<Void, Never>?
     @State private var isRenamingCurrentSession = false
     @State private var currentSessionNameDraft = ""
+    @State private var cachedSelectionModifiedAt: Date?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,13 +44,13 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             if !provider.isConnected {
                 provider.start()
             }
-            refreshSelectionCache()
+            refreshSelectionCache(force: true)
         }
         .onDisappear {
             fileListTask?.cancel()
             fileListTask = nil
         }
-        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
             refreshSelectionCache()
         }
         // Cmd+N handled via menu item or button — SwiftUI doesn't support view-level Cmd shortcuts well
@@ -94,8 +95,16 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
     }
 
-    private func refreshSelectionCache() {
-        cachedSelection = readSelectionFromDisk()
+    private func refreshSelectionCache(force: Bool = false) {
+        let path = CanopeContextFiles.ideSelectionStatePaths[0]
+        let modifiedAt = selectionStateModificationDate(at: path)
+
+        if !force, modifiedAt == cachedSelectionModifiedAt {
+            return
+        }
+
+        cachedSelectionModifiedAt = modifiedAt
+        cachedSelection = readSelectionFromDisk(at: path)
     }
 
     private var chatFileRootURL: URL {
@@ -347,7 +356,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     private func assistantRow(_ message: ChatMessage) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        let needsBlockMarkdown = messageNeedsBlockMarkdown(message.content)
+        return HStack(alignment: .top, spacing: 8) {
             Circle()
                 .fill(Color.orange.opacity(0.15))
                 .frame(width: 20, height: 20)
@@ -366,7 +376,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .textSelection(.enabled)
                     streamingCursor
                 } else if message.isFromHistory {
-                    if messageNeedsBlockMarkdown(message.content) {
+                    if needsBlockMarkdown {
                         DeferredMarkdownView(
                             text: message.content,
                             skipFullRender: ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content),
@@ -380,13 +390,13 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                             .textSelection(.enabled)
                     }
                 } else if let preRenderedMarkdown = message.preRenderedMarkdown,
-                          !messageNeedsBlockMarkdown(message.content) {
+                          !needsBlockMarkdown {
                     // Pre-rendered in background — instant display with markdown
                     Text(preRenderedMarkdown)
                         .font(.system(size: 13))
                         .textSelection(.enabled)
                 } else {
-                    assistantMarkdownDeferred(message)
+                    assistantMarkdownDeferred(message, needsBlockMarkdown: needsBlockMarkdown)
                 }
             }
 
@@ -403,33 +413,35 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     @ViewBuilder
-    private func assistantMarkdownDeferred(_ message: ChatMessage) -> some View {
+    private func assistantMarkdownDeferred(_ message: ChatMessage, needsBlockMarkdown: Bool) -> some View {
         let overLimit = ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content)
         DeferredMarkdownView(
             text: message.content,
             skipFullRender: overLimit,
             // If pre-render was evicted, visible older messages can still upgrade to full block markdown on demand.
             allowPromoteToFullBlock: !overLimit,
-            promotionDelayNanoseconds: messageNeedsBlockMarkdown(message.content) ? 0 : 450_000_000
+            promotionDelayNanoseconds: needsBlockMarkdown ? 0 : 450_000_000
         )
     }
 
     private func messageNeedsBlockMarkdown(_ text: String) -> Bool {
-        let lines = text.components(separatedBy: "\n")
-        guard lines.count >= 2 else { return text.contains("```") }
+        if text.contains("```") {
+            return true
+        }
+
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard lines.count >= 2 else { return false }
 
         for idx in 0..<(lines.count - 1) {
-            let line = lines[idx]
-            let nextLine = lines[idx + 1]
-            if MarkdownBlockView.parseBlocks([line, nextLine].joined(separator: "\n")).contains(where: {
-                if case .table = $0 { return true }
-                return false
-            }) {
+            let headerLine = lines[idx]
+            let separatorLine = lines[idx + 1]
+            guard looksLikeMarkdownTableRow(headerLine) else { continue }
+            if isMarkdownTableSeparator(separatorLine, expectedColumnCount: markdownTableColumnCount(headerLine)) {
                 return true
             }
         }
 
-        return text.contains("```")
+        return false
     }
 
     private func toolCard(_ message: ChatMessage) -> some View {
@@ -835,8 +847,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     private var currentSelection: SelectionInfo? { cachedSelection }
 
-    private func readSelectionFromDisk() -> SelectionInfo? {
-        let path = CanopeContextFiles.ideSelectionStatePaths[0]
+    private func selectionStateModificationDate(at path: String) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? nil
+    }
+
+    private func readSelectionFromDisk(at path: String) -> SelectionInfo? {
         guard let data = FileManager.default.contents(atPath: path),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = json["text"] as? String,
@@ -848,6 +863,55 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         let lines = text.components(separatedBy: .newlines).count
 
         return SelectionInfo(fileName: fileName, lineCount: lines)
+    }
+
+    private func looksLikeMarkdownTableRow(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|") else { return false }
+        return markdownTableColumnCount(trimmed) >= 2
+    }
+
+    private func markdownTableColumnCount(_ line: String) -> Int {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|") else { return 0 }
+
+        let rawCells: [Substring]
+        if trimmed.hasPrefix("|") || trimmed.hasSuffix("|") {
+            rawCells = trimmed
+                .split(separator: "|", omittingEmptySubsequences: false)
+                .dropFirst(trimmed.hasPrefix("|") ? 1 : 0)
+                .dropLast(trimmed.hasSuffix("|") ? 1 : 0)
+        } else {
+            rawCells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+        }
+
+        let cells = rawCells.map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count >= 2, cells.contains(where: { !$0.isEmpty }) else { return 0 }
+        return cells.count
+    }
+
+    private func isMarkdownTableSeparator(_ line: String, expectedColumnCount: Int) -> Bool {
+        guard expectedColumnCount >= 2 else { return false }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|") else { return false }
+
+        let rawCells: [Substring]
+        if trimmed.hasPrefix("|") || trimmed.hasSuffix("|") {
+            rawCells = trimmed
+                .split(separator: "|", omittingEmptySubsequences: false)
+                .dropFirst(trimmed.hasPrefix("|") ? 1 : 0)
+                .dropLast(trimmed.hasSuffix("|") ? 1 : 0)
+        } else {
+            rawCells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+        }
+
+        let cells = rawCells.map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count == expectedColumnCount else { return false }
+        return cells.allSatisfy { cell in
+            let content = cell.trimmingCharacters(in: .whitespaces)
+            guard !content.isEmpty else { return false }
+            return content.range(of: #"^:?-{3,}:?$"#, options: .regularExpression) != nil
+        }
     }
 
     // MARK: - Helpers

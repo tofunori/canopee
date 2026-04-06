@@ -11,7 +11,7 @@ struct MainWindow: View {
     @State private var showTerminal = false
     @State private var isOpeningTeX = false
     @State private var isImportingPDF = false
-    @State private var didRestoreWorkspace = false
+    @State private var didRestoreWorkspace = AppRuntime.isRunningTests
     @StateObject private var latexWorkspaceState = LaTeXWorkspaceUIState()
     @StateObject private var terminalWorkspaceState = TerminalWorkspaceState()
     @Namespace private var documentTabIndicatorNamespace
@@ -345,12 +345,12 @@ struct MainWindow: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            if !AppRuntime.isRunningTests {
-                restoreWorkspaceStateIfNeeded()
-            } else {
-                didRestoreWorkspace = true
+            DispatchQueue.main.async {
+                if !AppRuntime.isRunningTests {
+                    restoreWorkspaceStateIfNeeded()
+                }
+                makeSplitersEasyToGrab()
             }
-            makeSplitersEasyToGrab()
         }
         .onChange(of: tabController.selectedTab) {
             makeSplitersEasyToGrab()

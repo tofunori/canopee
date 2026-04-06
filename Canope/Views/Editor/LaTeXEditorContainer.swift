@@ -18,7 +18,7 @@ struct LaTeXEditorContainer: View {
     var onOpenTeX: (URL) -> Void
     var onOpenPDF: (URL) -> Void
     var onCloseEditor: (String) -> Void
-    @State private var didRestoreWorkspaceState = false
+    @State private var didRestoreWorkspaceState = AppRuntime.isRunningTests
     @Namespace private var editorTabIndicatorNamespace
     @StateObject private var codeDocumentStateStore = CodeDocumentStateStore()
 
@@ -211,39 +211,56 @@ struct LaTeXEditorContainer: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            restoreWorkspaceStateIfNeeded()
-            ensureWorkspaceRoot()
-            syncCodeDocumentStates()
+            DispatchQueue.main.async {
+                if !AppRuntime.isRunningTests {
+                    restoreWorkspaceStateIfNeeded()
+                }
+                ensureWorkspaceRoot()
+                syncCodeDocumentStates()
+            }
         }
         .onChange(of: workspaceSnapshot) {
             persistWorkspaceState()
         }
         .onChange(of: openPaths) {
-            ensureWorkspaceRoot()
-            syncCodeDocumentStates()
+            DispatchQueue.main.async {
+                ensureWorkspaceRoot()
+                syncCodeDocumentStates()
+            }
         }
     }
 
+    @ViewBuilder
     private func editorView(for fileURL: URL) -> some View {
-        UnifiedEditorView(
-            fileURL: fileURL,
-            isActive: true,
-            showTerminal: $showTerminal,
-            mainWindowTab: $selectedTab,
-            openEditorPaths: openPaths,
-            workspaceState: workspaceState,
-            terminalWorkspaceState: terminalWorkspaceState,
-            isEditorSectionActive: isEditorSectionActive,
-            codeDocumentState: codeDocumentStateStore.state(for: fileURL),
-            onOpenPDF: onOpenPDF,
-            onOpenInNewTab: onOpenTeX,
-            openPaperIDs: openPaperIDs,
-            editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil,
-            onPersistWorkspaceState: {
-                codeDocumentStateStore.persistState(for: fileURL)
-                persistWorkspaceState()
-            }
-        )
+        if let codeDocumentState = codeDocumentStateStore.existingState(for: fileURL) {
+            UnifiedEditorView(
+                fileURL: fileURL,
+                isActive: true,
+                showTerminal: $showTerminal,
+                mainWindowTab: $selectedTab,
+                openEditorPaths: openPaths,
+                workspaceState: workspaceState,
+                terminalWorkspaceState: terminalWorkspaceState,
+                isEditorSectionActive: isEditorSectionActive,
+                codeDocumentState: codeDocumentState,
+                onOpenPDF: onOpenPDF,
+                onOpenInNewTab: onOpenTeX,
+                openPaperIDs: openPaperIDs,
+                editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil,
+                onPersistWorkspaceState: {
+                    codeDocumentStateStore.persistState(for: fileURL)
+                    persistWorkspaceState()
+                }
+            )
+        } else {
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .onAppear {
+                    DispatchQueue.main.async {
+                        codeDocumentStateStore.ensureState(for: fileURL)
+                    }
+                }
+        }
     }
 
     private func openFolderFromLanding() {
