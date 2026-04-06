@@ -220,7 +220,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
+                // `LazyVStack` re-estimates off-screen row heights for rich markdown,
+                // which makes the scrollbar thumb resize and causes visible jumps.
+                VStack(alignment: .leading, spacing: 4) {
                     ForEach(provider.messages) { message in
                         messageRow(message)
                     }
@@ -396,7 +398,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .font(.system(size: 13))
                         .textSelection(.enabled)
                 } else {
-                    assistantMarkdownDeferred(message, needsBlockMarkdown: needsBlockMarkdown)
+                    assistantMarkdownStable(message, needsBlockMarkdown: needsBlockMarkdown)
                 }
             }
 
@@ -413,15 +415,14 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     @ViewBuilder
-    private func assistantMarkdownDeferred(_ message: ChatMessage, needsBlockMarkdown: Bool) -> some View {
-        let overLimit = ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content)
-        DeferredMarkdownView(
-            text: message.content,
-            skipFullRender: overLimit,
-            // If pre-render was evicted, visible older messages can still upgrade to full block markdown on demand.
-            allowPromoteToFullBlock: !overLimit,
-            promotionDelayNanoseconds: needsBlockMarkdown ? 0 : 450_000_000
-        )
+    private func assistantMarkdownStable(_ message: ChatMessage, needsBlockMarkdown: Bool) -> some View {
+        if needsBlockMarkdown && !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content) {
+            MarkdownBlockView(text: message.content)
+        } else {
+            Text(InlineMarkdownCache.shared.get(message.content))
+                .font(.system(size: 13))
+                .textSelection(.enabled)
+        }
     }
 
     private func messageNeedsBlockMarkdown(_ text: String) -> Bool {
