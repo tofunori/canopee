@@ -628,13 +628,12 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     }
 
     private var canSend: Bool {
-        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !provider.isProcessing
+        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func send() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        guard !provider.isProcessing else { return }
         inputText = ""
 
         // /new starts a fresh conversation

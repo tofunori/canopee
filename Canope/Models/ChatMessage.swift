@@ -15,6 +15,7 @@ struct ChatMessage: Identifiable, Equatable {
     var isCollapsed: Bool
     var isFromHistory: Bool = false
     var preRenderedMarkdown: AttributedString?
+    var toolCount: Int?
 
     enum Role: Equatable {
         case user

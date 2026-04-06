@@ -17,11 +17,35 @@ enum LaTeXUnicode {
         "\\leq": "≤", "\\geq": "≥", "\\neq": "≠", "\\approx": "≈",
         "\\sim": "∼", "\\propto": "∝", "\\sum": "Σ", "\\prod": "Π",
         "\\sqrt": "√", "\\degree": "°", "\\circ": "°",
+        // Greek variants
+        "\\varphi": "φ", "\\varepsilon": "ε", "\\vartheta": "ϑ",
+        "\\varrho": "ϱ", "\\varsigma": "ς",
+        // Trig and math functions (remove backslash)
+        "\\cos": "cos", "\\sin": "sin", "\\tan": "tan",
+        "\\cot": "cot", "\\sec": "sec", "\\csc": "csc",
+        "\\log": "log", "\\ln": "ln", "\\exp": "exp",
+        "\\min": "min", "\\max": "max", "\\lim": "lim",
+        "\\arg": "arg", "\\det": "det",
+        // Arrows and misc
+        "\\rightarrow": "→", "\\leftarrow": "←", "\\leftrightarrow": "↔",
+        "\\Rightarrow": "⇒", "\\Leftarrow": "⇐",
+        "\\to": "→", "\\gets": "←",
+        "\\in": "∈", "\\notin": "∉", "\\subset": "⊂", "\\supset": "⊃",
+        "\\cup": "∪", "\\cap": "∩", "\\forall": "∀", "\\exists": "∃",
+        "\\int": "∫", "\\iint": "∬",
+        // Brackets
+        "\\langle": "⟨", "\\rangle": "⟩",
+        "\\lceil": "⌈", "\\rceil": "⌉",
+        "\\lfloor": "⌊", "\\rfloor": "⌋",
     ]
 
     private static let subscriptDigits: [Character: Character] = [
         "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
         "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+        "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ",
+        "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+        "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ",
+        "v": "ᵥ", "x": "ₓ", "c": "c",
     ]
 
     private static let superscriptDigits: [Character: Character] = [
@@ -35,6 +59,15 @@ enum LaTeXUnicode {
 
         // Remove $ delimiters
         result = result.replacingOccurrences(of: "$", with: "")
+
+        // Remove \begin{...} and \end{...} blocks
+        result = result.replacingOccurrences(of: #"\\begin\{[^}]*\}"#, with: "", options: .regularExpression)
+        result = result.replacingOccurrences(of: #"\\end\{[^}]*\}"#, with: "", options: .regularExpression)
+        // Remove \left and \right
+        result = result.replacingOccurrences(of: "\\left", with: "")
+        result = result.replacingOccurrences(of: "\\right", with: "")
+        // Replace \\ with newline
+        result = result.replacingOccurrences(of: "\\\\", with: "\n")
 
         // Greek letters and symbols (longer names first to avoid partial matches)
         let sorted = greekLetters.sorted { $0.key.count > $1.key.count }

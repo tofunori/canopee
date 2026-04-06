@@ -28,6 +28,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     private var currentAssistantIndex: Int?
     private var useContinueForNextMessage = false
     private var resumeWorkingDirectory: URL?  // override cwd when resuming a session from another project
+    private var messageQueue: [String] = []
 
     init(workingDirectory: URL? = nil) {
         self.workingDirectory = workingDirectory
@@ -394,6 +395,17 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        // Queue if already processing
+        if isProcessing {
+            messageQueue.append(trimmed)
+            messages.append(ChatMessage(
+                role: .user, content: trimmed, timestamp: Date(),
+                isStreaming: false, isCollapsed: false
+            ))
+            appendSystem("En file d'attente (\(messageQueue.count))")
+            return
+        }
+
         if !isConnected { start() }
 
         messages.append(ChatMessage(
@@ -401,6 +413,10 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             isStreaming: false, isCollapsed: false
         ))
 
+        launchProcess(for: trimmed)
+    }
+
+    private func launchProcess(for trimmed: String) {
         // Kill any previous process still running
         readTask?.cancel()
         readTask = nil
@@ -411,82 +427,87 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         currentAssistantIndex = nil
         outputBuffer = ""
 
-        // Launch a new claude process for this message
-        let proc = Process()
-        let cliPath = Self.findCLI("claude")
-        proc.executableURL = URL(fileURLWithPath: cliPath)
+        // Capture state needed for process launch
+        let model = selectedModel
+        let effort = selectedEffort
+        let useContinue = useContinueForNextMessage
+        let sessionId = session.id
+        let cwd = resumeWorkingDirectory ?? workingDirectory
+        let skipMcp = resumeWorkingDirectory != nil
+        useContinueForNextMessage = false
 
-        // Build the prompt with IDE context injected
-        let prompt = Self.buildPromptWithIDEContext(trimmed)
+        // Launch process in background to avoid blocking main thread
+        Task.detached { [weak self] in
+            let proc = Process()
+            let cliPath = Self.findCLI("claude")
+            proc.executableURL = URL(fileURLWithPath: cliPath)
 
-        var args = ["-p", prompt, "--output-format", "stream-json", "--verbose",
-                    "--model", selectedModel, "--effort", selectedEffort]
-        // Resume: --continue for last session, --resume for current session
-        if useContinueForNextMessage {
-            args += ["--continue"]
-            useContinueForNextMessage = false
-        } else if let sid = session.id {
-            args += ["--resume", sid]
-        }
-
-        // Use the session's original cwd for resume, keep it for the whole session
-        proc.currentDirectoryURL = resumeWorkingDirectory ?? workingDirectory
-
-        // Only add MCP config for same-project sessions (avoids slow MCP startup on cross-project resume)
-        if resumeWorkingDirectory == nil {
-            let mcpConfigPath = CanopeContextFiles.claudeIDEMcpConfigPaths[0]
-            if FileManager.default.fileExists(atPath: mcpConfigPath) {
-                args += ["--mcp-config", mcpConfigPath]
+            let prompt = Self.buildPromptWithIDEContext(trimmed)
+            var args = ["-p", prompt, "--output-format", "stream-json", "--verbose",
+                        "--model", model, "--effort", effort]
+            if useContinue {
+                args += ["--continue"]
+            } else if let sid = sessionId {
+                args += ["--resume", sid]
             }
-        }
+            proc.currentDirectoryURL = cwd
 
-        proc.arguments = args
-
-        var env = ProcessInfo.processInfo.environment
-        env["NO_COLOR"] = "1"
-        // Ensure IDE bridge is running and MCP config is written
-        ClaudeIDEBridgeService.shared.startIfNeeded()
-        CanopeContextFiles.writeClaudeIDEMcpConfig()
-        for entry in CanopeContextFiles.terminalEnvironment {
-            let parts = entry.split(separator: "=", maxSplits: 1)
-            if parts.count == 2 {
-                env[String(parts[0])] = String(parts[1])
-            }
-        }
-        proc.environment = env
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-        currentProcess = proc
-
-        do {
-            try proc.run()
-        } catch {
-            appendSystem("Erreur launch : \(error.localizedDescription)")
-            isProcessing = false
-            return
-        }
-
-        // Read stdout and stderr using FileHandle callbacks (more reliable than Task.detached loops)
-        let stdoutHandle = stdout.fileHandleForReading
-        let stderrHandle = stderr.fileHandleForReading
-
-        stderrHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            Task { @MainActor [weak self] in
-                let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Only show actionable stderr errors, not noise
-                if !t.isEmpty && (t.contains("Error") || t.contains("error")) {
-                    self?.appendSystem(t)
+            if !skipMcp {
+                let mcpConfigPath = CanopeContextFiles.claudeIDEMcpConfigPaths[0]
+                if FileManager.default.fileExists(atPath: mcpConfigPath) {
+                    args += ["--mcp-config", mcpConfigPath]
                 }
             }
-        }
+            proc.arguments = args
 
-        readTask = Task.detached { [weak self] in
-            // Read stdout line by line
+            var env = ProcessInfo.processInfo.environment
+            env["NO_COLOR"] = "1"
+            await MainActor.run {
+                ClaudeIDEBridgeService.shared.startIfNeeded()
+                CanopeContextFiles.writeClaudeIDEMcpConfig()
+            }
+            for entry in CanopeContextFiles.terminalEnvironment {
+                let parts = entry.split(separator: "=", maxSplits: 1)
+                if parts.count == 2 {
+                    env[String(parts[0])] = String(parts[1])
+                }
+            }
+            proc.environment = env
+
+            let stdout = Pipe()
+            let stderr = Pipe()
+            proc.standardOutput = stdout
+            proc.standardError = stderr
+
+            await MainActor.run { [weak self] in
+                self?.currentProcess = proc
+            }
+
+            do {
+                try proc.run()
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.appendSystem("Erreur : \(error.localizedDescription)")
+                    self?.isProcessing = false
+                }
+                return
+            }
+
+            let stdoutHandle = stdout.fileHandleForReading
+            let stderrHandle = stderr.fileHandleForReading
+
+            stderrHandle.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+                Task { @MainActor [weak self] in
+                    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty && (t.contains("Error") || t.contains("error")) {
+                        self?.appendSystem(t)
+                    }
+                }
+            }
+
+            // Read stdout
             while true {
                 let data = stdoutHandle.availableData
                 if data.isEmpty { break }
@@ -496,18 +517,25 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                 }
             }
 
-            // Process finished — clean up
             stderrHandle.readabilityHandler = nil
             await MainActor.run { [weak self] in
                 self?.isProcessing = false
-                // Finalize streaming
                 if let idx = self?.currentAssistantIndex, let count = self?.messages.count,
                    idx < count
                 {
                     self?.messages[idx].isStreaming = false
                 }
+                // Process next queued message
+                self?.processQueue()
             }
         }
+    }
+
+    private func processQueue() {
+        guard !messageQueue.isEmpty, !isProcessing else { return }
+        let next = messageQueue.removeFirst()
+        // Message already shown in UI — launch the process directly
+        launchProcess(for: next)
     }
 
     // MARK: - Output Parsing
@@ -604,14 +632,24 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                     inputStr = str
                 }
 
-                // Extract a short summary for the tool card
                 let summary = Self.toolSummary(name: toolName, input: block["input"] as? [String: Any])
 
-                messages.append(ChatMessage(
-                    role: .toolUse, content: summary, timestamp: Date(),
-                    toolName: toolName, toolInput: inputStr,
-                    isStreaming: false, isCollapsed: true
-                ))
+                // Group consecutive tool calls of the same type into one card
+                if let lastIdx = messages.indices.last,
+                   messages[lastIdx].role == .toolUse,
+                   messages[lastIdx].toolName == toolName
+                {
+                    // Increment counter in existing card
+                    let count = (messages[lastIdx].toolCount ?? 1) + 1
+                    messages[lastIdx].toolCount = count
+                    messages[lastIdx].content = "\(summary) (\(count))"
+                } else {
+                    messages.append(ChatMessage(
+                        role: .toolUse, content: summary, timestamp: Date(),
+                        toolName: toolName, toolInput: inputStr,
+                        isStreaming: false, isCollapsed: true
+                    ))
+                }
 
             case "tool_result":
                 var resultText = ""
@@ -702,7 +740,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     }
 
     /// Reads the current IDE selection state and injects it as context before the user's message.
-    static func buildPromptWithIDEContext(_ userMessage: String) -> String {
+    nonisolated static func buildPromptWithIDEContext(_ userMessage: String) -> String {
         let selectionPath = CanopeContextFiles.ideSelectionStatePaths[0]
         guard let data = FileManager.default.contents(atPath: selectionPath),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -725,7 +763,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         return context
     }
 
-    static func findCLI(_ name: String) -> String {
+    nonisolated static func findCLI(_ name: String) -> String {
         let home = ProcessInfo.processInfo.environment["HOME"] ?? "/Users/\(NSUserName())"
         let candidates = [
             "\(home)/.local/bin/\(name)",
