@@ -53,6 +53,7 @@ extension UnifiedEditorView {
             }
         }
         .frame(width: totalWidth)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
         .transaction { t in t.animation = nil }
     }
 

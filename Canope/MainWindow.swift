@@ -6,10 +6,8 @@ struct MainWindow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
     @Query private var allPapers: [Paper]
-    @State private var openTabs: [TabItem] = [.library]
-    @State private var selectedTab: TabItem = .library
+    @StateObject private var tabController = MainWindowTabController()
     @State private var paperToOpen: UUID? = nil
-    @State private var splitPaperID: UUID? = nil
     @State private var showTerminal = false
     @State private var isOpeningTeX = false
     @State private var isImportingPDF = false
@@ -18,20 +16,14 @@ struct MainWindow: View {
     @StateObject private var terminalWorkspaceState = TerminalWorkspaceState()
     @Namespace private var documentTabIndicatorNamespace
 
-    private var openPaperIDs: [UUID] {
-        openTabs.compactMap { if case .paper(let id) = $0 { return id } else { return nil } }
-    }
+    private var openPaperIDs: [UUID] { tabController.openPaperIDs }
 
-    private var openEditorPaths: [String] {
-        openTabs.compactMap { if case .editor(let path) = $0 { return path } else { return nil } }
-    }
+    private var openEditorPaths: [String] { tabController.openEditorPaths }
 
-    private var openPDFPaths: [String] {
-        openTabs.compactMap { if case .pdfFile(let path) = $0 { return path } else { return nil } }
-    }
+    private var openPDFPaths: [String] { tabController.openPDFPaths }
 
     private var isEditorSelected: Bool {
-        switch selectedTab {
+        switch tabController.selectedTab {
         case .editorWorkspace, .editor:
             return true
         default:
@@ -39,21 +31,34 @@ struct MainWindow: View {
         }
     }
 
+    /// Same `cwd` as the file tree (`FileBrowserView` root), not the PDF path — see `LaTeXWorkspaceUIState.treeViewRootURL`.
+    private var terminalStartupWorkingDirectoryForMainPane: URL? {
+        switch tabController.selectedTab {
+        case .editorWorkspace, .editor:
+            return nil
+        default:
+            return latexWorkspaceState.treeViewRootURL(
+                openPaths: openEditorPaths.filter { !$0.isEmpty },
+                selectedTab: tabController.selectedTab
+            )
+        }
+    }
+
     @ViewBuilder
     private var mainContentPane: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             LibraryView(
                 paperToOpen: $paperToOpen,
                 isImportingPDF: $isImportingPDF
             )
-                .opacity(selectedTab == .library ? 1 : 0)
-                .allowsHitTesting(selectedTab == .library)
+                .opacity(tabController.selectedTab == .library ? 1 : 0)
+                .allowsHitTesting(tabController.selectedTab == .library)
 
             ForEach(openPaperIDs, id: \.self) { paperId in
                 if let paper = allPapers.first(where: { $0.id == paperId }) {
                     Group {
-                        let isActive = selectedTab == .paper(paperId)
-                        if let splitID = splitPaperID,
+                        let isActive = tabController.selectedTab == .paper(paperId)
+                        if let splitID = tabController.splitPaperID,
                            splitID != paperId,
                            isActive {
                             if let splitPaper = allPapers.first(where: { $0.id == splitID }) {
@@ -66,25 +71,23 @@ struct MainWindow: View {
                             PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal)
                         }
                     }
-                    .opacity(selectedTab == .paper(paperId) ? 1 : 0)
-                    .allowsHitTesting(selectedTab == .paper(paperId))
+                    .opacity(tabController.selectedTab == .paper(paperId) ? 1 : 0)
+                    .allowsHitTesting(tabController.selectedTab == .paper(paperId))
                 }
             }
 
             LaTeXEditorContainer(
                 openPaths: openEditorPaths.filter { !$0.isEmpty },
-                selectedTab: $selectedTab,
+                selectedTab: $tabController.selectedTab,
                 showTerminal: $showTerminal,
                 openPaperIDs: openPaperIDs,
                 workspaceState: latexWorkspaceState,
                 terminalWorkspaceState: terminalWorkspaceState,
+                isEditorSectionActive: isEditorSelected,
                 onOpenTeX: { url in openTeXFile(url) },
                 onOpenPDF: { url in openPDFFile(url) },
                 onCloseEditor: { path in
-                    let tab = TabItem.editor(path)
-                    if let index = openTabs.firstIndex(of: tab) {
-                        openTabs.remove(at: index)
-                    }
+                    tabController.closeTab(.editor(path))
                 }
             )
             .opacity(isEditorSelected ? 1 : 0)
@@ -92,27 +95,30 @@ struct MainWindow: View {
 
             ForEach(openPDFPaths, id: \.self) { path in
                 StandalonePDFView(url: URL(fileURLWithPath: path))
-                    .opacity(selectedTab == .pdfFile(path) ? 1 : 0)
-                    .allowsHitTesting(selectedTab == .pdfFile(path))
+                    .opacity(tabController.selectedTab == .pdfFile(path) ? 1 : 0)
+                    .allowsHitTesting(tabController.selectedTab == .pdfFile(path))
             }
         }
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: selectedTab)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: tabController.selectedTab)
     }
 
     private var terminalPane: some View {
         TerminalPanel(
             workspaceState: terminalWorkspaceState,
             document: nil,
-            isVisible: showTerminal && selectedTab != .library && !isEditorSelected,
+            isVisible: showTerminal && tabController.selectedTab != .library && !isEditorSelected,
             topInset: 0,
-            showsInlineControls: true
+            showsInlineControls: true,
+            startupWorkingDirectory: terminalStartupWorkingDirectoryForMainPane
         )
         .frame(
-            minWidth: showTerminal && selectedTab != .library && !isEditorSelected ? 180 : 0,
-            idealWidth: showTerminal && selectedTab != .library && !isEditorSelected ? 680 : 0,
-            maxWidth: showTerminal && selectedTab != .library && !isEditorSelected ? .infinity : 0
+            minWidth: showTerminal && tabController.selectedTab != .library && !isEditorSelected ? 180 : 0,
+            idealWidth: showTerminal && tabController.selectedTab != .library && !isEditorSelected ? 680 : 0,
+            maxWidth: showTerminal && tabController.selectedTab != .library && !isEditorSelected ? .infinity : 0
         )
-        .opacity(showTerminal && selectedTab != .library && !isEditorSelected ? 1 : 0)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .opacity(showTerminal && tabController.selectedTab != .library && !isEditorSelected ? 1 : 0)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
     }
 
@@ -142,10 +148,10 @@ struct MainWindow: View {
         latexWorkspaceState.selectedReferencePaperID = id
 
         AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
-            if let activeEditor = openTabs.first(where: { if case .editor = $0 { return true } else { return false } }) {
-                selectedTab = activeEditor
+            if let activeEditor = tabController.openTabs.first(where: { if case .editor = $0 { return true } else { return false } }) {
+                tabController.selectedTab = activeEditor
             } else {
-                selectedTab = .editorWorkspace
+                tabController.selectedTab = .editorWorkspace
             }
         }
 
@@ -159,12 +165,8 @@ struct MainWindow: View {
     }
 
     func openPDFFile(_ url: URL) {
-        let tab = TabItem.pdfFile(url.path)
-        if !openTabs.contains(tab) {
-            openTabs.append(tab)
-        }
         AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
-            selectedTab = tab
+            tabController.openPDFFile(url)
         }
     }
 
@@ -183,13 +185,10 @@ struct MainWindow: View {
     }
 
     func openTeXFile(_ url: URL) {
-        let tab = TabItem.editor(url.path)
-        if !openTabs.contains(tab) {
-            openTabs.append(tab)
-        }
+        tabController.openEditorTab(path: url.path, select: false)
         rebaseEditorWorkspaceIfNeeded(for: url)
         AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
-            selectedTab = tab
+            tabController.selectedTab = .editor(url.path)
         }
         if EditorFileSupport.isEditorDocument(url) {
             RecentTeXFilesStore.addRecentTeXFile(url.path)
@@ -214,21 +213,7 @@ struct MainWindow: View {
     private func persistWorkspaceState() {
         guard didRestoreWorkspace else { return }
 
-        var savedTabs = openTabs
-            .filter { $0 != .editorWorkspace }
-            .compactMap(MainWindowWorkspaceState.SavedTab.init)
-        if !savedTabs.contains(.library) {
-            savedTabs.insert(.library, at: 0)
-        }
-        savedTabs = deduplicated(savedTabs)
-
-        let selectedSavedTab = MainWindowWorkspaceState.SavedTab(selectedTab) ?? savedTabs.last ?? .library
-        let snapshot = MainWindowWorkspaceState(
-            openTabs: savedTabs,
-            selectedTab: selectedSavedTab,
-            showTerminal: showTerminal,
-            splitPaperID: splitPaperID
-        )
+        let snapshot = tabController.makePersistSnapshot(showTerminal: showTerminal)
         WorkspaceSessionStore.shared.saveMainWindowState(snapshot)
     }
 
@@ -238,39 +223,8 @@ struct MainWindow: View {
 
         guard let snapshot = WorkspaceSessionStore.shared.loadMainWindowState() else { return }
 
-        var restoredTabs = snapshot.openTabs
-            .compactMap(\.tabItem)
-            .filter { $0 != .editorWorkspace }
-        if !restoredTabs.contains(.library) {
-            restoredTabs.insert(.library, at: 0)
-        }
-        restoredTabs = deduplicated(restoredTabs)
-        if restoredTabs.isEmpty {
-            restoredTabs = [.library]
-        }
-
-        openTabs = restoredTabs
-
-        if let restoredSelected = snapshot.selectedTab.tabItem {
-            if restoredSelected != .editorWorkspace && !openTabs.contains(restoredSelected) {
-                openTabs.append(restoredSelected)
-            }
-            selectedTab = restoredSelected
-        } else {
-            selectedTab = openTabs.last ?? .library
-        }
-
+        tabController.applyRestoredSnapshot(snapshot)
         showTerminal = snapshot.showTerminal
-        if let splitID = snapshot.splitPaperID, openTabs.contains(.paper(splitID)) {
-            splitPaperID = splitID
-        } else {
-            splitPaperID = nil
-        }
-    }
-
-    private func deduplicated<T: Hashable>(_ values: [T]) -> [T] {
-        var seen = Set<T>()
-        return values.filter { seen.insert($0).inserted }
     }
 
     var body: some View {
@@ -279,15 +233,15 @@ struct MainWindow: View {
                 // Top: section tabs + action buttons
                 HStack(spacing: 0) {
                     TabBar(
-                        tabs: $openTabs,
-                        selectedTab: $selectedTab,
+                        tabs: $tabController.openTabs,
+                        selectedTab: $tabController.selectedTab,
                         allPapers: allPapers,
                         onOpenTeX: { isOpeningTeX = true }
                     )
 
                     // Action buttons (right side, aligned with section row)
                     HStack(spacing: 1) {
-                        if selectedTab == .library {
+                        if tabController.selectedTab == .library {
                             Button {
                                 isImportingPDF = true
                             } label: {
@@ -326,19 +280,19 @@ struct MainWindow: View {
                         }
 
                         // Split toggle
-                        if case .paper = selectedTab {
+                        if case .paper = tabController.selectedTab {
                             Menu {
-                                if splitPaperID != nil {
-                                    Button("Fermer le split") { splitPaperID = nil }
+                                if tabController.splitPaperID != nil {
+                                    Button("Fermer le split") { tabController.splitPaperID = nil }
                                     Divider()
                                 }
                                 ForEach(openPaperIDs, id: \.self) { id in
                                     if let paper = allPapers.first(where: { $0.id == id }) {
-                                        Button(paper.title) { splitPaperID = id }
+                                        Button(paper.title) { tabController.splitPaperID = id }
                                     }
                                 }
                             } label: {
-                                Image(systemName: splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+                                Image(systemName: tabController.splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
                                     .font(.system(size: 11))
                                     .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
                             }
@@ -352,7 +306,7 @@ struct MainWindow: View {
                 .background(AppChromePalette.surfaceBar)
 
                 // Document tabs row (papers/PDFs from library)
-                let docTabs = openTabs.filter {
+                let docTabs = tabController.openTabs.filter {
                     if case .paper = $0 { return true }
                     if case .pdfFile = $0 { return true }
                     return false
@@ -363,17 +317,12 @@ struct MainWindow: View {
                             ForEach(docTabs, id: \.self) { tab in
                                 TabButton(
                                     tab: tab,
-                                    isSelected: selectedTab == tab,
+                                    isSelected: tabController.selectedTab == tab,
                                     indicatorNamespace: documentTabIndicatorNamespace,
                                     title: tabTitle(tab),
-                                    onSelect: { selectedTab = tab },
+                                    onSelect: { tabController.selectedTab = tab },
                                     onClose: {
-                                        if let i = openTabs.firstIndex(of: tab) {
-                                            openTabs.remove(at: i)
-                                            if selectedTab == tab {
-                                                selectedTab = i > 0 ? openTabs[i-1] : (openTabs.first ?? .library)
-                                            }
-                                        }
+                                        tabController.closeTab(tab)
                                     }
                                 )
                             }
@@ -392,7 +341,9 @@ struct MainWindow: View {
                 mainContentPane
                 terminalPane
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             if !AppRuntime.isRunningTests {
                 restoreWorkspaceStateIfNeeded()
@@ -401,13 +352,13 @@ struct MainWindow: View {
             }
             makeSplitersEasyToGrab()
         }
-        .onChange(of: selectedTab) {
+        .onChange(of: tabController.selectedTab) {
             makeSplitersEasyToGrab()
             persistWorkspaceState()
         }
-        .onChange(of: openTabs) { persistWorkspaceState() }
+        .onChange(of: tabController.openTabs) { persistWorkspaceState() }
         .onChange(of: showTerminal) { persistWorkspaceState() }
-        .onChange(of: splitPaperID) { persistWorkspaceState() }
+        .onChange(of: tabController.splitPaperID) { persistWorkspaceState() }
         .onChange(of: paperToOpen) {
             guard let id = paperToOpen else { return }
             openPaperAsReference(id: id)
@@ -422,8 +373,8 @@ struct MainWindow: View {
                 openTeXFile(url)
             }
         }
-        .onChange(of: selectedTab) {
-            if selectedTab != .library {
+        .onChange(of: tabController.selectedTab) {
+            if tabController.selectedTab != .library {
                 isImportingPDF = false
             }
         }

@@ -13,6 +13,8 @@ struct LaTeXEditorContainer: View {
     let openPaperIDs: [UUID]
     @ObservedObject var workspaceState: LaTeXWorkspaceUIState
     @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
+    /// When false, the embedded terminal must not override cwd for the shared `TerminalWorkspaceState` (main-window terminal owns it).
+    var isEditorSectionActive: Bool
     var onOpenTeX: (URL) -> Void
     var onOpenPDF: (URL) -> Void
     var onCloseEditor: (String) -> Void
@@ -189,7 +191,7 @@ struct LaTeXEditorContainer: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             if openPaths.isEmpty {
                 LaTeXLandingView(
                     onOpenTeX: onOpenTeX,
@@ -207,6 +209,7 @@ struct LaTeXEditorContainer: View {
                 editorView(for: URL(fileURLWithPath: activePath))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             restoreWorkspaceStateIfNeeded()
             ensureWorkspaceRoot()
@@ -226,8 +229,11 @@ struct LaTeXEditorContainer: View {
             fileURL: fileURL,
             isActive: true,
             showTerminal: $showTerminal,
+            mainWindowTab: $selectedTab,
+            openEditorPaths: openPaths,
             workspaceState: workspaceState,
             terminalWorkspaceState: terminalWorkspaceState,
+            isEditorSectionActive: isEditorSectionActive,
             codeDocumentState: codeDocumentStateStore.state(for: fileURL),
             onOpenPDF: onOpenPDF,
             onOpenInNewTab: onOpenTeX,

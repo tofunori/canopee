@@ -94,4 +94,27 @@ final class LaTeXWorkspaceUIState: ObservableObject {
         }
         return homeDirectory
     }
+
+    /// Same folder as `FileBrowserView`’s `rootURL` / `UnifiedEditorView.projectRoot` (workspace root, else active file’s parent).
+    /// Mirrors `LaTeXEditorContainer.activePath` for choosing which file path drives the tree when the editor tab is not focused.
+    func treeViewRootURL(openPaths: [String], selectedTab: TabItem) -> URL {
+        if let root = workspaceRoot { return root.standardizedFileURL }
+        let activePath: String?
+        switch selectedTab {
+        case .editor(let path):
+            activePath = path
+        case .editorWorkspace:
+            activePath = nil
+        default:
+            activePath = openPaths.last
+        }
+        if let path = activePath ?? openPaths.last, !path.isEmpty {
+            let url = URL(fileURLWithPath: path)
+            if url.scheme != "canope", url.isFileURL {
+                return url.deletingLastPathComponent().standardizedFileURL
+            }
+            return FileManager.default.homeDirectoryForCurrentUser
+        }
+        return Self.preferredWorkspaceRoot(openPaths: openPaths)
+    }
 }

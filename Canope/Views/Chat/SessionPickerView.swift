@@ -1,15 +1,17 @@
 import SwiftUI
 
 struct SessionPickerView: View {
+    let loadSessions: () -> [ChatSessionListItem]
+    let renameSession: (String, String) -> Void
     let onSelect: (String) -> Void
     let onCancel: () -> Void
 
-    @State private var sessions: [ClaudeHeadlessProvider.SessionEntry] = []
+    @State private var sessions: [ChatSessionListItem] = []
     @State private var search = ""
-    @State private var renamingSession: ClaudeHeadlessProvider.SessionEntry?
+    @State private var renamingSession: ChatSessionListItem?
     @State private var renameText = ""
 
-    private var filtered: [ClaudeHeadlessProvider.SessionEntry] {
+    private var filtered: [ChatSessionListItem] {
         if search.isEmpty { return sessions }
         let q = search.lowercased()
         return sessions.filter {
@@ -58,7 +60,7 @@ struct SessionPickerView: View {
                                         .lineLimit(1)
 
                                     HStack(spacing: 6) {
-                                        Text(entry.id.prefix(8))
+                                        Text(String(entry.id.prefix(8)))
                                             .font(.system(size: 10, design: .monospaced))
                                             .foregroundStyle(.secondary)
 
@@ -99,7 +101,7 @@ struct SessionPickerView: View {
         .frame(width: 420, height: 350)
         .background(AppChromePalette.surfaceBar)
         .onAppear {
-            sessions = ClaudeHeadlessProvider.listSessions()
+            sessions = loadSessions()
         }
         .sheet(item: $renamingSession) { entry in
             VStack(spacing: 12) {
@@ -116,8 +118,8 @@ struct SessionPickerView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Renommer") {
-                        ClaudeHeadlessProvider.renameSession(id: entry.id, name: renameText)
-                        sessions = ClaudeHeadlessProvider.listSessions()
+                        renameSession(entry.id, renameText)
+                        sessions = loadSessions()
                         renamingSession = nil
                     }
                     .buttonStyle(.borderedProminent)

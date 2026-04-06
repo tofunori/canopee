@@ -1,57 +1,6 @@
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
-
-// MARK: - Inline Markdown Cache (lightweight, for history messages)
-
-@MainActor
-final class InlineMarkdownCache {
-    static let shared = InlineMarkdownCache()
-    private var cache: [String: AttributedString] = [:]
-
-    func get(_ text: String) -> AttributedString {
-        if let cached = cache[text] { return cached }
-        let converted = text.contains("$") ? LaTeXUnicode.convert(text) : text
-        let result = (try? AttributedString(markdown: converted, options: .init(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace
-        ))) ?? AttributedString(converted)
-        cache[text] = result
-        if cache.count > 150 { cache.removeAll() }
-        return result
-    }
-}
-
-// MARK: - Deferred Markdown (inline first, full render after visible)
-
-/// Shows inline markdown instantly, upgrades to full block markdown after appearing.
-/// This prevents freeze when loading many messages at once.
-struct DeferredMarkdownView: View {
-    let text: String
-    let skipFullRender: Bool
-
-    init(text: String, skipFullRender: Bool = false) {
-        self.text = text
-        self.skipFullRender = skipFullRender
-    }
-
-    @State private var showFull = false
-
-    var body: some View {
-        if showFull && !skipFullRender {
-            MarkdownBlockView(text: text)
-        } else {
-            Text(InlineMarkdownCache.shared.get(text))
-                .font(.system(size: 13))
-                .textSelection(.enabled)
-                .task {
-                    guard !skipFullRender else { return }
-                    await Task.yield()
-                    if !Task.isCancelled {
-                        showFull = true
-                    }
-                }
-        }
-    }
-}
 
 // MARK: - Attached File
 
@@ -64,10 +13,10 @@ struct AttachedFile: Identifiable {
 
 // MARK: - AI Chat View (Native headless chat panel)
 
-struct AIChatView<Provider: AIHeadlessProvider>: View {
+struct AIChatView<Provider: HeadlessChatProviding>: View {
     @ObservedObject var provider: Provider
+    let fileRootURL: URL?
     @State private var inputText = ""
-    @State private var scrollProxy: ScrollViewProxy?
     @FocusState private var isInputFocused: Bool
     @State private var selectedSlashIndex: Int?
     @State private var showSessionPicker = false
@@ -76,7 +25,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     @State private var fileListItems: [String] = []
     @State private var editingMessageID: UUID?
     @State private var editingText = ""
-    @State private var selectionTimer: Timer?
+    @State private var fileListTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -86,34 +35,44 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             Divider()
             inputBar
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(AppChromePalette.surfaceBar)
         .onAppear {
             if !provider.isConnected {
                 provider.start()
             }
-            cachedSelection = readSelectionFromDisk()
-            selectionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-                Task { @MainActor in
-                    cachedSelection = readSelectionFromDisk()
-                }
-            }
+            refreshSelectionCache()
         }
         .onDisappear {
-            selectionTimer?.invalidate()
-            selectionTimer = nil
+            fileListTask?.cancel()
+            fileListTask = nil
+        }
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+            refreshSelectionCache()
         }
         // Cmd+N handled via menu item or button — SwiftUI doesn't support view-level Cmd shortcuts well
         .sheet(isPresented: $showSessionPicker) {
-            SessionPickerView { sessionId in
+            SessionPickerView(
+                loadSessions: { provider.listChatSessions(limit: 15, matchingDirectory: chatFileRootURL) },
+                renameSession: { id, name in
+                    Provider.renameChatSession(id: id, name: name)
+                }
+            ) { sessionId in
                 showSessionPicker = false
                 listResetID = UUID() // Skip diffing — fresh list
-                if let p = provider as? ClaudeHeadlessProvider {
-                    p.resumeSession(id: sessionId)
-                }
+                provider.resumeChatSession(id: sessionId)
             } onCancel: {
                 showSessionPicker = false
             }
         }
+    }
+
+    private func refreshSelectionCache() {
+        cachedSelection = readSelectionFromDisk()
+    }
+
+    private var chatFileRootURL: URL {
+        fileRootURL ?? provider.chatWorkingDirectory
     }
 
     // MARK: - Session Header
@@ -124,59 +83,57 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            if let claudeProvider = provider as? ClaudeHeadlessProvider {
-                // Model picker
-                Menu {
-                    ForEach(ClaudeHeadlessProvider.availableModels, id: \.self) { model in
-                        Button {
-                            claudeProvider.selectedModel = model
-                        } label: {
-                            HStack {
-                                Text(model)
-                                if claudeProvider.selectedModel == model {
-                                    Image(systemName: "checkmark")
-                                }
+            // Model picker
+            Menu {
+                ForEach(provider.chatAvailableModels, id: \.self) { model in
+                    Button {
+                        provider.chatSelectedModel = model
+                    } label: {
+                        HStack {
+                            Text(model)
+                            if provider.chatSelectedModel == model {
+                                Image(systemName: "checkmark")
                             }
                         }
                     }
-                } label: {
-                    Text(claudeProvider.selectedModel)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.orange)
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-
-                Text("·")
-                    .foregroundStyle(.secondary.opacity(0.5))
-
-                // Effort picker
-                Menu {
-                    ForEach(ClaudeHeadlessProvider.availableEfforts, id: \.self) { effort in
-                        Button {
-                            claudeProvider.selectedEffort = effort
-                        } label: {
-                            HStack {
-                                Text(effort)
-                                if claudeProvider.selectedEffort == effort {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Text(claudeProvider.selectedEffort)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
+            } label: {
+                Text(provider.chatSelectedModel)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.orange)
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
+            Text("·")
+                .foregroundStyle(.secondary.opacity(0.5))
+
+            // Effort picker
+            Menu {
+                ForEach(provider.chatAvailableEfforts, id: \.self) { effort in
+                    Button {
+                        provider.chatSelectedEffort = effort
+                    } label: {
+                        HStack {
+                            Text(effort)
+                            if provider.chatSelectedEffort == effort {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(provider.chatSelectedEffort)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
 
             if provider.session.turns > 0 {
                 Text("·")
                     .foregroundStyle(.secondary.opacity(0.5))
-                Text("\(provider.session.turns) turns")
+                Text("\(provider.session.turns) échanges")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
                 Text("·")
@@ -235,7 +192,6 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 .padding(.horizontal, 12)
             }
             .id(listResetID)
-            .onAppear { scrollProxy = proxy }
             .onChange(of: provider.messages.count) {
                 if shouldAutoScroll {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -247,6 +203,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 if provider.isProcessing { shouldAutoScroll = true }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Message Rows
@@ -294,9 +251,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                         Button("Renvoyer") {
                             let newText = editingText
                             editingMessageID = nil
-                            if let p = provider as? ClaudeHeadlessProvider {
-                                p.editAndResend(newText: newText)
-                            }
+                            provider.editAndResendLastUser(newText: newText)
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -304,24 +259,43 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                     }
                 }
             } else {
-                Text(message.content)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white)
+                VStack(alignment: .trailing, spacing: 4) {
+                    if let queuePosition = message.queuePosition {
+                        HStack(spacing: 5) {
+                            Image(systemName: "clock.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text(queuePosition == 1 ? "En attente" : "En attente · #\(queuePosition)")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundStyle(.white.opacity(0.8))
+                    }
+
+                    Text(message.content)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white)
+                }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.85))
+                            .fill(Color.accentColor.opacity(message.isQueued ? 0.42 : 0.85))
                     )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.accentColor.opacity(message.isQueued ? 0.45 : 0), lineWidth: 1)
+                    )
+                    .opacity(message.isQueued ? 0.92 : 1)
                     .textSelection(.enabled)
                     .contextMenu {
                         Button("Copier") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(message.content, forType: .string)
                         }
-                        Button("Éditer & renvoyer") {
-                            editingMessageID = message.id
-                            editingText = message.content
+                        if !message.isQueued {
+                            Button("Éditer & renvoyer") {
+                                editingMessageID = message.id
+                                editingText = message.content
+                            }
                         }
                     }
             }
@@ -363,7 +337,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                         .font(.system(size: 13))
                         .textSelection(.enabled)
                 } else {
-                    DeferredMarkdownView(text: message.content)
+                    assistantMarkdownDeferred(message)
                 }
             }
 
@@ -379,10 +353,21 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             .blinking()
     }
 
+    @ViewBuilder
+    private func assistantMarkdownDeferred(_ message: ChatMessage) -> some View {
+        let overLimit = ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content)
+        DeferredMarkdownView(
+            text: message.content,
+            skipFullRender: overLimit,
+            // If pre-render was evicted, visible older messages can still upgrade to full block markdown on demand.
+            allowPromoteToFullBlock: !overLimit,
+            promotionDelayNanoseconds: 450_000_000
+        )
+    }
+
     private func toolCard(_ message: ChatMessage) -> some View {
         let toolName = message.toolName ?? "Tool"
-        let iconName = ClaudeHeadlessProvider.toolIcon(for: toolName)
-        let isCollapsed = message.isCollapsed
+        let iconName = Provider.toolIconName(for: toolName)
 
         return DisclosureGroup(isExpanded: bindingForCollapsed(message)) {
             VStack(alignment: .leading, spacing: 6) {
@@ -698,15 +683,12 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
         }
         let query = String(inputText[inputText.index(after: atIdx)...]).lowercased()
 
-        // List files from working directory
-        let workDir = (provider as? ClaudeHeadlessProvider)?.workingDirectoryURL
-            ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-
-        Task {
+        let workDir = chatFileRootURL
+        fileListTask?.cancel()
+        fileListTask = Task { @MainActor in
             let items = Self.listFiles(at: workDir, query: query)
-            await MainActor.run {
-                fileListItems = items
-            }
+            guard !Task.isCancelled else { return }
+            fileListItems = items
         }
     }
 
@@ -754,8 +736,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     }
 
     private func selectFile(_ item: String) {
-        let workDir = (provider as? ClaudeHeadlessProvider)?.workingDirectoryURL
-            ?? FileManager.default.homeDirectoryForCurrentUser
+        let workDir = chatFileRootURL
 
         if item.hasSuffix("/") {
             // Navigate into directory
@@ -807,14 +788,6 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     @State private var shouldAutoScroll = false
     @State private var listResetID = UUID()
 
-    private func cachedInlineMarkdown(_ text: String) -> AttributedString {
-        InlineMarkdownCache.shared.get(text)
-    }
-
-    private func startAutoScroll(proxy: ScrollViewProxy) {
-        shouldAutoScroll = true
-    }
-
     private var canSend: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -823,20 +796,17 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputText = ""
+        refreshSelectionCache()
 
         // /new starts a fresh conversation
         if text == "/new" {
-            if let p = provider as? ClaudeHeadlessProvider {
-                p.newSession()
-            }
+            provider.newChatSession()
             return
         }
 
         // Handle /continue locally
         if text == "/continue" {
-            if let p = provider as? ClaudeHeadlessProvider {
-                p.resumeLastSession()
-            }
+            provider.resumeLastChatSession(matchingDirectory: chatFileRootURL)
             return
         }
 
@@ -846,7 +816,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             return
         }
 
-        if !attachedFiles.isEmpty, let p = provider as? ClaudeHeadlessProvider {
+        if !attachedFiles.isEmpty {
             // Show clean message in UI, send full content to Claude
             let fileNames = attachedFiles.map { "📎 \($0.name)" }.joined(separator: " ")
             let displayText = "\(text)\n\(fileNames)"
@@ -861,16 +831,10 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             let fullPrompt = fileContext + "\n" + text
             attachedFiles.removeAll()
 
-            p.sendMessageWithDisplay(displayText: displayText, prompt: fullPrompt)
+            provider.sendMessageWithDisplay(displayText: displayText, prompt: fullPrompt)
         } else {
             provider.sendMessage(text)
         }
-    }
-
-    private func markdownContent(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace
-        ))) ?? AttributedString(text)
     }
 
     private func bindingForCollapsed(_ message: ChatMessage) -> Binding<Bool> {

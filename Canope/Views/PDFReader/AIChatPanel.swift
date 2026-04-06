@@ -418,7 +418,12 @@ final class TerminalWorkspaceState: ObservableObject {
     }
 
     func chatProvider(for tabID: UUID, workingDirectory: URL?) -> ClaudeHeadlessProvider {
-        if let existing = chatProviders[tabID] { return existing }
+        if let existing = chatProviders[tabID] {
+            if let wd = workingDirectory {
+                existing.updateWorkingDirectory(wd)
+            }
+            return existing
+        }
         let provider = ClaudeHeadlessProvider(workingDirectory: workingDirectory)
         chatProviders[tabID] = provider
         return provider
@@ -549,7 +554,9 @@ struct TerminalPanel: View {
 
             Group {
                 if workspaceState.selectedTab?.kind == .claudeChat {
-                    chatPaneContent
+                    if isVisible {
+                        chatPaneContent
+                    }
                 } else if workspaceState.isSplit {
                     splitTerminalContent
                 } else {
@@ -558,9 +565,10 @@ struct TerminalPanel: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(nsColor: resolvedTheme.background))
         }
-        .frame(minWidth: 160, maxWidth: .infinity)
+        .frame(minWidth: 160, maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             if workspaceState.tabs.isEmpty {
                 let tab = TerminalTab()
@@ -842,7 +850,11 @@ struct TerminalPanel: View {
                 for: tabID,
                 workingDirectory: startupWorkingDirectory
             )
-            AIChatView(provider: provider)
+            AIChatView(
+                provider: provider,
+                fileRootURL: startupWorkingDirectory
+            )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .onAppear {
                     // Keep working directory in sync with current project
                     if let dir = startupWorkingDirectory {

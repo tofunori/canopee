@@ -25,8 +25,13 @@ struct UnifiedEditorView: View {
     let fileURL: URL
     var isActive: Bool = true
     @Binding var showTerminal: Bool
+    /// Drives `projectRoot` / file tree root together with `openEditorPaths` (same rules as `LaTeXWorkspaceUIState.treeViewRootURL`).
+    @Binding var mainWindowTab: TabItem
+    var openEditorPaths: [String]
     @ObservedObject var workspaceState: LaTeXWorkspaceUIState
     @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
+    /// When false, do not push `projectRoot` into the shared terminal/chat cwd (another pane owns it).
+    var isEditorSectionActive: Bool = true
     @ObservedObject var codeDocumentState: CodeDocumentUIState
     var onOpenPDF: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
@@ -77,9 +82,7 @@ struct UnifiedEditorView: View {
 
     var documentMode: EditorDocumentMode { EditorDocumentMode(fileURL: fileURL) }
     var projectRoot: URL {
-        if let root = workspaceState.workspaceRoot { return root }
-        if hasNoFile { return FileManager.default.homeDirectoryForCurrentUser }
-        return fileURL.deletingLastPathComponent()
+        workspaceState.treeViewRootURL(openPaths: openEditorPaths, selectedTab: mainWindowTab)
     }
 
     // MARK: - Computed: LaTeX themes
@@ -377,7 +380,9 @@ struct UnifiedEditorView: View {
                 sidebarPane
                 workAreaPane
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .sheet(item: $pendingAnnotation) { pending in
             LaTeXAnnotationNoteSheet(
                 title: pending.existingAnnotationID == nil ? "Nouvelle annotation" : "Modifier l'annotation",
@@ -482,6 +487,7 @@ struct UnifiedEditorView: View {
                 editorAndContentPane
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showPDFPreview)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showEditorPane)
@@ -529,6 +535,7 @@ struct UnifiedEditorView: View {
             trailing: { threePaneView(for: roles.2) },
             onDragEnd: dragEnd
         )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Editor And Content Pane (no terminal)
@@ -662,9 +669,9 @@ struct UnifiedEditorView: View {
             isVisible: isActive && showTerminal,
             topInset: 0,
             showsInlineControls: false,
-            startupWorkingDirectory: projectRoot
+            startupWorkingDirectory: isEditorSectionActive ? projectRoot : nil
         )
-        .frame(minWidth: 160, idealWidth: 320, maxWidth: .infinity)
+        .frame(minWidth: 160, idealWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Editor Pane
@@ -722,7 +729,8 @@ struct UnifiedEditorView: View {
         }
         .frame(minWidth: documentMode.isRunnableCode ? 200 : 160,
                idealWidth: documentMode.isRunnableCode ? 680 : 620,
-               maxWidth: .infinity)
+               maxWidth: .infinity,
+               maxHeight: .infinity)
         .layoutPriority(1)
     }
 
@@ -857,7 +865,8 @@ struct UnifiedEditorView: View {
         }
         .frame(minWidth: documentMode.isRunnableCode ? 240 : 180,
                idealWidth: documentMode.isRunnableCode ? 380 : 320,
-               maxWidth: .infinity)
+               maxWidth: .infinity,
+               maxHeight: .infinity)
     }
 
     private var contentPaneTabs: [LaTeXEditorPdfPaneTab] {

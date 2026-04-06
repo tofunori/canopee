@@ -29,7 +29,19 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     private var currentAssistantIndex: Int?
     private var useContinueForNextMessage = false
     private var resumeWorkingDirectory: URL?  // override cwd when resuming a session from another project
-    private var messageQueue: [String] = []
+    private var messageQueue: [QueuedMessage] = []
+    private var pendingMarkdownPreRenders: [(UUID, String)] = []
+    private var markdownPreRenderTask: Task<Void, Never>?
+
+    private struct QueuedMessage {
+        let messageID: UUID
+        let prompt: String
+    }
+
+    private enum ClaudeLaunchMode {
+        case send
+        case forkEdit(sessionId: String)
+    }
 
     init(workingDirectory: URL? = nil) {
         if let wd = workingDirectory {
@@ -55,29 +67,33 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     }
 
     func stop() {
-        readTask?.cancel()
-        readTask = nil
-        if let proc = currentProcess, proc.isRunning { proc.terminate() }
-        currentProcess = nil
+        cancelInFlightWork()
         isProcessing = false
         // Stay connected — stop only cancels the current request
-        // Finalize any streaming message
         if let idx = currentAssistantIndex, idx < messages.count {
             messages[idx].isStreaming = false
         }
         currentAssistantIndex = nil
     }
 
-    /// Resume a specific session by ID. Shows last few messages as plain text preview.
-    func resumeSession(id: String) {
-        // Clean up any running process
+    /// Cancels stdout reader, throttle, pending parse lines, and terminates the CLI process.
+    private func cancelInFlightWork() {
+        throttleTask?.cancel()
+        throttleTask = nil
+        pendingLines.removeAll()
+        outputBuffer = ""
         readTask?.cancel()
         readTask = nil
-        if let old = currentProcess, old.isRunning { old.terminate() }
+        if let proc = currentProcess, proc.isRunning { proc.terminate() }
         currentProcess = nil
+    }
+
+    /// Resume a specific session by ID. Shows last few messages as plain text preview.
+    func resumeSession(id: String) {
+        cancelInFlightWork()
+        clearMarkdownPreRenderWork()
         isProcessing = false
         currentAssistantIndex = nil
-        outputBuffer = ""
 
         session.id = id
         messages.removeAll()
@@ -106,27 +122,17 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                 self?.resumeWorkingDirectory = cwd
                 self?.messages = Array(preview)
                 self?.appendSystem("Session reprise : \(id.prefix(12))…")
+                self?.enqueueMarkdownPreRenderForLastAssistantIfNeeded()
             }
         }
     }
 
     private nonisolated static func findSessionCwd(id: String) -> URL? {
-        let sessionsDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/sessions")
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: sessionsDir, includingPropertiesForKeys: nil
-        ) else { return nil }
-
-        for file in files where file.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: file),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let sid = json["sessionId"] as? String, sid == id,
-                  let cwd = json["cwd"] as? String
-            else { continue }
-            let url = URL(fileURLWithPath: cwd)
-            if FileManager.default.fileExists(atPath: cwd) { return url }
+        if let metadata = sessionMetadataIndex()[id], let cwd = metadata.cwd {
+            return cwd
         }
-        return nil
+        guard let jsonlURL = findSessionJSONLURL(id: id) else { return nil }
+        return jsonlHeader(at: jsonlURL)?.cwd
     }
 
     /// Load conversation history from the JSONL file for a session.
@@ -233,84 +239,15 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             isStreaming: false, isCollapsed: false
         ))
 
-        // Kill any previous process
-        readTask?.cancel()
-        readTask = nil
-        if let old = currentProcess, old.isRunning { old.terminate() }
-        currentProcess = nil
-
-        isProcessing = true
-        currentAssistantIndex = nil
-        outputBuffer = ""
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: Self.findCLI("claude"))
-        let prompt = Self.buildPromptWithIDEContext(trimmed)
-        var args = ["-p", prompt, "--output-format", "stream-json", "--verbose",
-                    "--model", selectedModel, "--effort", selectedEffort,
-                    "--resume", sid, "--fork-session"]
-        proc.currentDirectoryURL = resumeWorkingDirectory ?? workingDirectory
-
-        if resumeWorkingDirectory == nil {
-            let mcpConfigPath = CanopeContextFiles.claudeIDEMcpConfigPaths[0]
-            if FileManager.default.fileExists(atPath: mcpConfigPath) {
-                args += ["--mcp-config", mcpConfigPath]
-            }
-        }
-        proc.arguments = args
-
-        var env = ProcessInfo.processInfo.environment
-        env["NO_COLOR"] = "1"
-        ClaudeIDEBridgeService.shared.startIfNeeded()
-        CanopeContextFiles.writeClaudeIDEMcpConfig()
-        for entry in CanopeContextFiles.terminalEnvironment {
-            let parts = entry.split(separator: "=", maxSplits: 1)
-            if parts.count == 2 { env[String(parts[0])] = String(parts[1]) }
-        }
-        proc.environment = env
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-        currentProcess = proc
-
-        do {
-            try proc.run()
-        } catch {
-            appendSystem("Erreur : \(error.localizedDescription)")
-            isProcessing = false
-            return
-        }
-
-        let stdoutHandle = stdout.fileHandleForReading
-        readTask = Task.detached { [weak self] in
-            while true {
-                let data = stdoutHandle.availableData
-                if data.isEmpty { break }
-                guard let text = String(data: data, encoding: .utf8) else { continue }
-                await MainActor.run { [weak self] in
-                    self?.handleOutput(text)
-                }
-            }
-            await MainActor.run { [weak self] in
-                self?.isProcessing = false
-                if let idx = self?.currentAssistantIndex, let count = self?.messages.count, idx < count {
-                    self?.messages[idx].isStreaming = false
-                }
-            }
-        }
+        beginClaudeRun(userPrompt: trimmed, mode: .forkEdit(sessionId: sid))
     }
 
     /// Start a fresh conversation, clearing all state.
     func newSession() {
-        readTask?.cancel()
-        readTask = nil
-        if let old = currentProcess, old.isRunning { old.terminate() }
-        currentProcess = nil
+        cancelInFlightWork()
+        clearMarkdownPreRenderWork()
         isProcessing = false
         currentAssistantIndex = nil
-        outputBuffer = ""
         session = SessionInfo()
         resumeWorkingDirectory = nil
         useContinueForNextMessage = false
@@ -318,49 +255,156 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         appendSystem("Nouvelle conversation")
     }
 
-    /// Resume the most recent session.
-    func resumeLastSession() {
-        readTask?.cancel()
-        readTask = nil
-        if let old = currentProcess, old.isRunning { old.terminate() }
-        currentProcess = nil
+    /// Resume the most recent session for the provided project root only.
+    func resumeLastSession(matchingDirectory: URL? = nil) {
+        cancelInFlightWork()
+        clearMarkdownPreRenderWork()
         isProcessing = false
+        currentAssistantIndex = nil
 
-        useContinueForNextMessage = true
-        session.id = nil
-        appendSystem("Mode reprise activé — ton prochain message reprendra la dernière session")
+        let directory = matchingDirectory ?? workingDirectory
+        guard let latest = Self.listSessions(limit: 1, matchingDirectory: directory).first else {
+            appendSystem("Aucune session trouvée pour ce dossier")
+            return
+        }
+        resumeSession(id: latest.id)
     }
 
-    /// List available sessions from ~/.claude/sessions/
-    static func listSessions(limit: Int = 15) -> [SessionEntry] {
+    /// List available sessions from `~/.claude/projects`, enriched by `~/.claude/sessions` when available.
+    static func listSessions(limit: Int = 15, matchingDirectory: URL? = nil) -> [SessionEntry] {
+        let expectedPath = normalizedSessionPath(for: matchingDirectory)
+        let metadataIndex = sessionMetadataIndex()
+
+        let entries = sessionJSONLFiles().compactMap { url -> SessionEntry? in
+            let sid = url.deletingPathExtension().lastPathComponent
+            let metadata = metadataIndex[sid]
+            let header = jsonlHeader(at: url)
+            let cwdURL = metadata?.cwd ?? header?.cwd
+            if let expectedPath, normalizedSessionPath(for: cwdURL) != expectedPath {
+                return nil
+            }
+
+            let fileDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+            let date = metadata?.date ?? fileDate
+            let name = metadata?.name.isEmpty == false ? (metadata?.name ?? "") : (header?.title ?? "")
+            let project = cwdURL?.lastPathComponent ?? ""
+            return SessionEntry(id: sid, name: name, project: project, date: date, cwd: cwdURL)
+        }
+        .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+
+        return Array(entries.prefix(limit))
+    }
+
+    private nonisolated static func normalizedSessionPath(for url: URL?) -> String? {
+        url?.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    private struct SessionMetadata {
+        let name: String
+        let cwd: URL?
+        let date: Date?
+    }
+
+    private struct JSONLHeader {
+        let cwd: URL?
+        let title: String
+    }
+
+    private nonisolated static func sessionMetadataIndex() -> [String: SessionMetadata] {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/sessions")
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: [.contentModificationDateKey]
-        ) else { return [] }
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return [:]
+        }
 
-        let jsonFiles = files.filter { $0.pathExtension == "json" }
-            .sorted {
-                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                return d1 > d2
-            }
-            .prefix(limit)
-
-        return jsonFiles.compactMap { url -> SessionEntry? in
-            guard let data = try? Data(contentsOf: url),
+        var result: [String: SessionMetadata] = [:]
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let sid = json["sessionId"] as? String
-            else { return nil }
+            else { continue }
 
             let name = json["name"] as? String ?? ""
-            let cwd = (json["cwd"] as? String ?? "")
-            let project = (cwd as NSString).lastPathComponent
+            let cwdString = json["cwd"] as? String ?? ""
+            let cwd = cwdString.isEmpty ? nil : URL(fileURLWithPath: cwdString)
             let ts = json["startedAt"] as? Double ?? 0
             let date = ts > 0 ? Date(timeIntervalSince1970: ts / 1000) : nil
-
-            return SessionEntry(id: sid, name: name, project: project, date: date)
+            result[sid] = SessionMetadata(name: name, cwd: cwd, date: date)
         }
+        return result
+    }
+
+    private nonisolated static func sessionJSONLFiles() -> [URL] {
+        let claudeDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+        guard let projectDirs = try? FileManager.default.contentsOfDirectory(
+            at: claudeDir,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        return projectDirs.flatMap { dir in
+            (try? FileManager.default.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ))?
+            .filter { $0.pathExtension == "jsonl" } ?? []
+        }
+    }
+
+    private nonisolated static func findSessionJSONLURL(id: String) -> URL? {
+        sessionJSONLFiles().first { $0.deletingPathExtension().lastPathComponent == id }
+    }
+
+    private nonisolated static func jsonlHeader(at url: URL) -> JSONLHeader? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let data = try? handle.read(upToCount: 64 * 1024)
+        guard let data, !data.isEmpty else { return nil }
+
+        let content = String(decoding: data, as: UTF8.self)
+        var cwd: URL?
+        var title = ""
+
+        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let lineData = rawLine.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any]
+            else { continue }
+
+            if cwd == nil, let cwdString = json["cwd"] as? String, !cwdString.isEmpty {
+                cwd = URL(fileURLWithPath: cwdString)
+            }
+
+            if title.isEmpty, let lastPrompt = json["lastPrompt"] as? String, !lastPrompt.isEmpty {
+                title = compactSessionTitle(lastPrompt)
+            }
+
+            if title.isEmpty,
+               json["type"] as? String == "user",
+               let message = json["message"] as? [String: Any] {
+                if let text = message["content"] as? String, !text.isEmpty {
+                    title = compactSessionTitle(text)
+                } else if let blocks = message["content"] as? [[String: Any]] {
+                    let text = blocks.compactMap { block -> String? in
+                        guard block["type"] as? String == "text" else { return nil }
+                        return block["text"] as? String
+                    }.joined(separator: "\n")
+                    if !text.isEmpty { title = compactSessionTitle(text) }
+                }
+            }
+
+            if cwd != nil, !title.isEmpty { break }
+        }
+
+        return JSONLHeader(cwd: cwd, title: title)
+    }
+
+    private nonisolated static func compactSessionTitle(_ text: String, maxLength: Int = 90) -> String {
+        let singleLine = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard singleLine.count > maxLength else { return singleLine }
+        return String(singleLine.prefix(maxLength - 1)) + "…"
     }
 
     struct SessionEntry: Identifiable {
@@ -368,6 +412,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         let name: String
         let project: String
         let date: Date?
+        let cwd: URL?
 
         var displayName: String {
             if !name.isEmpty { return name }
@@ -391,7 +436,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         ) else { return }
 
         for file in files where file.pathExtension == "json" {
-            guard var data = try? Data(contentsOf: file),
+            guard let data = try? Data(contentsOf: file),
                   var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let sid = json["sessionId"] as? String, sid == id
             else { continue }
@@ -410,23 +455,15 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         guard !trimmed.isEmpty else { return }
 
         if isProcessing {
-            messageQueue.append(trimmed)
-            messages.append(ChatMessage(
-                role: .user, content: displayText, timestamp: Date(),
-                isStreaming: false, isCollapsed: false
-            ))
-            appendSystem("En file d'attente (\(messageQueue.count))")
+            enqueueUserMessage(displayText: displayText, prompt: trimmed)
             return
         }
 
         if !isConnected { start() }
 
-        messages.append(ChatMessage(
-            role: .user, content: displayText, timestamp: Date(),
-            isStreaming: false, isCollapsed: false
-        ))
+        appendUserMessage(displayText)
 
-        launchProcess(for: trimmed)
+        beginClaudeRun(userPrompt: trimmed, mode: .send)
     }
 
     func sendMessage(_ text: String) {
@@ -435,47 +472,73 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
         // Queue if already processing
         if isProcessing {
-            messageQueue.append(trimmed)
-            messages.append(ChatMessage(
-                role: .user, content: trimmed, timestamp: Date(),
-                isStreaming: false, isCollapsed: false
-            ))
-            appendSystem("En file d'attente (\(messageQueue.count))")
+            enqueueUserMessage(displayText: trimmed, prompt: trimmed)
             return
         }
 
         if !isConnected { start() }
 
-        messages.append(ChatMessage(
-            role: .user, content: trimmed, timestamp: Date(),
-            isStreaming: false, isCollapsed: false
-        ))
+        appendUserMessage(trimmed)
 
-        launchProcess(for: trimmed)
+        beginClaudeRun(userPrompt: trimmed, mode: .send)
     }
 
-    private func launchProcess(for trimmed: String) {
-        // Kill any previous process still running
-        readTask?.cancel()
-        readTask = nil
-        if let old = currentProcess, old.isRunning { old.terminate() }
-        currentProcess = nil
+    private func appendUserMessage(_ text: String, queuePosition: Int? = nil) {
+        messages.append(ChatMessage(
+            role: .user,
+            content: text,
+            timestamp: Date(),
+            isStreaming: false,
+            isCollapsed: false,
+            queuePosition: queuePosition
+        ))
+    }
+
+    private func enqueueUserMessage(displayText: String, prompt: String) {
+        let message = ChatMessage(
+            role: .user,
+            content: displayText,
+            timestamp: Date(),
+            isStreaming: false,
+            isCollapsed: false,
+            queuePosition: messageQueue.count + 1
+        )
+        messages.append(message)
+        messageQueue.append(QueuedMessage(messageID: message.id, prompt: prompt))
+        refreshQueuedMessagePositions()
+    }
+
+    private func refreshQueuedMessagePositions() {
+        for (offset, queued) in messageQueue.enumerated() {
+            guard let idx = messages.firstIndex(where: { $0.id == queued.messageID }) else { continue }
+            messages[idx].queuePosition = offset + 1
+        }
+    }
+
+    /// Single entry point for `claude` CLI runs (normal send and fork-edit).
+    private func beginClaudeRun(userPrompt trimmed: String, mode: ClaudeLaunchMode) {
+        cancelInFlightWork()
 
         isProcessing = true
         currentAssistantIndex = nil
         outputBuffer = ""
 
-        // Capture state needed for process launch
         let model = selectedModel
         let effort = selectedEffort
-        let useContinue = useContinueForNextMessage
-        let sessionId = session.id
         let cwd = resumeWorkingDirectory ?? workingDirectory
         let skipMcp = resumeWorkingDirectory != nil
-        useContinueForNextMessage = false
+        let resumeIdAtLaunch = session.id
 
-        // Launch process in background to avoid blocking main thread
-        Task.detached { [weak self] in
+        let useContinue: Bool
+        switch mode {
+        case .send:
+            useContinue = useContinueForNextMessage
+            useContinueForNextMessage = false
+        case .forkEdit:
+            useContinue = false
+        }
+
+        readTask = Task.detached { [weak self] in
             let proc = Process()
             let cliPath = Self.findCLI("claude")
             proc.executableURL = URL(fileURLWithPath: cliPath)
@@ -483,10 +546,15 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             let prompt = Self.buildPromptWithIDEContext(trimmed)
             var args = ["-p", prompt, "--output-format", "stream-json", "--verbose",
                         "--model", model, "--effort", effort]
-            if useContinue {
-                args += ["--continue"]
-            } else if let sid = sessionId {
-                args += ["--resume", sid]
+            switch mode {
+            case .send:
+                if useContinue {
+                    args += ["--continue"]
+                } else if let sid = resumeIdAtLaunch {
+                    args += ["--resume", sid]
+                }
+            case .forkEdit(let sid):
+                args += ["--resume", sid, "--fork-session"]
             }
             proc.currentDirectoryURL = cwd
 
@@ -537,15 +605,13 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             stderrHandle.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-                Task { @MainActor [weak self] in
-                    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !t.isEmpty && (t.contains("Error") || t.contains("error")) {
-                        self?.appendSystem(t)
-                    }
+                let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !t.isEmpty && (t.contains("Error") || t.contains("error")) else { return }
+                DispatchQueue.main.async {
+                    self?.appendSystem(t)
                 }
             }
 
-            // Read stdout
             while true {
                 let data = stdoutHandle.availableData
                 if data.isEmpty { break }
@@ -557,23 +623,27 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
             stderrHandle.readabilityHandler = nil
             await MainActor.run { [weak self] in
-                self?.isProcessing = false
-                if let idx = self?.currentAssistantIndex, let count = self?.messages.count,
-                   idx < count
-                {
-                    self?.messages[idx].isStreaming = false
-                }
-                // Process next queued message
-                self?.processQueue()
+                self?.finalizeAfterProcessExit()
             }
         }
+    }
+
+    private func finalizeAfterProcessExit() {
+        finalizeStreamingAssistant()
+        if isProcessing {
+            isProcessing = false
+        }
+        processQueue()
     }
 
     private func processQueue() {
         guard !messageQueue.isEmpty, !isProcessing else { return }
         let next = messageQueue.removeFirst()
-        // Message already shown in UI — launch the process directly
-        launchProcess(for: next)
+        if let idx = messages.firstIndex(where: { $0.id == next.messageID }) {
+            messages[idx].queuePosition = nil
+        }
+        refreshQueuedMessagePositions()
+        beginClaudeRun(userPrompt: next.prompt, mode: .send)
     }
 
     // MARK: - Output Parsing
@@ -590,7 +660,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         if throttleTask == nil {
             throttleTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(150))
-                guard let self else { return }
+                guard let self, !Task.isCancelled else { return }
                 let lines = self.pendingLines
                 self.pendingLines.removeAll()
                 self.throttleTask = nil
@@ -738,10 +808,51 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     // MARK: - Helpers
 
     private func finalizeStreamingAssistant() {
-        if let idx = currentAssistantIndex, idx < messages.count {
+        let capturedIdx = currentAssistantIndex
+        if let idx = capturedIdx, idx < messages.count {
             messages[idx].isStreaming = false
+            let id = messages[idx].id
+            let content = messages[idx].content
+            enqueueMarkdownPreRender(messageId: id, content: content)
         }
         currentAssistantIndex = nil
+    }
+
+    private func clearMarkdownPreRenderWork() {
+        pendingMarkdownPreRenders.removeAll()
+        markdownPreRenderTask?.cancel()
+        markdownPreRenderTask = nil
+    }
+
+    private func enqueueMarkdownPreRender(messageId: UUID, content: String) {
+        guard !content.isEmpty else { return }
+        guard !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: content) else { return }
+        pendingMarkdownPreRenders.append((messageId, content))
+        processMarkdownPreRenderQueueIfNeeded()
+    }
+
+    private func processMarkdownPreRenderQueueIfNeeded() {
+        guard markdownPreRenderTask == nil, !pendingMarkdownPreRenders.isEmpty else { return }
+        let (messageId, content) = pendingMarkdownPreRenders.removeFirst()
+        markdownPreRenderTask = Task.detached(priority: .utility) { [weak self] in
+            let attr = MarkdownBlockView.renderAttributedPreviewForBackground(content)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.markdownPreRenderTask = nil
+                if let idx = self.messages.firstIndex(where: { $0.id == messageId }) {
+                    self.messages[idx].preRenderedMarkdown = attr
+                    ChatMarkdownPolicy.applyPreRenderedMarkdownRetentionBudget(to: &self.messages)
+                }
+                self.processMarkdownPreRenderQueueIfNeeded()
+            }
+        }
+    }
+
+    private func enqueueMarkdownPreRenderForLastAssistantIfNeeded() {
+        guard let lastIdx = messages.lastIndex(where: { $0.role == .assistant }) else { return }
+        let m = messages[lastIdx]
+        guard !m.isFromHistory else { return }
+        enqueueMarkdownPreRender(messageId: m.id, content: m.content)
     }
 
     private func appendSystem(_ text: String) {
