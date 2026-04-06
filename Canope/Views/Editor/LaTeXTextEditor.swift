@@ -362,13 +362,14 @@ struct LaTeXTextEditor: NSViewRepresentable {
             storage.beginEditing()
             storage.setAttributes([.font: font, .foregroundColor: fg], range: fullRange)
 
-            highlight(storage, text: text, pattern: #"%[^\n]*"#, color: commentColor)
             highlight(storage, text: text, pattern: #"\\(begin|end)\{[^}]*\}"#, color: envColor)
             highlight(storage, text: text, pattern: #"\\[a-zA-Z@]+"#, color: commandColor)
             highlight(storage, text: text, pattern: #"\$\$[^$]+\$\$"#, color: mathColor)
             highlight(storage, text: text, pattern: #"\$[^$]+\$"#, color: mathColor)
             highlight(storage, text: text, pattern: #"[{}]"#, color: braceColor)
             highlight(storage, text: text, pattern: #"[\[\]]"#, color: braceColor.withAlphaComponent(0.7))
+            // Comments last — overwrites commands/braces inside comment regions
+            highlight(storage, text: text, pattern: #"(?<!\\)%[^\n]*"#, color: commentColor)
             applyAnnotationHighlights(to: storage)
             storage.endEditing()
             textView.typingAttributes = [

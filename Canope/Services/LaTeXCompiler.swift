@@ -18,13 +18,68 @@ struct CompilationResult {
 struct LaTeXCompiler {
 
     /// Compile a .tex file using latexmk.
+    /// Automatically resolves the root file (via `% !TEX root` or directory scan).
     static func compile(file: URL) async -> CompilationResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let result = runLatexmk(file: file)
+                let rootFile = resolveRootFile(from: file)
+                let result = runLatexmk(file: rootFile)
                 continuation.resume(returning: result)
             }
         }
+    }
+
+    // MARK: - Root file detection
+
+    /// Resolve the root .tex file for compilation.
+    /// Priority: 1) `% !TEX root` magic comment, 2) directory scan for \documentclass that includes this file.
+    private static func resolveRootFile(from file: URL) -> URL {
+        // If the file itself has \documentclass, it's already a root
+        if fileContainsDocumentclass(file) { return file }
+
+        // Method 1: magic comment in first 5 lines
+        if let root = rootFromMagicComment(in: file) { return root }
+
+        // Method 2: scan sibling .tex files for one with \documentclass that \input's this file
+        if let root = rootFromDirectoryScan(for: file) { return root }
+
+        return file
+    }
+
+    private static func rootFromMagicComment(in file: URL) -> URL? {
+        guard let content = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let lines = content.components(separatedBy: .newlines).prefix(5)
+        for line in lines {
+            // Match: % !TEX root = path/to/main.tex
+            guard let range = line.range(of: #"(?i)%\s*!\s*TEX\s+root\s*[=:]\s*(.+)"#, options: .regularExpression) else { continue }
+            let path = String(line[range])
+                .replacingOccurrences(of: #"(?i)%\s*!\s*TEX\s+root\s*[=:]\s*"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            let resolved = file.deletingLastPathComponent().appendingPathComponent(path).standardized
+            if FileManager.default.fileExists(atPath: resolved.path) { return resolved }
+        }
+        return nil
+    }
+
+    private static func rootFromDirectoryScan(for file: URL) -> URL? {
+        let directory = file.deletingLastPathComponent()
+        let baseName = file.deletingPathExtension().lastPathComponent
+        guard let contents = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return nil }
+        let texFiles = contents.filter { $0.pathExtension == "tex" && $0 != file.standardizedFileURL }
+
+        for candidate in texFiles {
+            guard fileContainsDocumentclass(candidate),
+                  let text = try? String(contentsOf: candidate, encoding: .utf8) else { continue }
+            // Check if this file \input's, \include's, or \subfile's our file
+            let pattern = #"\\(input|include|subfile|subimport)\s*(\{|(\[.*?\]\{))"# + NSRegularExpression.escapedPattern(for: baseName)
+            if text.range(of: pattern, options: .regularExpression) != nil { return candidate }
+        }
+        return nil
+    }
+
+    private static func fileContainsDocumentclass(_ file: URL) -> Bool {
+        guard let content = try? String(contentsOf: file, encoding: .utf8) else { return false }
+        return content.range(of: #"(?m)^\s*\\documentclass"#, options: .regularExpression) != nil
     }
 
     private static func runLatexmk(file: URL) -> CompilationResult {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Inline Markdown Cache (lightweight, for history messages)
 
@@ -52,6 +53,15 @@ struct DeferredMarkdownView: View {
     }
 }
 
+// MARK: - Attached File
+
+struct AttachedFile: Identifiable {
+    let id = UUID()
+    let name: String
+    let path: String
+    let content: String
+}
+
 // MARK: - AI Chat View (Native headless chat panel)
 
 struct AIChatView<Provider: AIHeadlessProvider>: View {
@@ -62,6 +72,8 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
     @State private var selectedSlashIndex: Int?
     @State private var showSessionPicker = false
     @State private var cachedSelection: SelectionInfo?
+    @State private var attachedFiles: [AttachedFile] = []
+    @State private var fileListItems: [String] = []
     @State private var editingMessageID: UUID?
     @State private var editingText = ""
     @State private var selectionTimer: Timer?
@@ -496,6 +508,41 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 Divider()
             }
 
+            // @ file suggestions
+            if !fileListItems.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(fileListItems, id: \.self) { item in
+                            Button {
+                                selectFile(item)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: item.hasSuffix("/") ? "folder" : "doc.text")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(item.hasSuffix("/") ? .blue : .orange)
+                                        .frame(width: 14)
+                                    Text(item)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 200)
+                .background(AppChromePalette.surfaceSubbar)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(AppChromePalette.dividerSoft, lineWidth: 0.5)
+                )
+                .padding(.horizontal, 12)
+            }
+
             // Slash command suggestions
             if showSlashSuggestions, !filteredSlashCommands.isEmpty {
                 ScrollView {
@@ -535,6 +582,41 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                 .padding(.horizontal, 12)
             }
 
+            // Attached files indicator
+            if !attachedFiles.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(attachedFiles) { file in
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.text")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.orange)
+                                Text(file.name)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Button {
+                                    attachedFiles.removeAll { $0.id == file.id }
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 7, weight: .bold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(AppChromePalette.surfaceSubbar)
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+                }
+            }
+
             HStack(spacing: 8) {
                 TextField("Message à \(provider.providerName)…", text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -548,6 +630,7 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
                     }
                     .onChange(of: inputText) {
                         updateSlashSuggestions()
+                        updateFileList()
                     }
 
                 Button {
@@ -588,6 +671,111 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
 
     private func updateSlashSuggestions() {
         selectedSlashIndex = nil
+    }
+
+    // MARK: - @ File Autocomplete
+
+    private var showFileList: Bool {
+        guard let atIdx = inputText.lastIndex(of: "@") else { return false }
+        // @ must be at start or after a space
+        if atIdx != inputText.startIndex {
+            let before = inputText[inputText.index(before: atIdx)]
+            if before != " " && before != "\n" { return false }
+        }
+        return true
+    }
+
+    private func updateFileList() {
+        guard showFileList else {
+            fileListItems = []
+            return
+        }
+
+        // Extract the query after @
+        guard let atIdx = inputText.lastIndex(of: "@") else {
+            fileListItems = []
+            return
+        }
+        let query = String(inputText[inputText.index(after: atIdx)...]).lowercased()
+
+        // List files from working directory
+        let workDir = (provider as? ClaudeHeadlessProvider)?.workingDirectoryURL
+            ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+
+        Task {
+            let items = Self.listFiles(at: workDir, query: query)
+            await MainActor.run {
+                fileListItems = items
+            }
+        }
+    }
+
+    private static func listFiles(at baseURL: URL, query: String, maxResults: Int = 40) -> [String] {
+        // If query contains /, navigate into subdirectory
+        let components = query.components(separatedBy: "/")
+        var currentURL = baseURL
+        var filterQuery = query
+
+        if components.count > 1 {
+            let dirPath = components.dropLast().joined(separator: "/")
+            currentURL = baseURL.appendingPathComponent(dirPath)
+            filterQuery = components.last ?? ""
+        }
+
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: currentURL, includingPropertiesForKeys: [.isDirectoryKey],
+            options: []
+        ) else { return [] }
+
+        let prefix = components.count > 1 ? components.dropLast().joined(separator: "/") + "/" : ""
+        let skipNames = Set(["node_modules", ".git", "DerivedData", ".build", "Pods", ".DS_Store"])
+        let skipExts = Set(["aux", "bbl", "bcf", "blg", "fdb_latexmk", "fls", "lof", "lot",
+                            "out", "toc", "synctex.gz", "synctex", "run.xml", "log"])
+
+        var dirs: [String] = []
+        var files: [String] = []
+
+        for entry in entries.sorted(by: { $0.lastPathComponent.lowercased() < $1.lastPathComponent.lowercased() }) {
+            let name = entry.lastPathComponent
+            if skipNames.contains(name) { continue }
+            let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+
+            // Skip LaTeX build artifacts
+            if !isDir, let ext = name.components(separatedBy: ".").last, skipExts.contains(ext) { continue }
+
+            if !filterQuery.isEmpty && !name.lowercased().contains(filterQuery.lowercased()) { continue }
+
+            let display = prefix + (isDir ? "\(name)/" : name)
+            if isDir { dirs.append(display) } else { files.append(display) }
+        }
+
+        // Dirs first, then files
+        return Array((dirs + files).prefix(maxResults))
+    }
+
+    private func selectFile(_ item: String) {
+        let workDir = (provider as? ClaudeHeadlessProvider)?.workingDirectoryURL
+            ?? FileManager.default.homeDirectoryForCurrentUser
+
+        if item.hasSuffix("/") {
+            // Navigate into directory
+            if let atIdx = inputText.lastIndex(of: "@") {
+                inputText = String(inputText[..<inputText.index(after: atIdx)]) + item
+            }
+            return
+        }
+
+        // Attach the file
+        let filePath = workDir.appendingPathComponent(item)
+        let name = (item as NSString).lastPathComponent
+        let content = (try? String(contentsOf: filePath, encoding: .utf8)) ?? "[Impossible de lire]"
+        attachedFiles.append(AttachedFile(name: name, path: filePath.path, content: content))
+
+        // Remove @query from input
+        if let atIdx = inputText.lastIndex(of: "@") {
+            inputText = String(inputText[..<atIdx])
+        }
+        fileListItems = []
     }
 
     // MARK: - Selection State
@@ -658,7 +846,25 @@ struct AIChatView<Provider: AIHeadlessProvider>: View {
             return
         }
 
-        provider.sendMessage(text)
+        if !attachedFiles.isEmpty, let p = provider as? ClaudeHeadlessProvider {
+            // Show clean message in UI, send full content to Claude
+            let fileNames = attachedFiles.map { "📎 \($0.name)" }.joined(separator: " ")
+            let displayText = "\(text)\n\(fileNames)"
+
+            var fileContext = ""
+            for file in attachedFiles {
+                let truncated = file.content.count > 8000
+                    ? String(file.content.prefix(8000)) + "\n… (tronqué)"
+                    : file.content
+                fileContext += "\n[@\(file.name)]\n\(truncated)\n[/@\(file.name)]\n"
+            }
+            let fullPrompt = fileContext + "\n" + text
+            attachedFiles.removeAll()
+
+            p.sendMessageWithDisplay(displayText: displayText, prompt: fullPrompt)
+        } else {
+            provider.sendMessage(text)
+        }
     }
 
     private func markdownContent(_ text: String) -> AttributedString {

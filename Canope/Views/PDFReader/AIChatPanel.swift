@@ -843,6 +843,12 @@ struct TerminalPanel: View {
                 workingDirectory: startupWorkingDirectory
             )
             AIChatView(provider: provider)
+                .onAppear {
+                    // Keep working directory in sync with current project
+                    if let dir = startupWorkingDirectory {
+                        provider.updateWorkingDirectory(dir)
+                    }
+                }
         }
     }
 

@@ -24,15 +24,28 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     private var outputBuffer = ""
     private var pendingLines: [String] = []
     private var throttleTask: Task<Void, Never>?
-    private let workingDirectory: URL
+    private(set) var workingDirectory: URL
+    var workingDirectoryURL: URL { resumeWorkingDirectory ?? workingDirectory }
     private var currentAssistantIndex: Int?
     private var useContinueForNextMessage = false
     private var resumeWorkingDirectory: URL?  // override cwd when resuming a session from another project
     private var messageQueue: [String] = []
 
     init(workingDirectory: URL? = nil) {
-        self.workingDirectory = workingDirectory
-            ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        if let wd = workingDirectory {
+            self.workingDirectory = wd
+        } else {
+            // Try to find the project root from the active terminal's cwd
+            let cwd = FileManager.default.currentDirectoryPath
+            self.workingDirectory = cwd == "/"
+                ? FileManager.default.homeDirectoryForCurrentUser
+                : URL(fileURLWithPath: cwd)
+        }
+    }
+
+    /// Update working directory (e.g. when project changes)
+    func updateWorkingDirectory(_ url: URL) {
+        workingDirectory = url
     }
 
     // MARK: - Lifecycle
@@ -389,6 +402,31 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             try? updated.write(to: file, options: .atomic)
             return
         }
+    }
+
+    /// Send with a different display text than what's sent to Claude
+    func sendMessageWithDisplay(displayText: String, prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if isProcessing {
+            messageQueue.append(trimmed)
+            messages.append(ChatMessage(
+                role: .user, content: displayText, timestamp: Date(),
+                isStreaming: false, isCollapsed: false
+            ))
+            appendSystem("En file d'attente (\(messageQueue.count))")
+            return
+        }
+
+        if !isConnected { start() }
+
+        messages.append(ChatMessage(
+            role: .user, content: displayText, timestamp: Date(),
+            isStreaming: false, isCollapsed: false
+        ))
+
+        launchProcess(for: trimmed)
     }
 
     func sendMessage(_ text: String) {
