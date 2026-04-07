@@ -5,10 +5,19 @@ import UniformTypeIdentifiers
 // MARK: - Attached File
 
 struct AttachedFile: Identifiable {
+    enum Kind { case textFile, image }
     let id = UUID()
     let name: String
     let path: String
     let content: String
+    let kind: Kind
+
+    init(name: String, path: String, content: String, kind: Kind = .textFile) {
+        self.name = name
+        self.path = path
+        self.content = content
+        self.kind = kind
+    }
 }
 
 // MARK: - AI Chat View (Native headless chat panel)
@@ -22,6 +31,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var showSessionPicker = false
     @State private var cachedSelection: SelectionInfo?
     @State private var attachedFiles: [AttachedFile] = []
+    @State private var imageCounter = 0
+    @State private var pasteMonitor: Any?
     @State private var fileListItems: [String] = []
     @State private var editingMessageID: UUID?
     @State private var editingText = ""
@@ -663,9 +674,10 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     HStack(spacing: 6) {
                         ForEach(attachedFiles) { file in
                             HStack(spacing: 4) {
-                                Image(systemName: "doc.text")
+                                Image(systemName: file.kind == .image ? "camera" : "doc.text")
                                     .font(.system(size: 9))
-                                    .foregroundStyle(.orange)
+                                    .symbolRenderingMode(.monochrome)
+                                    .foregroundColor(file.kind == .image ? .secondary : .orange)
                                 Text(file.name)
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundStyle(.secondary)
@@ -722,6 +734,13 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             .padding(.vertical, 8)
         }
         .background(AppChromePalette.surfaceSubbar)
+        .onAppear { installPasteMonitor() }
+        .onDisappear { removePasteMonitor() }
+        .onExitCommand {
+            if provider.isProcessing {
+                provider.stop()
+            }
+        }
     }
 
     // MARK: - Slash Commands
@@ -925,18 +944,69 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
     }
 
+    // MARK: - Image Paste
+
+    private func installPasteMonitor() {
+        guard pasteMonitor == nil else { return }
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            guard event.modifierFlags.contains(.command),
+                  event.charactersIgnoringModifiers == "v",
+                  isInputFocused else { return event }
+            if pasteImageFromClipboard() { return nil }
+            return event
+        }
+    }
+
+    private func removePasteMonitor() {
+        if let monitor = pasteMonitor {
+            NSEvent.removeMonitor(monitor)
+            pasteMonitor = nil
+        }
+    }
+
+    @discardableResult
+    private func pasteImageFromClipboard() -> Bool {
+        let pb = NSPasteboard.general
+        guard let types = pb.types,
+              types.contains(where: { [.png, .tiff].contains($0) }) else { return false }
+
+        guard let data = pb.data(forType: .png) ?? pb.data(forType: .tiff),
+              let nsImage = NSImage(data: data) else { return false }
+
+        guard let tiffData = nsImage.tiffRepresentation,
+              let bitmapRep = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmapRep.representation(using: .png, properties: [:]) else { return false }
+
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("canope-chat-images", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        imageCounter += 1
+        let fileName = "image_\(String(format: "%03d", imageCounter)).png"
+        let filePath = tempDir.appendingPathComponent(fileName)
+        try? pngData.write(to: filePath)
+
+        attachedFiles.append(AttachedFile(
+            name: "Image #\(imageCounter)",
+            path: filePath.path,
+            content: "[Pasted image saved at: \(filePath.path)]",
+            kind: .image
+        ))
+        return true
+    }
+
     // MARK: - Helpers
 
     @State private var shouldAutoScroll = false
     @State private var listResetID = UUID()
 
     private var canSend: Bool {
-        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedFiles.isEmpty
     }
 
     private func send() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !attachedFiles.isEmpty else { return }
         inputText = ""
         refreshSelectionCache()
 
@@ -960,7 +1030,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
         if !attachedFiles.isEmpty {
             // Show clean message in UI, send full content to Claude
-            let fileNames = attachedFiles.map { "📎 \($0.name)" }.joined(separator: " ")
+            let fileNames = attachedFiles.map { $0.kind == .image ? "[\($0.name)]" : "📎 \($0.name)" }.joined(separator: " ")
             let displayText = "\(text)\n\(fileNames)"
 
             var fileContext = ""
