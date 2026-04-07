@@ -365,9 +365,10 @@ struct UnifiedEditorView: View {
     }
 
     private var isDocumentPreviewVisible: Bool {
-        if documentMode == .markdown {
+        if documentMode == .latex {
             return showPDFPreview && compiledPDF != nil
         }
+        // Markdown & other modes: show whenever toggled (for reference PDFs)
         return showPDFPreview
     }
 
@@ -1110,26 +1111,32 @@ struct UnifiedEditorView: View {
     // MARK: - Toolbar
 
     var editorToolbar: some View {
-        HStack(spacing: 8) {
-            // Left side: file info + mode-specific actions + references
-            fileToolbarClusterView
-            documentActionsCluster
-            markdownFormattingToolbarClusterView
-            referencePickerToolbarClusterView
-            if documentMode.isRunnableCode {
-                codeActiveReferenceToolbarView
-            } else {
-                activeReferenceToolbarView
+        HStack(spacing: 0) {
+            // Left side: file info + mode-specific actions + references (scrollable)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    fileToolbarClusterView
+                    documentActionsCluster
+                    markdownFormattingToolbarClusterView
+                    referencePickerToolbarClusterView
+                    if documentMode.isRunnableCode {
+                        codeActiveReferenceToolbarView
+                    } else {
+                        activeReferenceToolbarView
+                    }
+                    activePDFSearchToolbarView
+                }
             }
-            activePDFSearchToolbarView
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
 
-            // Right side: shared layout controls
-            panneauxCluster
-            dispositionCluster
-            editorAppearanceToolbarClusterView
-            terminalToolbarClusterView
+            // Right side: shared layout controls (always visible)
+            HStack(spacing: 8) {
+                panneauxCluster
+                dispositionCluster
+                editorAppearanceToolbarClusterView
+                terminalToolbarClusterView
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -2084,16 +2091,11 @@ struct UnifiedEditorView: View {
         refreshSplitGrabAreas()
     }
 
+    /// For markdown files there is no compiled PDF, but we no longer force the
+    /// layout to editorOnly — the user may have reference PDFs open, and
+    /// aggressively switching layouts when changing tabs is disorienting.
     private func configureDocumentLayoutIfNeeded() {
-        guard documentMode == .markdown else { return }
-        // Don't force editorOnly when reference PDFs are open
-        let hasReferences = !workspaceState.referencePaperIDs.isEmpty
-        if showPDFPreview && !hasReferences {
-            showPDFPreview = false
-        }
-        if splitLayout != .editorOnly && !hasReferences {
-            workspaceState.splitLayout = LaTeXEditorSplitLayout.editorOnly.rawValue
-        }
+        // No-op: let the user control the layout via toolbar buttons.
     }
 
     private func sendMarkdownCommand(_ command: MarkdownLiveEditor.Command) {

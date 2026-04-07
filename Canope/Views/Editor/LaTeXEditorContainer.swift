@@ -279,9 +279,7 @@ struct LaTeXEditorContainer: View {
     private func syncCodeDocumentStates() {
         for path in openPaths {
             let url = URL(fileURLWithPath: path)
-            if EditorDocumentMode(fileURL: url).isRunnableCode {
-                codeDocumentStateStore.ensureState(for: url)
-            }
+            codeDocumentStateStore.ensureState(for: url)
         }
         codeDocumentStateStore.removeMissingStates(keepingPaths: openPaths)
     }
