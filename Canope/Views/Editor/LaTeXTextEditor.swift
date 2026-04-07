@@ -96,12 +96,17 @@ struct LaTeXTextEditor: NSViewRepresentable {
 
     static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
         coordinator.removeSyncTeXObserver()
+        coordinator.removeRevealObserver()
+        coordinator.removeInsertObserver()
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? ChangeTrackingTextView else { return }
         context.coordinator.parent = self
         textView.changeCoordinator = context.coordinator
+        if context.coordinator.observedFilePath != fileURL.path {
+            context.coordinator.installSyncTeXObserver(for: textView)
+        }
 
         let textChanged = textView.string != text
         let baselineChanged = context.coordinator.baselineText != baselineText
@@ -154,6 +159,7 @@ struct LaTeXTextEditor: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
+    @MainActor
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: LaTeXTextEditor
         fileprivate weak var textView: ChangeTrackingTextView?
@@ -169,21 +175,21 @@ struct LaTeXTextEditor: NSViewRepresentable {
         private var isUpdating = false
         private var syncTeXObserver: NSObjectProtocol?
         private var revealObserver: NSObjectProtocol?
+        private var insertObserver: NSObjectProtocol?
+        fileprivate var observedFilePath = ""
 
         init(parent: LaTeXTextEditor) {
             self.parent = parent
             baselineText = parent.baselineText
         }
 
-        deinit {
-            removeSyncTeXObserver()
-            removeRevealObserver()
-        }
-
         @MainActor
         fileprivate func installSyncTeXObserver(for textView: ChangeTrackingTextView) {
             removeSyncTeXObserver()
             removeRevealObserver()
+            removeInsertObserver()
+            observedFilePath = parent.fileURL.path
+            let targetFilePath = observedFilePath
             syncTeXObserver = NotificationCenter.default.addObserver(
                 forName: .syncTeXScrollToLine,
                 object: nil,
@@ -221,6 +227,31 @@ struct LaTeXTextEditor: NSViewRepresentable {
                     }
                 }
             }
+            insertObserver = NotificationCenter.default.addObserver(
+                forName: .editorInsertText,
+                object: nil,
+                queue: .main
+            ) { [weak textView] notification in
+                guard let textView,
+                      let filePath = notification.userInfo?["filePath"] as? String,
+                      filePath == targetFilePath,
+                      let insertedText = notification.userInfo?["text"] as? String else { return }
+                MainActor.assumeIsolated {
+                    let selectedRange = textView.selectedRange()
+                    guard selectedRange.location != NSNotFound else { return }
+                    textView.window?.makeFirstResponder(textView)
+
+                    if textView.shouldChangeText(in: selectedRange, replacementString: insertedText) {
+                        textView.textStorage?.beginEditing()
+                        textView.textStorage?.replaceCharacters(in: selectedRange, with: insertedText)
+                        textView.textStorage?.endEditing()
+                        textView.didChangeText()
+
+                        let insertionLocation = selectedRange.location + (insertedText as NSString).length
+                        textView.setSelectedRange(NSRange(location: insertionLocation, length: 0))
+                    }
+                }
+            }
         }
 
         fileprivate func removeSyncTeXObserver() {
@@ -234,6 +265,13 @@ struct LaTeXTextEditor: NSViewRepresentable {
             if let revealObserver {
                 NotificationCenter.default.removeObserver(revealObserver)
                 self.revealObserver = nil
+            }
+        }
+
+        fileprivate func removeInsertObserver() {
+            if let insertObserver {
+                NotificationCenter.default.removeObserver(insertObserver)
+                self.insertObserver = nil
             }
         }
 

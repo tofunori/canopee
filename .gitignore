@@ -11,6 +11,7 @@ DerivedData/
 
 # Build
 build/
+.cursor-derived/
 
 # Python helpers
 __pycache__/

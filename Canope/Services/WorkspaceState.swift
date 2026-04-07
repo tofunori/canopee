@@ -1,5 +1,19 @@
 import Foundation
 
+enum MarkdownEditorDisplayMode: String, Codable, CaseIterable, Equatable {
+    case source
+    case livePreview
+
+    var title: String {
+        switch self {
+        case .source:
+            return "Source"
+        case .livePreview:
+            return "Apercu"
+        }
+    }
+}
+
 enum PanelArrangement: String, Codable, CaseIterable, Equatable {
     // Raw values match the old LaTeXPanelArrangement for backward compat
     case editorContentTerminal = "editorPDFTerminal"
@@ -150,6 +164,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var threePaneTrailingWidth: Double?
     var editorFontSize: Double
     var editorTheme: Int
+    var markdownEditorMode: MarkdownEditorDisplayMode
     var referencePaperIDs: [UUID]
     var selectedReferencePaperID: UUID?
     var layoutBeforeReference: String?
@@ -168,6 +183,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         case threePaneTrailingWidth
         case editorFontSize
         case editorTheme
+        case markdownEditorMode
         case referencePaperIDs
         case selectedReferencePaperID
         case layoutBeforeReference
@@ -187,6 +203,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         threePaneTrailingWidth: Double?,
         editorFontSize: Double,
         editorTheme: Int,
+        markdownEditorMode: MarkdownEditorDisplayMode,
         referencePaperIDs: [UUID],
         selectedReferencePaperID: UUID?,
         layoutBeforeReference: String?,
@@ -204,6 +221,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         self.threePaneTrailingWidth = threePaneTrailingWidth
         self.editorFontSize = editorFontSize
         self.editorTheme = editorTheme
+        self.markdownEditorMode = markdownEditorMode
         self.referencePaperIDs = referencePaperIDs
         self.selectedReferencePaperID = selectedReferencePaperID
         self.layoutBeforeReference = layoutBeforeReference
@@ -224,6 +242,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         threePaneTrailingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneTrailingWidth)
         editorFontSize = try container.decode(Double.self, forKey: .editorFontSize)
         editorTheme = try container.decode(Int.self, forKey: .editorTheme)
+        markdownEditorMode = try container.decodeIfPresent(MarkdownEditorDisplayMode.self, forKey: .markdownEditorMode) ?? .livePreview
         referencePaperIDs = try container.decode([UUID].self, forKey: .referencePaperIDs)
         selectedReferencePaperID = try container.decodeIfPresent(UUID.self, forKey: .selectedReferencePaperID)
         layoutBeforeReference = try container.decodeIfPresent(String.self, forKey: .layoutBeforeReference)
@@ -244,6 +263,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         try container.encodeIfPresent(threePaneTrailingWidth, forKey: .threePaneTrailingWidth)
         try container.encode(editorFontSize, forKey: .editorFontSize)
         try container.encode(editorTheme, forKey: .editorTheme)
+        try container.encode(markdownEditorMode, forKey: .markdownEditorMode)
         try container.encode(referencePaperIDs, forKey: .referencePaperIDs)
         try container.encodeIfPresent(selectedReferencePaperID, forKey: .selectedReferencePaperID)
         try container.encodeIfPresent(layoutBeforeReference, forKey: .layoutBeforeReference)

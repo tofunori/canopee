@@ -180,7 +180,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             if role == "user" {
                 if let text = contentVal as? String, !text.isEmpty {
                     messages.append(ChatMessage(
-                        role: .user, content: text, timestamp: Date(),
+                        role: .user, content: cleanedResumedUserMessage(text), timestamp: Date(),
                         isStreaming: false, isCollapsed: false, isFromHistory: true
                     ))
                 } else if let blocks = contentVal as? [[String: Any]] {
@@ -190,7 +190,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                     }.joined(separator: "\n")
                     if !text.isEmpty {
                         messages.append(ChatMessage(
-                            role: .user, content: text, timestamp: Date(),
+                            role: .user, content: cleanedResumedUserMessage(text), timestamp: Date(),
                             isStreaming: false, isCollapsed: false, isFromHistory: true
                         ))
                     }
@@ -216,6 +216,24 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                 }
             }
         }
+    }
+
+    nonisolated static func cleanedResumedUserMessage(_ text: String) -> String {
+        let pattern = #"^\[Canope IDE Context[^\n]*\]\n.*?\n\[/Canope IDE Context\]\n*(.*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            return text
+        }
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        guard let match = regex.firstMatch(in: text, options: [], range: fullRange),
+              match.numberOfRanges >= 2
+        else {
+            return text
+        }
+
+        let contentRange = match.range(at: 1)
+        guard contentRange.location != NSNotFound else { return text }
+        return nsText.substring(with: contentRange).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Edit the last user message and resend with --fork-session.

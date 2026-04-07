@@ -11,7 +11,7 @@ struct MainWindow: View {
     @State private var showTerminal = false
     @State private var isOpeningTeX = false
     @State private var isImportingPDF = false
-    @State private var didRestoreWorkspace = false
+    @State private var didRestoreWorkspace = AppRuntime.isRunningTests
     @StateObject private var latexWorkspaceState = LaTeXWorkspaceUIState()
     @StateObject private var terminalWorkspaceState = TerminalWorkspaceState()
     @Namespace private var documentTabIndicatorNamespace
@@ -49,7 +49,9 @@ struct MainWindow: View {
         ZStack(alignment: .topLeading) {
             LibraryView(
                 paperToOpen: $paperToOpen,
-                isImportingPDF: $isImportingPDF
+                isImportingPDF: $isImportingPDF,
+                isActive: tabController.selectedTab == .library,
+                projectRoot: latexWorkspaceState.workspaceRoot
             )
                 .opacity(tabController.selectedTab == .library ? 1 : 0)
                 .allowsHitTesting(tabController.selectedTab == .library)
@@ -276,7 +278,7 @@ struct MainWindow: View {
                                     .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
                             }
                             .buttonStyle(.plain)
-                            .help("Ouvrir un fichier .tex, .md, .py ou .R (⌘O)")
+                            .help("Ouvrir un fichier .tex, .bib, .md, .py ou .R (⌘O)")
                         }
 
                         // Split toggle
@@ -345,12 +347,12 @@ struct MainWindow: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            if !AppRuntime.isRunningTests {
-                restoreWorkspaceStateIfNeeded()
-            } else {
-                didRestoreWorkspace = true
+            DispatchQueue.main.async {
+                if !AppRuntime.isRunningTests {
+                    restoreWorkspaceStateIfNeeded()
+                }
+                makeSplitersEasyToGrab()
             }
-            makeSplitersEasyToGrab()
         }
         .onChange(of: tabController.selectedTab) {
             makeSplitersEasyToGrab()

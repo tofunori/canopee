@@ -22,6 +22,7 @@ struct ReferencePDFAnnotationPane: View {
             selectedAnnotation: $state.selectedAnnotation,
             selectedText: $state.selectedText,
             restoredPageIndex: state.requestedRestorePageIndex,
+            searchState: state.searchState,
             onDocumentChanged: {
                 onDocumentChanged()
             },
@@ -185,7 +186,7 @@ struct ReferencePDFActionsCluster: View {
                         }
                     }
                 } label: {
-                    ReferencePDFToolbarIconLabel(systemName: "paintpalette", isActive: false)
+                    ReferencePDFToolbarIconLabel(systemName: "eyedropper.halffull", isActive: false)
                 }
                 .buttonStyle(.plain)
                 .help("Couleur d'annotation")

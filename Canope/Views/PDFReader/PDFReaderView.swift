@@ -31,6 +31,7 @@ struct PDFReaderView: View {
     @State private var lastKnownPageIndex = 0
     @State private var requestedRestorePageIndex: Int?
     @State private var pendingSaveWorkItem: DispatchWorkItem?
+    @StateObject private var searchState = PDFSearchUIState()
 
     private var paper: Paper? {
         try? modelContext.fetch(
@@ -71,6 +72,7 @@ struct PDFReaderView: View {
                         selectedAnnotation: $selectedAnnotation,
                         selectedText: $selectedText,
                         restoredPageIndex: requestedRestorePageIndex,
+                        searchState: searchState,
                         onDocumentChanged: {
                             hasUnsavedChanges = true
                             annotationRefreshToken = UUID()

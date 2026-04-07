@@ -216,7 +216,7 @@ enum EditorDocumentMode {
         case .latex:
             return "PDF compilé"
         case .markdown:
-            return "Aperçu"
+            return "PDF exporté"
         case .python, .r:
             return "Sortie"
         }
@@ -227,7 +227,7 @@ enum EditorDocumentMode {
         case .latex:
             return "Pas encore compilé"
         case .markdown:
-            return "Aperçu Markdown"
+            return "Pas encore exporté"
         case .python, .r:
             return "Aucun artefact"
         }
@@ -238,7 +238,7 @@ enum EditorDocumentMode {
         case .latex:
             return "⌘B pour compiler"
         case .markdown:
-            return "Écris du Markdown pour voir le rendu"
+            return "⌘B pour exporter le PDF"
         case .python, .r:
             return "⌘B pour exécuter le script"
         }
@@ -271,7 +271,7 @@ enum EditorDocumentMode {
         case .latex:
             return "Compilation réussie"
         case .markdown:
-            return "PDF prêt"
+            return "Export PDF prêt"
         case .python, .r:
             return "Sortie prête"
         }
@@ -284,6 +284,10 @@ enum EditorDocumentMode {
         case .latex, .markdown:
             return false
         }
+    }
+
+    var usesDedicatedInlineEditor: Bool {
+        self == .markdown
     }
 }
 
@@ -301,6 +305,6 @@ enum EditorFileSupport {
     }
 
     static var importerContentTypes: [UTType] {
-        ["tex", "md", "py", "r"].compactMap { UTType(filenameExtension: $0) }
+        ["tex", "bib", "md", "py", "r"].compactMap { UTType(filenameExtension: $0) }
     }
 }

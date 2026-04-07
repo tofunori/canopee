@@ -782,6 +782,172 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(EditorDocumentMode(fileURL: URL(fileURLWithPath: "/tmp/test.tex")), .latex)
     }
 
+    func testMarkdownModeUsesDedicatedInlineEditor() {
+        XCTAssertTrue(EditorDocumentMode(fileURL: URL(fileURLWithPath: "/tmp/test.md")).usesDedicatedInlineEditor)
+        XCTAssertFalse(EditorDocumentMode(fileURL: URL(fileURLWithPath: "/tmp/test.tex")).usesDedicatedInlineEditor)
+    }
+
+    func testMarkdownFormatterParsesSharedBlockKinds() {
+        let source = """
+        # Title
+
+        - first
+        - second
+
+        > quoted
+
+        ```swift
+        print("hi")
+        ```
+        """
+
+        let blocks = MarkdownFormatter.parseBlocks(source)
+
+        XCTAssertEqual(blocks.count, 4)
+        XCTAssertEqual(blocks[0], .heading(level: 1, text: "Title"))
+        XCTAssertEqual(blocks[1], .list(items: ["first", "second"], ordered: false))
+        XCTAssertEqual(blocks[2], .blockquote(text: "quoted"))
+        XCTAssertEqual(blocks[3], .code(language: "swift", content: #"print("hi")"#))
+    }
+
+    func testMarkdownSourceStylingPreservesCanonicalMarkdownText() {
+        let source = "# Heading\n\nA **bold** [link](https://example.com) and `code`."
+        let storage = NSTextStorage(string: source)
+
+        MarkdownFormatter.styleSource(
+            text: source,
+            storage: storage,
+            fontSize: 14,
+            theme: .dark,
+            displayMode: .livePreview
+        )
+
+        XCTAssertEqual(storage.string, source)
+    }
+
+    func testMarkdownSourceStylingAppliesHeadingLinkAndCodeAttributes() {
+        let source = "# Heading\n\nA [link](https://example.com) with `code`."
+        let storage = NSTextStorage(string: source)
+        let theme = MarkdownTheme.dark
+
+        MarkdownFormatter.styleSource(
+            text: source,
+            storage: storage,
+            fontSize: 14,
+            theme: theme,
+            displayMode: .livePreview,
+            selectedRange: NSRange(location: 0, length: 0)
+        )
+
+        let nsSource = source as NSString
+        let headingFont = storage.attribute(.font, at: nsSource.range(of: "Heading").location, effectiveRange: nil) as? NSFont
+        let linkColor = storage.attribute(.foregroundColor, at: nsSource.range(of: "link").location, effectiveRange: nil) as? NSColor
+        let codeBackground = storage.attribute(.backgroundColor, at: nsSource.range(of: "code").location, effectiveRange: nil) as? NSColor
+
+        XCTAssertGreaterThan(headingFont?.pointSize ?? 0, 14)
+        assertColorsEqual(linkColor, theme.accentColor)
+        assertColorsEqual(codeBackground, theme.codeBackgroundColor)
+    }
+
+    func testMarkdownPreviewRendererPreviewURLRemainsSeparateFromInlineEditor() {
+        let markdownURL = URL(fileURLWithPath: "/tmp/notes.md")
+        XCTAssertEqual(MarkdownPreviewRenderer.previewURL(for: markdownURL).path, "/tmp/notes.pdf")
+    }
+
+    func testMarkdownSourceModeLeavesHeadingAtBaseFontSize() {
+        let source = "# Heading"
+        let storage = NSTextStorage(string: source)
+
+        MarkdownFormatter.styleSource(
+            text: source,
+            storage: storage,
+            fontSize: 14,
+            theme: .dark,
+            displayMode: .source
+        )
+
+        let headingFont = storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
+        XCTAssertEqual(headingFont?.pointSize ?? 0, 14, accuracy: 0.1)
+    }
+
+    func testMarkdownLivePreviewHidesInactiveHeadingMarker() {
+        let source = "# Heading\n\nBody"
+        let storage = NSTextStorage(string: source)
+
+        MarkdownFormatter.styleSource(
+            text: source,
+            storage: storage,
+            fontSize: 14,
+            theme: .dark,
+            displayMode: .livePreview,
+            selectedRange: NSRange(location: source.count - 1, length: 0)
+        )
+
+        let markerColor = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        let markerFont = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+
+        assertColorsEqual(markerColor, .clear)
+        XCTAssertLessThan(markerFont?.pointSize ?? 1, 1)
+    }
+
+    func testMarkdownLivePreviewShowsActiveHeadingMarker() {
+        let source = "# Heading"
+        let storage = NSTextStorage(string: source)
+
+        MarkdownFormatter.styleSource(
+            text: source,
+            storage: storage,
+            fontSize: 14,
+            theme: .dark,
+            displayMode: .livePreview,
+            selectedRange: NSRange(location: 0, length: 0)
+        )
+
+        let markerColor = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        XCTAssertGreaterThan(AnnotationColor.normalized(markerColor ?? .clear).alphaComponent, 0.05)
+    }
+
+    func testLaTeXEditorWorkspaceStateRoundTripsMarkdownEditorMode() throws {
+        let snapshot = LaTeXEditorWorkspaceState(
+            showSidebar: true,
+            selectedSidebarSection: "files",
+            sidebarWidth: 220,
+            showEditorPane: true,
+            showPDFPreview: false,
+            showErrors: false,
+            splitLayout: "editorOnly",
+            panelArrangement: .terminalEditorContent,
+            threePaneLeadingWidth: nil,
+            threePaneTrailingWidth: nil,
+            editorFontSize: 14,
+            editorTheme: 1,
+            markdownEditorMode: .source,
+            referencePaperIDs: [],
+            selectedReferencePaperID: nil,
+            layoutBeforeReference: nil,
+            workspaceRootPath: "/tmp"
+        )
+
+        let data = try JSONEncoder().encode(snapshot)
+        let decoded = try JSONDecoder().decode(LaTeXEditorWorkspaceState.self, from: data)
+
+        XCTAssertEqual(decoded.markdownEditorMode, .source)
+    }
+
+    func testClaudeResumeStripsInjectedIDEContextFromUserMessage() {
+        let raw = """
+        [Canope IDE Context — current selection in "sample.pdf"]
+        (no text currently selected)
+        [/Canope IDE Context]
+
+        il est ou?
+        """
+
+        let cleaned = ClaudeHeadlessProvider.cleanedResumedUserMessage(raw)
+
+        XCTAssertEqual(cleaned, "il est ou?")
+    }
+
     func testArtifactDescriptorMapsPreviewableKinds() {
         let basePath = "/tmp/example"
         XCTAssertEqual(ArtifactDescriptor.make(url: URL(fileURLWithPath: "\(basePath).pdf"), sourceDocumentPath: "/tmp/script.py", runID: nil)?.kind, .pdf)

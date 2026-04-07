@@ -22,6 +22,7 @@ enum AppRuntime {
 @main
 struct CanopeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var bibliographyCommandRouter = BibliographyCommandRouter.shared
 
     var body: some Scene {
         WindowGroup("Canope") {
@@ -30,6 +31,9 @@ struct CanopeApp: App {
         .modelContainer(for: [Paper.self, PaperCollection.self])
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1100, height: 700)
+        .commands {
+            BibliographyCommands(router: bibliographyCommandRouter)
+        }
     }
 }
 

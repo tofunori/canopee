@@ -123,4 +123,56 @@ final class ChatSolidificationTests: XCTestCase {
         b.toolOutput = "out"
         XCTAssertNotEqual(a, b)
     }
+
+    @MainActor
+    func testTerminalWorkspaceState_reusesChatProvidersForSameTab() {
+        let state = TerminalWorkspaceState()
+        let tabID = UUID()
+        let workingDirectory = URL(fileURLWithPath: "/tmp/canope-tests")
+
+        let claudeA = state.claudeChatProvider(for: tabID, workingDirectory: workingDirectory)
+        let claudeB = state.claudeChatProvider(for: tabID, workingDirectory: workingDirectory)
+        XCTAssertTrue(claudeA === claudeB)
+
+        let codexA = state.codexChatProvider(for: tabID, workingDirectory: workingDirectory)
+        let codexB = state.codexChatProvider(for: tabID, workingDirectory: workingDirectory)
+        XCTAssertTrue(codexA === codexB)
+    }
+
+    @MainActor
+    func testCodexProvider_batchesAssistantDeltasUntilFlushed() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp/canope-tests"))
+
+        provider.testBeginAssistantMessage()
+        provider.testReceiveAssistantDelta("Bon")
+        provider.testReceiveAssistantDelta("jour")
+
+        XCTAssertEqual(provider.messages.last?.content, "")
+        XCTAssertEqual(provider.messages.last?.role, .assistant)
+
+        provider.testFlushPendingAssistantDelta()
+
+        XCTAssertEqual(provider.messages.last?.content, "Bonjour")
+        XCTAssertEqual(provider.messages.last?.isStreaming, true)
+    }
+
+    @MainActor
+    func testCodexProvider_prerenderRetentionIsBounded() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp/canope-tests"))
+
+        for idx in 0..<(ChatMarkdownPolicy.maxRetainedPreRenderedMessages + 2) {
+            let text = "message-\(idx)\n\n" + String(repeating: "x", count: 100)
+            provider.testBeginAssistantMessage()
+            provider.testReceiveAssistantDelta(text)
+            provider.testFlushPendingAssistantDelta()
+            provider.testCompleteAssistantMessage()
+            XCTAssertEqual(provider.testPendingMarkdownCount, 1)
+            provider.testResolvePendingMarkdownSynchronously()
+        }
+
+        let retained = provider.messages.filter { $0.role == .assistant && $0.preRenderedMarkdown != nil }
+        XCTAssertEqual(retained.count, ChatMarkdownPolicy.maxRetainedPreRenderedMessages)
+        XCTAssertNil(provider.messages.first(where: { $0.role == .assistant })?.preRenderedMarkdown)
+        XCTAssertNotNil(provider.messages.last(where: { $0.role == .assistant })?.preRenderedMarkdown)
+    }
 }

@@ -11,6 +11,7 @@ struct PDFKitView: NSViewRepresentable {
     @Binding var selectedAnnotation: PDFAnnotation?
     @Binding var selectedText: String
     let restoredPageIndex: Int?
+    @ObservedObject var searchState: PDFSearchUIState
     let onDocumentChanged: @MainActor () -> Void
     let onCurrentPageChanged: @MainActor (Int) -> Void
     let onMarkupAppearanceNeedsRefresh: @MainActor () -> Void
@@ -90,6 +91,9 @@ struct PDFKitView: NSViewRepresentable {
         context.coordinator.updateCursor(for: currentTool)
         context.coordinator.setupDrawingCallbacks()
         context.coordinator.setupResizeCallback()
+        context.coordinator.searchState = searchState
+        context.coordinator.configureSearchState()
+        context.coordinator.syncSearchQuery(force: true)
 
         // Expose undo to parent view
         DispatchQueue.main.async {
@@ -153,6 +157,7 @@ struct PDFKitView: NSViewRepresentable {
     func updateNSView(_ container: NSView, context: Context) {
         context.coordinator.currentTool = currentTool
         context.coordinator.currentColor = currentColor
+        context.coordinator.searchState = searchState
 
         if let pdfView = context.coordinator.pdfView, pdfView.document !== document {
             let viewState = context.coordinator.captureViewState()
@@ -161,6 +166,7 @@ struct PDFKitView: NSViewRepresentable {
             pdfView.document = document
             pdfView.layoutDocumentView()
             context.coordinator.restoreViewState(viewState)
+            context.coordinator.resetSearchQueryCache()
         }
 
         context.coordinator.pdfView?.selectionPreviewTool = currentTool
@@ -171,6 +177,8 @@ struct PDFKitView: NSViewRepresentable {
         context.coordinator.updateCursor(for: currentTool)
         context.coordinator.syncEditingViewAppearance()
         context.coordinator.updateAnnotationBorder()
+        context.coordinator.configureSearchState()
+        context.coordinator.syncSearchQuery(force: false)
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
@@ -199,6 +207,7 @@ struct PDFKitView: NSViewRepresentable {
         weak var pdfView: InteractivePDFView?
         weak var overlay: SelectionOverlayView?
         weak var cursorView: CursorTrackingView?
+        var searchState: PDFSearchUIState?
         var currentTool: AnnotationTool = .pointer
         var currentColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
         private var hasActiveSelection = false
@@ -206,6 +215,9 @@ struct PDFKitView: NSViewRepresentable {
         private var isApplyingTextMarkup = false
         private var mouseUpMonitor: Any?
         private var magnifyMonitor: Any?
+        private var searchMatches: [PDFSelection] = []
+        private var lastSearchQuery = ""
+        private var isUpdatingSearchSelection = false
 
         // Undo support
         private var undoStack: [(page: PDFPage, annotation: PDFAnnotation)] = []
@@ -220,6 +232,32 @@ struct PDFKitView: NSViewRepresentable {
 
         init(parent: PDFKitView) {
             self.parent = parent
+            self.searchState = parent.searchState
+        }
+
+        func configureSearchState() {
+            searchState?.configureActions(
+                next: { [weak self] in
+                    self?.navigateSearch(step: 1)
+                },
+                previous: { [weak self] in
+                    self?.navigateSearch(step: -1)
+                },
+                clear: { [weak self] in
+                    self?.clearSearchResults()
+                }
+            )
+        }
+
+        func resetSearchQueryCache() {
+            lastSearchQuery = ""
+        }
+
+        func syncSearchQuery(force: Bool) {
+            let query = searchState?.query ?? ""
+            guard force || query != lastSearchQuery else { return }
+            lastSearchQuery = query
+            updateSearchResults(for: query)
         }
 
         // MARK: - Cursor
@@ -1083,6 +1121,13 @@ struct PDFKitView: NSViewRepresentable {
             clearTextSelectionState()
         }
 
+        private func clearSearchResults() {
+            searchMatches = []
+            searchState?.matchCount = 0
+            searchState?.currentMatchIndex = 0
+            clearTextSelectionState()
+        }
+
         func fitToWidth() {
             guard let pdfView,
                   let page = pdfView.currentPage else { return }
@@ -1095,6 +1140,54 @@ struct PDFKitView: NSViewRepresentable {
         private func updateSelectionDismissInterception() {
             // Keep API surface stable for callers; selection dismissal is now handled
             // by clearing native PDFView selection on mouseDown, following Skim's pattern.
+        }
+
+        private func updateSearchResults(for query: String) {
+            guard let pdfView else { return }
+            let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmedQuery.isEmpty == false else {
+                clearSearchResults()
+                return
+            }
+
+            searchMatches = pdfView.document?.findString(trimmedQuery, withOptions: [.caseInsensitive]) ?? []
+            searchState?.matchCount = searchMatches.count
+
+            guard searchMatches.isEmpty == false else {
+                searchState?.currentMatchIndex = 0
+                clearTextSelectionState()
+                return
+            }
+
+            showSearchMatch(at: 0)
+        }
+
+        private func navigateSearch(step: Int) {
+            guard searchMatches.isEmpty == false else { return }
+            let currentIndex = max(searchState?.currentMatchIndex ?? 1, 1) - 1
+            let nextIndex = (currentIndex + step + searchMatches.count) % searchMatches.count
+            showSearchMatch(at: nextIndex)
+        }
+
+        private func showSearchMatch(at index: Int) {
+            guard let pdfView,
+                  searchMatches.indices.contains(index) else { return }
+            let selection = searchMatches[index]
+            hasActiveSelection = false
+            isDragging = false
+            overlay?.clearSelection()
+            parent.selectedText = ""
+            writeSelectionSnapshot("(no text currently selected)")
+            isUpdatingSearchSelection = true
+            pdfView.setCurrentSelection(selection, animate: true)
+            if let page = selection.pages.first {
+                let bounds = selection.bounds(for: page).insetBy(dx: -24, dy: -24)
+                if bounds.isNull == false, bounds.isEmpty == false {
+                    pdfView.go(to: bounds, on: page)
+                }
+            }
+            isUpdatingSearchSelection = false
+            searchState?.currentMatchIndex = index + 1
         }
 
         func handlePreMouseDown(event: NSEvent, at locationInView: NSPoint, in pdfView: InteractivePDFView) -> Bool {
@@ -1224,7 +1317,7 @@ struct PDFKitView: NSViewRepresentable {
         // MARK: - Text Selection
 
         @objc func handleSelectionChanged(_ notification: Notification) {
-            if isApplyingTextMarkup {
+            if isApplyingTextMarkup || isUpdatingSearchSelection {
                 return
             }
 
