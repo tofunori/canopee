@@ -10,6 +10,14 @@ final class Paper {
     var year: Int?
     var doi: String?
     var journal: String?
+    var citeKey: String?
+    var entryType: String?
+    var url: String?
+    var volume: String?
+    var issue: String?
+    var pages: String?
+    var publisher: String?
+    var booktitle: String?
     var rating: Int = 0
     var notes: String?
 

@@ -359,6 +359,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     private func assistantRow(_ message: ChatMessage) -> some View {
         let needsBlockMarkdown = messageNeedsBlockMarkdown(message.content)
+        let shouldUseRichMarkdown = !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content)
         return HStack(alignment: .top, spacing: 8) {
             Circle()
                 .fill(Color.orange.opacity(0.15))
@@ -377,6 +378,15 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
                     streamingCursor
+                } else if shouldUseRichMarkdown {
+                    if message.isFromHistory {
+                        DeferredRichMarkdownView(
+                            text: message.content,
+                            promotionDelayNanoseconds: 0
+                        )
+                    } else {
+                        RichMarkdownView(text: message.content)
+                    }
                 } else if message.isFromHistory {
                     if needsBlockMarkdown {
                         DeferredMarkdownView(

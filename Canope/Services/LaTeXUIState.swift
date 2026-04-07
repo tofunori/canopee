@@ -130,6 +130,7 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var threePaneTrailingWidth: Double?
     @Published var editorFontSize: Double = 14
     @Published var editorTheme = 0
+    @Published var markdownEditorMode: MarkdownEditorDisplayMode = .livePreview
     @Published var referencePaperIDs: [UUID] = []
     @Published var selectedReferencePaperID: UUID?
     @Published var layoutBeforeReference: String?

@@ -69,6 +69,7 @@ struct LaTeXEditorContainer: View {
             threePaneTrailingWidth: workspaceState.threePaneTrailingWidth,
             editorFontSize: workspaceState.editorFontSize,
             editorTheme: workspaceState.editorTheme,
+            markdownEditorMode: workspaceState.markdownEditorMode,
             referencePaperIDs: workspaceState.referencePaperIDs,
             selectedReferencePaperID: workspaceState.selectedReferencePaperID,
             layoutBeforeReference: workspaceState.layoutBeforeReference,
@@ -99,6 +100,7 @@ struct LaTeXEditorContainer: View {
         workspaceState.threePaneTrailingWidth = snapshot.threePaneTrailingWidth
         workspaceState.editorFontSize = snapshot.editorFontSize
         workspaceState.editorTheme = snapshot.editorTheme
+        workspaceState.markdownEditorMode = snapshot.markdownEditorMode
         workspaceState.layoutBeforeReference = snapshot.layoutBeforeReference
         workspaceState.workspaceRoot = snapshot.workspaceRootPath.map { URL(fileURLWithPath: $0) }
 

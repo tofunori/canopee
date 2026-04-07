@@ -7,6 +7,13 @@ struct PaperMetadata {
     var year: Int?
     var doi: String?
     var journal: String?
+    var entryType: String?
+    var url: String?
+    var volume: String?
+    var issue: String?
+    var pages: String?
+    var publisher: String?
+    var booktitle: String?
 }
 
 struct MetadataExtractor {
@@ -96,6 +103,7 @@ struct MetadataExtractor {
               let message = json["message"] as? [String: Any] else { return nil }
 
         var meta = PaperMetadata()
+        let crossRefType = message["type"] as? String
 
         if let titles = message["title"] as? [String], let title = titles.first {
             meta.title = title
@@ -124,11 +132,65 @@ struct MetadataExtractor {
             }
         }
 
-        if let journals = message["container-title"] as? [String], let journal = journals.first {
-            meta.journal = journal
+        if let url = message["URL"] as? String, !url.isEmpty {
+            meta.url = url
+        }
+
+        if let volume = message["volume"] as? String, !volume.isEmpty {
+            meta.volume = volume
+        }
+
+        if let issue = message["issue"] as? String, !issue.isEmpty {
+            meta.issue = issue
+        }
+
+        if let pages = message["page"] as? String, !pages.isEmpty {
+            meta.pages = pages
+        }
+
+        if let publisher = message["publisher"] as? String, !publisher.isEmpty {
+            meta.publisher = publisher
+        }
+
+        if let containerTitles = message["container-title"] as? [String],
+           let containerTitle = containerTitles.first,
+           !containerTitle.isEmpty {
+            if crossRefType == "proceedings-article" || crossRefType == "proceedings" {
+                meta.booktitle = containerTitle
+            } else {
+                meta.journal = containerTitle
+            }
+        }
+
+        meta.entryType = entryType(fromCrossRefType: crossRefType)
+
+        if meta.booktitle == nil,
+           meta.entryType == "inproceedings",
+           let journal = meta.journal {
+            meta.booktitle = journal
+            meta.journal = nil
         }
 
         return meta
+    }
+
+    private static func entryType(fromCrossRefType type: String?) -> String? {
+        switch type {
+        case "journal-article":
+            return "article"
+        case "proceedings-article", "proceedings":
+            return "inproceedings"
+        case "book", "book-set", "book-series", "book-track", "edited-book", "reference-book":
+            return "book"
+        case "book-chapter":
+            return "incollection"
+        case "report":
+            return "report"
+        case "dissertation":
+            return "thesis"
+        default:
+            return nil
+        }
     }
 
     // MARK: - DOI Extraction

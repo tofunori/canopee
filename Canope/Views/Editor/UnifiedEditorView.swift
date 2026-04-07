@@ -8,6 +8,8 @@ extension Notification.Name {
     static let syncTeXScrollToLine = Notification.Name("syncTeXScrollToLine")
     static let syncTeXForwardSync = Notification.Name("syncTeXForwardSync")
     static let editorRevealLocation = Notification.Name("editorRevealLocation")
+    static let editorInsertText = Notification.Name("editorInsertText")
+    static let markdownEditorCommand = Notification.Name("markdownEditorCommand")
 }
 
 private enum EditorThreePaneRole {
@@ -131,6 +133,22 @@ struct UnifiedEditorView: View {
          NSColor(srgbRed: 0.80, green: 0.29, blue: 0.09, alpha: 1)),
     ]
 
+    var markdownTheme: MarkdownTheme {
+        let theme = Self.editorThemes[editorTheme]
+        return MarkdownTheme(
+            backgroundColor: theme.bg,
+            primaryTextColor: theme.fg,
+            secondaryTextColor: theme.comment,
+            accentColor: theme.command,
+            headingColor: theme.brace,
+            blockquoteColor: theme.comment.blended(withFraction: 0.35, of: theme.fg) ?? theme.comment,
+            codeTextColor: theme.fg,
+            codeBackgroundColor: theme.bg.blended(withFraction: 0.18, of: .black) ?? theme.bg,
+            codeBorderColor: theme.fg.withAlphaComponent(0.08),
+            syntaxMarkerColor: theme.comment
+        )
+    }
+
     /// True when no file is loaded (sentinel URL from container)
     var hasNoFile: Bool { fileURL.scheme == "canope" || !fileURL.isFileURL }
 
@@ -168,11 +186,25 @@ struct UnifiedEditorView: View {
     }
 
     private var documentPrimaryActionHelpText: String {
-        documentMode == .latex ? "Compiler (⌘B)" : "Rendre le PDF (⌘B)"
+        switch documentMode {
+        case .latex:
+            return "Compiler (⌘B)"
+        case .markdown:
+            return "Exporter le PDF (⌘B)"
+        case .python, .r:
+            return "Exécuter (⌘B)"
+        }
     }
 
     private var documentOutputLogHelpText: String {
-        documentMode == .latex ? "Console de compilation" : "Journal du rendu"
+        switch documentMode {
+        case .latex:
+            return "Console de compilation"
+        case .markdown:
+            return "Journal de l'export Markdown"
+        case .python, .r:
+            return "Journal d'exécution"
+        }
     }
 
     private var isReferenceAnnotationSidebarVisible: Bool {
@@ -321,10 +353,22 @@ struct UnifiedEditorView: View {
         nonmutating set { workspaceState.editorTheme = newValue }
     }
 
+    var markdownEditorDisplayMode: MarkdownEditorDisplayMode {
+        get { workspaceState.markdownEditorMode }
+        nonmutating set { workspaceState.markdownEditorMode = newValue }
+    }
+
     // Code: per-document visibility. LaTeX: shared visibility via showPDFPreview.
     var isOutputVisible: Bool {
         get { codeDocumentState.outputLayout.isOutputVisible }
         nonmutating set { codeDocumentState.updateOutputLayout { $0.isOutputVisible = newValue } }
+    }
+
+    private var isDocumentPreviewVisible: Bool {
+        if documentMode == .markdown {
+            return showPDFPreview && compiledPDF != nil
+        }
+        return showPDFPreview
     }
 
     // MARK: - PDF pane tabs (shared for both modes)
@@ -413,21 +457,26 @@ struct UnifiedEditorView: View {
             else {
                 loadFile()
                 if !documentMode.isRunnableCode { loadExistingPDF() }
+                configureDocumentLayoutIfNeeded()
                 if isActive { startFileWatcher() }
                 if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
             }
+            syncBibliographyCommandRouter()
         }
         .onDisappear {
             stopFileWatcher()
             if documentMode.isRunnableCode { persistDocumentWorkspaceState() }
+            if isActive { BibliographyCommandRouter.shared.clearActions() }
         }
         .onChange(of: isActive) {
             if isActive {
-                loadFile(); startFileWatcher()
+                loadFile(); configureDocumentLayoutIfNeeded(); startFileWatcher()
                 if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
+                syncBibliographyCommandRouter()
             } else {
                 stopFileWatcher()
                 if documentMode.isRunnableCode { persistDocumentWorkspaceState() }
+                BibliographyCommandRouter.shared.clearActions()
             }
         }
         .onChange(of: fileURL) {
@@ -442,9 +491,13 @@ struct UnifiedEditorView: View {
                     latexAnnotations = documentMode == .latex ? LaTeXAnnotationStore.load(for: fileURL) : []
                     reconcileAnnotations()
                 }
+                configureDocumentLayoutIfNeeded()
                 if isActive { startFileWatcher() }
             }
+            syncBibliographyCommandRouter()
         }
+        .onChange(of: workspaceState.referencePaperIDs) { syncBibliographyCommandRouter() }
+        .onChange(of: workspaceState.selectedReferencePaperID) { syncBibliographyCommandRouter() }
         .onChange(of: panelArrangement) {
             threePaneLeftWidth = nil; threePaneRightWidth = nil
             if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
@@ -470,6 +523,7 @@ struct UnifiedEditorView: View {
             .onChange(of: codeDocumentState.secondaryArtifactPath) { persistDocumentWorkspaceState() }
             .onChange(of: workspaceState.sidebarWidth) { onPersistWorkspaceState?() }
             .onChange(of: workspaceState.editorFontSize) { onPersistWorkspaceState?() }
+            .onChange(of: workspaceState.markdownEditorMode) { onPersistWorkspaceState?() }
     }
 
     // MARK: - Work Area Pane
@@ -525,7 +579,7 @@ struct UnifiedEditorView: View {
     var horizontalThreePaneLayout: some View {
         let roles = threePaneRoles
         let isCode = documentMode.isRunnableCode
-        let showContent = isCode ? isOutputVisible : showPDFPreview
+        let showContent = isCode ? isOutputVisible : isDocumentPreviewVisible
         let config = isCode
             ? ThreePaneLayoutConfig.code(arrangement: panelArrangement, contentVisible: showContent)
             : ThreePaneLayoutConfig.latex(arrangement: panelArrangement, contentVisible: showContent)
@@ -572,11 +626,11 @@ struct UnifiedEditorView: View {
     // LaTeX mode: editor + PDF (split layouts)
     @ViewBuilder
     private var latexEditorAndContentPane: some View {
-        if !showEditorPane && !showPDFPreview {
+        if !showEditorPane && !isDocumentPreviewVisible {
             hiddenEditorPlaceholderPane
         } else if !showEditorPane {
             contentPane
-        } else if !showPDFPreview {
+        } else if !isDocumentPreviewVisible {
             editorPane
         } else if splitLayout == .horizontal {
             HSplitView {
@@ -692,7 +746,7 @@ struct UnifiedEditorView: View {
                 ContentUnavailableView(
                     "Ouvrir un fichier",
                     systemImage: "doc.text",
-                    description: Text("Ouvre un fichier .tex, .md, .py ou .R pour commencer")
+                    description: Text("Ouvre un fichier .tex, .bib, .md, .py ou .R pour commencer")
                 )
             } else if documentMode.isRunnableCode {
                 CodeTextEditor(
@@ -701,6 +755,15 @@ struct UnifiedEditorView: View {
                     fontSize: editorFontSize,
                     theme: codeTheme,
                     onTextChange: {}
+                )
+            } else if documentMode.usesDedicatedInlineEditor {
+                MarkdownLiveEditor(
+                    fileURL: fileURL,
+                    text: $text,
+                    fontSize: editorFontSize,
+                    theme: markdownTheme,
+                    displayMode: markdownEditorDisplayMode,
+                    onTextChange: { setToolbarStatus(.idle) }
                 )
             } else {
                 LaTeXTextEditor(
@@ -1051,6 +1114,7 @@ struct UnifiedEditorView: View {
             // Left side: file info + mode-specific actions + references
             fileToolbarClusterView
             documentActionsCluster
+            markdownFormattingToolbarClusterView
             referencePickerToolbarClusterView
             if documentMode.isRunnableCode {
                 codeActiveReferenceToolbarView
@@ -1116,8 +1180,71 @@ struct UnifiedEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private var markdownFormattingToolbarClusterView: some View {
+        if documentMode == .markdown {
+            toolbarCluster(zone: .primary, title: "Format") {
+                markdownModeToggle
+
+                ToolbarIconButton(
+                    systemName: "textformat.size.larger",
+                    foregroundStyle: .secondary,
+                    helpText: "Basculer le titre Markdown"
+                ) {
+                    sendMarkdownCommand(.heading)
+                }
+
+                ToolbarIconButton(
+                    systemName: "list.bullet",
+                    foregroundStyle: .secondary,
+                    helpText: "Basculer la liste"
+                ) {
+                    sendMarkdownCommand(.list)
+                }
+
+                ToolbarIconButton(
+                    systemName: "text.quote",
+                    foregroundStyle: .secondary,
+                    helpText: "Basculer la citation"
+                ) {
+                    sendMarkdownCommand(.blockquote)
+                }
+
+                ToolbarIconButton(
+                    systemName: "curlybraces.square",
+                    foregroundStyle: .secondary,
+                    helpText: "Insérer un bloc de code"
+                ) {
+                    sendMarkdownCommand(.codeBlock)
+                }
+            }
+        }
+    }
+
+    private var markdownModeToggle: some View {
+        HStack(spacing: 4) {
+            ForEach(MarkdownEditorDisplayMode.allCases, id: \.self) { mode in
+                MarkdownToolbarModeButton(
+                    title: mode.title,
+                    isSelected: markdownEditorDisplayMode == mode
+                ) {
+                    markdownEditorDisplayMode = mode
+                }
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
+                .fill(AppChromePalette.hoverFill.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius, style: .continuous)
+                .stroke(AppChromePalette.clusterStroke.opacity(0.7), lineWidth: 1)
+        )
+    }
+
     private var isContentPaneVisible: Bool {
-        documentMode.isRunnableCode ? isOutputVisible : showPDFPreview
+        documentMode.isRunnableCode ? isOutputVisible : isDocumentPreviewVisible
     }
 
     /// 4 pane toggles: Files, Editor, Terminal, Content
@@ -1264,9 +1391,9 @@ struct UnifiedEditorView: View {
     private var referencePickerToolbarClusterView: some View {
         toolbarCluster(zone: .primary, title: "Réf.") {
             Menu {
-                let openPapers = allPapers.filter { openPaperIDs.contains($0.id) }
+                let openPapers = availableReferencePapers
                 if openPapers.isEmpty {
-                    Text("Aucun article ouvert en onglet")
+                    Text("Aucun article disponible")
                 } else {
                     ForEach(openPapers) { paper in
                         Button {
@@ -1503,6 +1630,9 @@ struct UnifiedEditorView: View {
             setToolbarStatus(.saved, autoClearAfter: 1.4)
         } else if documentMode == .latex {
             compile()
+        } else if documentMode == .markdown {
+            guard writeCurrentTextToDisk() else { return }
+            setToolbarStatus(.saved, autoClearAfter: 1.4)
         } else {
             renderMarkdownPreview()
         }
@@ -1947,10 +2077,33 @@ struct UnifiedEditorView: View {
         setToolbarStatus(.idle)
         loadFile()
         loadExistingPDF()
+        configureDocumentLayoutIfNeeded()
         if isActive {
             startFileWatcher()
         }
         refreshSplitGrabAreas()
+    }
+
+    private func configureDocumentLayoutIfNeeded() {
+        guard documentMode == .markdown else { return }
+        if showPDFPreview {
+            showPDFPreview = false
+        }
+        if splitLayout != .editorOnly {
+            workspaceState.splitLayout = LaTeXEditorSplitLayout.editorOnly.rawValue
+        }
+    }
+
+    private func sendMarkdownCommand(_ command: MarkdownLiveEditor.Command) {
+        guard documentMode == .markdown else { return }
+        NotificationCenter.default.post(
+            name: .markdownEditorCommand,
+            object: nil,
+            userInfo: [
+                "filePath": fileURL.path,
+                "command": command.rawValue,
+            ]
+        )
     }
 
     func refreshSplitGrabAreas() {
@@ -2438,6 +2591,53 @@ struct UnifiedEditorView: View {
 
     nonisolated static func modificationDate(for url: URL) -> Date? {
         try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+    }
+}
+
+private struct MarkdownToolbarModeButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isSelected ? AppChromePalette.selectedAccent : Color.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .frame(height: AppChromeMetrics.toolbarButtonSize - 2)
+                .background(backgroundFill)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius - 1, style: .continuous)
+                        .stroke(borderColor, lineWidth: isSelected ? 1 : 0.5)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius - 1, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.toolbarButtonCornerRadius - 1, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: isHovered)
+        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
+    }
+
+    private var backgroundFill: Color {
+        if isSelected {
+            return AppChromePalette.selectedAccentFill.opacity(0.9)
+        }
+        if isHovered {
+            return AppChromePalette.hoverFill.opacity(0.9)
+        }
+        return .clear
+    }
+
+    private var borderColor: Color {
+        isSelected ? AppChromePalette.selectedAccentStroke : AppChromePalette.clusterStroke.opacity(0.45)
     }
 }
 
