@@ -168,11 +168,25 @@ struct UnifiedEditorView: View {
     }
 
     private var documentPrimaryActionHelpText: String {
-        documentMode == .latex ? "Compiler (⌘B)" : "Rendre le PDF (⌘B)"
+        switch documentMode {
+        case .latex:
+            return "Compiler (⌘B)"
+        case .markdown:
+            return "Exporter le PDF (⌘B)"
+        case .python, .r:
+            return "Exécuter (⌘B)"
+        }
     }
 
     private var documentOutputLogHelpText: String {
-        documentMode == .latex ? "Console de compilation" : "Journal du rendu"
+        switch documentMode {
+        case .latex:
+            return "Console de compilation"
+        case .markdown:
+            return "Journal d'export PDF"
+        case .python, .r:
+            return "Journal d'exécution"
+        }
     }
 
     private var isReferenceAnnotationSidebarVisible: Bool {
@@ -412,6 +426,7 @@ struct UnifiedEditorView: View {
             if hasNoFile { text = ""; savedText = "" }
             else {
                 loadFile()
+                ensureMarkdownPreviewVisible()
                 if !documentMode.isRunnableCode { loadExistingPDF() }
                 if isActive { startFileWatcher() }
                 if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
@@ -423,7 +438,9 @@ struct UnifiedEditorView: View {
         }
         .onChange(of: isActive) {
             if isActive {
-                loadFile(); startFileWatcher()
+                loadFile()
+                ensureMarkdownPreviewVisible()
+                startFileWatcher()
                 if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
             } else {
                 stopFileWatcher()
@@ -437,6 +454,7 @@ struct UnifiedEditorView: View {
                 text = ""; savedText = ""
             } else {
                 loadFile()
+                ensureMarkdownPreviewVisible()
                 if !documentMode.isRunnableCode {
                     loadExistingPDF()
                     latexAnnotations = documentMode == .latex ? LaTeXAnnotationStore.load(for: fileURL) : []
@@ -894,6 +912,8 @@ struct UnifiedEditorView: View {
     private var primaryContentView: some View {
         if documentMode.isRunnableCode {
             outputWorkspace
+        } else if documentMode == .markdown {
+            MarkdownEditorPreviewView(text: text)
         } else if let pdf = compiledPDF {
             PDFPreviewView(
                 document: pdf,
@@ -1172,7 +1192,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(isContentPaneVisible ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp(documentMode.isRunnableCode ? "Output" : "PDF")
+            .appChromeQuickHelp(documentMode.isRunnableCode ? "Output" : (documentMode == .markdown ? "Aperçu" : "PDF"))
         }
     }
 
@@ -1241,7 +1261,7 @@ struct UnifiedEditorView: View {
             title: documentMode.primaryClusterTitle,
             showsLatexActions: showsLatexToolbarActions,
             isCompiling: isCompiling,
-            compiledPDFAvailable: selectedPdfTab == .compiled && compiledPDF != nil,
+            compiledPDFAvailable: documentMode == .latex && selectedPdfTab == .compiled && compiledPDF != nil,
             activeMarkdownExportFileName: activeMarkdownExportFileName,
             companionExportFileName: compiledPDFCompanionExportFileName,
             canAnnotateCurrentDocument: canAnnotateCurrentDocument,
@@ -1503,8 +1523,12 @@ struct UnifiedEditorView: View {
             setToolbarStatus(.saved, autoClearAfter: 1.4)
         } else if documentMode == .latex {
             compile()
+        } else if documentMode == .markdown {
+            guard writeCurrentTextToDisk() else { return }
+            setToolbarStatus(.saved, autoClearAfter: 1.4)
         } else {
-            renderMarkdownPreview()
+            guard writeCurrentTextToDisk() else { return }
+            setToolbarStatus(.saved, autoClearAfter: 1.4)
         }
     }
 
@@ -1929,10 +1953,27 @@ struct UnifiedEditorView: View {
     // MARK: - PDF / Compilation
 
     func loadExistingPDF() {
+        guard documentMode == .latex else {
+            compiledPDF = nil
+            return
+        }
         if FileManager.default.fileExists(atPath: previewPDFURL.path) {
             compiledPDF = PDFDocument(url: previewPDFURL)
         } else {
             compiledPDF = nil
+        }
+    }
+
+    func ensureMarkdownPreviewVisible() {
+        guard documentMode == .markdown else { return }
+        if !showEditorPane {
+            showEditorPane = true
+        }
+        if !showPDFPreview {
+            showPDFPreview = true
+        }
+        if splitLayout == .editorOnly {
+            splitLayout = .horizontal
         }
     }
 
@@ -2168,11 +2209,8 @@ struct UnifiedEditorView: View {
                 errors = result.errors
                 compileOutput = result.log
                 showErrors = !result.success || !result.errors.isEmpty
-                if let pdfURL = result.pdfURL {
-                    compiledPDF = PDFDocument(url: pdfURL)
-                } else if !result.success {
-                    compiledPDF = nil
-                }
+                _ = result.pdfURL
+                compiledPDF = nil
                 isCompiling = false
                 if activeErrorCount > 0 {
                     setToolbarStatus(.errors(activeErrorCount))

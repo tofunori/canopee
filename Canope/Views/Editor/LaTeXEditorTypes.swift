@@ -216,7 +216,7 @@ enum EditorDocumentMode {
         case .latex:
             return "PDF compilé"
         case .markdown:
-            return "PDF aperçu"
+            return "Aperçu"
         case .python, .r:
             return "Sortie"
         }
@@ -227,7 +227,7 @@ enum EditorDocumentMode {
         case .latex:
             return "Pas encore compilé"
         case .markdown:
-            return "Pas encore rendu"
+            return "Aperçu Markdown"
         case .python, .r:
             return "Aucun artefact"
         }
@@ -238,7 +238,7 @@ enum EditorDocumentMode {
         case .latex:
             return "⌘B pour compiler"
         case .markdown:
-            return "Clique sur Rendre le PDF"
+            return "Écris du Markdown pour voir le rendu"
         case .python, .r:
             return "⌘B pour exécuter le script"
         }
