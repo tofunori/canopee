@@ -757,7 +757,7 @@ struct UnifiedEditorView: View {
                     theme: codeTheme,
                     onTextChange: {}
                 )
-            } else if documentMode.usesDedicatedInlineEditor {
+            } else if documentMode.usesDedicatedInlineEditor && markdownEditorDisplayMode == .livePreview {
                 MarkdownLiveEditor(
                     fileURL: fileURL,
                     text: $text,
@@ -1112,7 +1112,7 @@ struct UnifiedEditorView: View {
 
     var editorToolbar: some View {
         HStack(spacing: 0) {
-            // Left side: file info + mode-specific actions + references (scrollable)
+            // Left side: collapsible clusters, scrollable when all expanded
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     fileToolbarClusterView
@@ -1130,7 +1130,7 @@ struct UnifiedEditorView: View {
 
             Spacer(minLength: 4)
 
-            // Right side: shared layout controls (always visible)
+            // Right side: always visible
             HStack(spacing: 8) {
                 panneauxCluster
                 dispositionCluster
@@ -1190,7 +1190,7 @@ struct UnifiedEditorView: View {
     @ViewBuilder
     private var markdownFormattingToolbarClusterView: some View {
         if documentMode == .markdown {
-            toolbarCluster(zone: .primary, title: "Format") {
+            toolbarCluster(zone: .primary, title: "Format", collapsible: true) {
                 markdownModeToggle
 
                 ToolbarIconButton(
@@ -1533,9 +1533,10 @@ struct UnifiedEditorView: View {
     func toolbarCluster<Content: View>(
         zone: ToolbarZone,
         title: String? = nil,
+        collapsible: Bool = false,
         @ViewBuilder content: @escaping () -> Content
     ) -> some View {
-        AppChromeToolbarCluster(zone: zone, title: title, content: content)
+        AppChromeToolbarCluster(zone: zone, title: title, collapsible: collapsible, content: content)
     }
 
     @ViewBuilder

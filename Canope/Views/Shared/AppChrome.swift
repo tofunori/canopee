@@ -307,18 +307,38 @@ enum AppChromeMotion {
 struct AppChromeToolbarCluster<Content: View>: View {
     let zone: ToolbarZone
     var title: String?
+    var collapsible: Bool = false
     @ViewBuilder let content: () -> Content
+
+    @State private var isExpanded = true
 
     var body: some View {
         HStack(spacing: 6) {
             if let title, !title.isEmpty {
-                Text(title)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(titleTint)
-                    .lineLimit(1)
+                if collapsible {
+                    Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } }) {
+                        HStack(spacing: 3) {
+                            Text(title)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(titleTint)
+                                .lineLimit(1)
+                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 7, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(title)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(titleTint)
+                        .lineLimit(1)
+                }
             }
 
-            content()
+            if !collapsible || isExpanded {
+                content()
+            }
         }
         .padding(.horizontal, 8)
         .frame(height: AppChromeMetrics.clusterHeight)

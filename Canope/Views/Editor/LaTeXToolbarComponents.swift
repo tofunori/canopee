@@ -175,7 +175,7 @@ struct EditorDocumentToolbarClusterView: View {
     let onToggleErrors: () -> Void
 
     var body: some View {
-        AppChromeToolbarCluster(zone: .primary, title: title) {
+        AppChromeToolbarCluster(zone: .primary, title: title, collapsible: true) {
             Button(action: onRunPrimaryAction) {
                 if isCompiling {
                     ProgressView().controlSize(.small)

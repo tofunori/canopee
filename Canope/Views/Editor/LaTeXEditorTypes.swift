@@ -287,7 +287,7 @@ enum EditorDocumentMode {
     }
 
     var usesDedicatedInlineEditor: Bool {
-        false // Disabled: MarkdownLiveEditor causes layout overflow; use LaTeXTextEditor for all modes
+        self == .markdown
     }
 }
 
