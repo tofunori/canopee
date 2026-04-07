@@ -111,6 +111,11 @@ struct PDFKitView: NSViewRepresentable {
             }
         }
 
+        // Auto fit-to-width once the view has its layout size
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            context.coordinator.fitToWidth()
+        }
+
         NotificationCenter.default.addObserver(
             context.coordinator,
             selector: #selector(Coordinator.handleSelectionChanged(_:)),

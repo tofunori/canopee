@@ -155,12 +155,12 @@ struct MainWindow: View {
             }
         }
 
-        if latexWorkspaceState.splitLayout == "editorOnly" {
-            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+            if latexWorkspaceState.splitLayout == "editorOnly" {
                 latexWorkspaceState.layoutBeforeReference = "editorOnly"
-                latexWorkspaceState.splitLayout = "horizontal"
-                latexWorkspaceState.showPDFPreview = true
             }
+            latexWorkspaceState.splitLayout = "horizontal"
+            latexWorkspaceState.showPDFPreview = true
         }
     }
 

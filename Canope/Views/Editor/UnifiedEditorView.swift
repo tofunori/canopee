@@ -365,8 +365,9 @@ struct UnifiedEditorView: View {
     }
 
     private var isDocumentPreviewVisible: Bool {
+        let hasReferences = !workspaceState.referencePaperIDs.isEmpty
         if documentMode == .latex {
-            return showPDFPreview && compiledPDF != nil
+            return showPDFPreview && (compiledPDF != nil || hasReferences)
         }
         // Markdown & other modes: show whenever toggled (for reference PDFs)
         return showPDFPreview
