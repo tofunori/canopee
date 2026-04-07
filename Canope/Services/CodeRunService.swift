@@ -400,6 +400,14 @@ final class CodeDocumentStateStore: ObservableObject {
         states[fileURL.path]
     }
 
+    func stateOrCreate(for fileURL: URL) -> CodeDocumentUIState {
+        if let existing = states[fileURL.path] { return existing }
+        let snapshot = WorkspaceSessionStore.shared.loadCodeDocumentWorkspaceState(for: fileURL.path)
+        let state = CodeDocumentUIState(snapshot: snapshot, fileURL: fileURL)
+        states[fileURL.path] = state
+        return state
+    }
+
     func persistState(for fileURL: URL) {
         guard let state = states[fileURL.path] else { return }
         WorkspaceSessionStore.shared.saveCodeDocumentWorkspaceState(state.persistedState, for: fileURL.path)

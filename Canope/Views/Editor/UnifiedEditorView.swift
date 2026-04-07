@@ -1313,7 +1313,7 @@ struct UnifiedEditorView: View {
 
     /// Shared disposition menu: panel arrangement
     private var dispositionCluster: some View {
-        toolbarCluster(zone: .trailing, title: "Disposition") {
+        toolbarCluster(zone: .trailing) {
             Menu {
                 Section("Ordre des panneaux") {
                     ForEach(PanelArrangement.allCases, id: \.self) { arrangement in
@@ -1486,21 +1486,19 @@ struct UnifiedEditorView: View {
     @ViewBuilder
     private var terminalToolbarClusterView: some View {
         if showTerminal {
-            toolbarCluster(zone: .trailing, title: "Term.") {
+            Menu {
                 Button(action: addTerminalTab) {
-                    Image(systemName: "plus")
-                        .foregroundStyle(.green)
+                    Label("Nouveau terminal", systemImage: "plus")
                 }
-                .buttonStyle(.plain)
-                .appChromeQuickHelp("Nouveau terminal")
-
                 Button(action: terminalAppearanceStore.presentSettings) {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(.green)
+                    Label("Réglages du terminal", systemImage: "slider.horizontal.3")
                 }
-                .buttonStyle(.plain)
-                .appChromeQuickHelp("Réglages du terminal")
+            } label: {
+                Image(systemName: "terminal")
+                    .foregroundStyle(.green)
             }
+            .buttonStyle(.plain)
+            .appChromeQuickHelp("Terminal")
         }
     }
 

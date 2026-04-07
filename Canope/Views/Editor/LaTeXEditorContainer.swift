@@ -226,37 +226,27 @@ struct LaTeXEditorContainer: View {
         }
     }
 
-    @ViewBuilder
     private func editorView(for fileURL: URL) -> some View {
-        if let codeDocumentState = codeDocumentStateStore.existingState(for: fileURL) {
-            UnifiedEditorView(
-                fileURL: fileURL,
-                isActive: true,
-                showTerminal: $showTerminal,
-                mainWindowTab: $selectedTab,
-                openEditorPaths: openPaths,
-                workspaceState: workspaceState,
-                terminalWorkspaceState: terminalWorkspaceState,
-                isEditorSectionActive: isEditorSectionActive,
-                codeDocumentState: codeDocumentState,
-                onOpenPDF: onOpenPDF,
-                onOpenInNewTab: onOpenTeX,
-                openPaperIDs: openPaperIDs,
-                editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil,
-                onPersistWorkspaceState: {
-                    codeDocumentStateStore.persistState(for: fileURL)
-                    persistWorkspaceState()
-                }
-            )
-        } else {
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .onAppear {
-                    DispatchQueue.main.async {
-                        codeDocumentStateStore.ensureState(for: fileURL)
-                    }
-                }
-        }
+        let codeDocumentState = codeDocumentStateStore.stateOrCreate(for: fileURL)
+        return UnifiedEditorView(
+            fileURL: fileURL,
+            isActive: true,
+            showTerminal: $showTerminal,
+            mainWindowTab: $selectedTab,
+            openEditorPaths: openPaths,
+            workspaceState: workspaceState,
+            terminalWorkspaceState: terminalWorkspaceState,
+            isEditorSectionActive: isEditorSectionActive,
+            codeDocumentState: codeDocumentState,
+            onOpenPDF: onOpenPDF,
+            onOpenInNewTab: onOpenTeX,
+            openPaperIDs: openPaperIDs,
+            editorTabBar: openPaths.count > 1 ? AnyView(editorTabBar) : nil,
+            onPersistWorkspaceState: {
+                codeDocumentStateStore.persistState(for: fileURL)
+                persistWorkspaceState()
+            }
+        )
     }
 
     private func openFolderFromLanding() {
