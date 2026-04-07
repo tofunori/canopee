@@ -149,6 +149,8 @@ struct MarkdownEditorPreviewView: View {
                     .foregroundStyle(.primary)
                     .lineSpacing(4)
                     .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(12)
