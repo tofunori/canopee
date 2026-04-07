@@ -61,6 +61,8 @@ struct MarkdownBlockView: View {
                 Text(MarkdownFormatter.inlineMarkdown(line))
                     .font(.system(size: 13))
                     .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Text("─────────────────────────────────────────────────")
