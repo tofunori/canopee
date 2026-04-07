@@ -29,7 +29,7 @@ struct MarkdownLiveEditor: NSViewRepresentable {
 
         let textStorage = NSTextStorage()
         let layoutManager = NSLayoutManager()
-        let textContainer = NSTextContainer(size: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        let textContainer = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         textStorage.addLayoutManager(layoutManager)
         layoutManager.addTextContainer(textContainer)
 

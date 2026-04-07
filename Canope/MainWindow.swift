@@ -49,9 +49,7 @@ struct MainWindow: View {
         ZStack(alignment: .topLeading) {
             LibraryView(
                 paperToOpen: $paperToOpen,
-                isImportingPDF: $isImportingPDF,
-                isActive: tabController.selectedTab == .library,
-                projectRoot: latexWorkspaceState.workspaceRoot
+                isImportingPDF: $isImportingPDF
             )
                 .opacity(tabController.selectedTab == .library ? 1 : 0)
                 .allowsHitTesting(tabController.selectedTab == .library)
@@ -278,7 +276,7 @@ struct MainWindow: View {
                                     .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
                             }
                             .buttonStyle(.plain)
-                            .help("Ouvrir un fichier .tex, .bib, .md, .py ou .R (⌘O)")
+                            .help("Ouvrir un fichier .tex, .md, .py ou .R (⌘O)")
                         }
 
                         // Split toggle

@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
@@ -6,20 +5,14 @@ import UniformTypeIdentifiers
 struct PaperTableView: View {
     let sidebarSelection: SidebarSelection
     @Binding var inspectedPaperID: UUID?
-    @Binding var showInspector: Bool
     @Binding var isImporting: Bool
-    let isActive: Bool
-    let projectRoot: URL?
     var onOpenPaper: (Paper) -> Void
     @Query(sort: \Paper.dateAdded, order: .reverse) private var allPapers: [Paper]
     @Query(sort: \PaperCollection.sortOrder) private var allCollections: [PaperCollection]
     @Environment(\.modelContext) private var modelContext
-    @ObservedObject private var commandRouter = BibliographyCommandRouter.shared
     @State private var selection = Set<UUID>()
-    @State private var sortOption: LibrarySortOption = .dateAddedDescending
+    @State private var sortOrder = [KeyPathComparator(\Paper.dateAdded, order: .reverse)]
     @State private var searchText = ""
-    @State private var hoveredPaperID: UUID?
-    @State private var selectionAnchorID: UUID?
 
     private var filteredPapers: [Paper] {
         var base: [Paper]
@@ -39,45 +32,48 @@ struct PaperTableView: View {
             }
         }
 
+        // Apply search filter
         if !searchText.isEmpty {
             let query = searchText.lowercased()
             base = base.filter { paper in
                 paper.title.lowercased().contains(query)
                 || paper.authors.lowercased().contains(query)
-                || (paper.journal?.lowercased().contains(query) ?? false)
                 || (paper.doi?.lowercased().contains(query) ?? false)
-                || (paper.citeKey?.lowercased().contains(query) ?? false)
                 || (paper.year.map { String($0).contains(query) } ?? false)
             }
         }
 
-        return base.sorted(by: sortOption.areInIncreasingOrder)
-    }
-
-    private var selectedPapers: [Paper] {
-        allPapers.filter { selection.contains($0.id) }
-    }
-
-    private var selectionSummary: String {
-        if selection.isEmpty {
-            return "\(filteredPapers.count) article\(filteredPapers.count > 1 ? "s" : "")"
-        }
-        return "\(selection.count) sélectionné\(selection.count > 1 ? "s" : "")"
+        return base.sorted(using: sortOrder)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             libraryToolbar
-            AppChromeDivider(role: .panel)
+            Divider()
 
-            if filteredPapers.isEmpty {
-                emptyState
-            } else {
-                libraryList
-            }
+            tableContent
+                .contextMenu(forSelectionType: UUID.self) { items in
+                    contextMenuContent(items)
+                } primaryAction: { items in
+                    for id in items {
+                        if let paper = allPapers.first(where: { $0.id == id }) {
+                            onOpenPaper(paper)
+                        }
+                    }
+                }
+                .onChange(of: selection) {
+                    inspectedPaperID = selection.count == 1 ? selection.first : nil
+                }
+                .overlay {
+                    if filteredPapers.isEmpty {
+                        ContentUnavailableView {
+                            Label("Aucun article", systemImage: "doc.text")
+                        } description: {
+                            Text("Importez un PDF avec le bouton + ou glissez-le ici")
+                        }
+                    }
+                }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(AppChromePalette.surfaceSubbar)
         .fileImporter(
             isPresented: $isImporting,
             allowedContentTypes: [UTType.pdf],
@@ -89,246 +85,114 @@ struct PaperTableView: View {
             handleDrop(providers)
             return true
         }
-        .onAppear { syncCommandRouter() }
-        .onChange(of: isActive) { syncCommandRouter() }
-        .onChange(of: selection) { updateSelectionState() }
-        .onChange(of: allPapers.map(\.id)) { ids in
-            let availableIDs = Set(ids)
-            selection.formIntersection(availableIDs)
-            if let inspectedPaperID, !availableIDs.contains(inspectedPaperID) {
-                self.inspectedPaperID = nil
-            }
-            syncCommandRouter()
-        }
     }
 
     private var libraryToolbar: some View {
-        HStack(spacing: 8) {
-            Spacer(minLength: 0)
+        HStack(spacing: 10) {
+            Text(navigationTitle)
+                .font(.system(size: 13, weight: .semibold))
 
-            searchField
+            Spacer(minLength: 8)
 
-            sortMenu
-
-            ToolbarIconButton(
-                systemName: "plus",
-                foregroundStyle: AppChromePalette.info,
-                helpText: "Importer un PDF"
-            ) {
-                isImporting = true
+            Button(action: { isImporting = true }) {
+                Label("Importer un PDF", systemImage: "plus")
+                    .labelStyle(.iconOnly)
             }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 30)
-        .background(AppChromePalette.surfaceBar.opacity(0.95))
-    }
+            .buttonStyle(.plain)
+            .help("Importer un PDF")
 
-    private var sortMenu: some View {
-        Menu {
-            ForEach(LibrarySortOption.allCases, id: \.self) { option in
-                Button {
-                    sortOption = option
-                } label: {
-                    Label(option.title, systemImage: option.systemImage)
-                }
-            }
-        } label: {
             HStack(spacing: 6) {
-                Image(systemName: sortOption.systemImage)
-                    .imageScale(.small)
-                Text("Sort")
-                    .font(.system(size: 11, weight: .medium))
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Rechercher titre, auteurs, DOI…", text: $searchText)
+                    .textFieldStyle(.plain)
             }
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 7)
-            .frame(height: 22)
+            .padding(.horizontal, 10)
+            .frame(width: 260, height: 26)
             .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(AppChromePalette.hoverFill.opacity(0.5))
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
             )
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar.opacity(0.65))
     }
 
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+    // MARK: - Table
 
-            TextField("Search My Papers", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11))
-                .frame(width: 190)
-
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
+    @ViewBuilder
+    private var tableContent: some View {
+        Table(filteredPapers, selection: $selection, sortOrder: $sortOrder) {
+            // Label color/shape + Read status + Flag
+            TableColumn("") { paper in
+                HStack(spacing: 3) {
+                    if let key = paper.labelColor,
+                       let lc = Paper.labelColors.first(where: { $0.key == key }) {
+                        Image(systemName: paper.labelIconName)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color(nsColor: lc.color))
+                    }
+                    if !paper.isRead {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 6, height: 6)
+                    }
+                    if paper.isFlagged {
+                        Image(systemName: "flag.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.orange)
+                    }
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(AppChromePalette.hoverFill.opacity(0.4))
-        )
-    }
+            .width(42)
 
-    private var libraryList: some View {
-        VStack(spacing: 0) {
-            papersHeaderRow
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(filteredPapers) { paper in
-                    paperRow(paper)
-                }
+            // Authors (short: last names)
+            TableColumn("Auteurs", sortUsing: KeyPathComparator(\Paper.authors)) { paper in
+                Text(paper.authorsShort)
+                    .lineLimit(1)
             }
-            }
-        }
-    }
+            .width(min: 100, ideal: 150, max: 200)
 
-    private var papersHeaderRow: some View {
-        HStack(spacing: 0) {
-            headerColumn("", width: 34, alignment: .center)
-            headerColumn("Authors", width: 140)
-            headerColumn("Last Author", width: 110)
-            headerColumn("Title", minWidth: 230)
-            headerColumn("Journal", width: 180)
-            headerColumn("Year", width: 58, alignment: .trailing)
-            headerColumn("Notes", width: 136)
-            headerColumn("Rating", width: 92, alignment: .trailing)
-        }
-        .frame(height: 26)
-        .padding(.horizontal, 6)
-        .background(AppChromePalette.surfaceBar.opacity(0.98))
-        .overlay(
-            Rectangle()
-                .fill(AppChromePalette.dividerStrong)
-                .frame(height: 1),
-            alignment: .bottom
-        )
-    }
-
-    private func headerColumn(
-        _ title: String,
-        width: CGFloat? = nil,
-        minWidth: CGFloat? = nil,
-        alignment: Alignment = .leading
-    ) -> some View {
-        Text(title)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .frame(width: width, alignment: alignment)
-            .frame(minWidth: minWidth, maxWidth: width == nil ? .infinity : width, alignment: alignment)
-            .padding(.horizontal, 6)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "books.vertical")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(.secondary)
-
-            VStack(spacing: 4) {
-                Text("Aucun article")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Importez un PDF avec le bouton + ou glissez-le dans la bibliothèque.")
-                    .font(.system(size: 12))
+            // Last Author
+            TableColumn("Dernier auteur") { paper in
+                Text(paper.lastAuthor)
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
+            }
+            .width(min: 80, ideal: 120, max: 160)
+
+            // Title
+            TableColumn("Titre", sortUsing: KeyPathComparator(\Paper.title)) { paper in
+                Text(paper.title)
+                    .lineLimit(1)
             }
 
-            Button("Importer un PDF") {
-                isImporting = true
+            // Journal
+            TableColumn("Journal") { paper in
+                Text(paper.journal ?? "")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(32)
-        .background(AppChromePalette.surfaceSubbar)
-    }
+            .width(min: 80, ideal: 160, max: 250)
 
-    private func paperRow(_ paper: Paper) -> some View {
-        let isSelected = selection.contains(paper.id)
-        let isHovered = hoveredPaperID == paper.id
-
-        return PaperRowView(paper: paper, isSelected: isSelected, isHovered: isHovered)
-            .onTapGesture {
-                handleSelection(for: paper.id)
+            // Year
+            TableColumn("Année", sortUsing: KeyPathComparator(\Paper.dateAdded)) { paper in
+                Text(paper.year.map(String.init) ?? "")
+                    .monospacedDigit()
             }
-            .onTapGesture(count: 2) {
-                handleSelection(for: paper.id)
-                onOpenPaper(paper)
+            .width(50)
+
+            // Rating (5 stars)
+            TableColumn("Note") { paper in
+                RatingView(rating: Binding(
+                    get: { paper.rating },
+                    set: { paper.rating = $0 }
+                ))
             }
-            .onHover { hovering in
-                if hovering {
-                    hoveredPaperID = paper.id
-                } else if hoveredPaperID == paper.id {
-                    hoveredPaperID = nil
-                }
-            }
-            .contextMenu {
-                contextMenuContent(effectiveSelection(forContextPaperID: paper.id))
-            }
-    }
-
-    private func effectiveSelection(forContextPaperID paperID: UUID) -> Set<UUID> {
-        selection.contains(paperID) ? selection : [paperID]
-    }
-
-    private func handleSelection(for paperID: UUID) {
-        let modifiers = NSEvent.modifierFlags.intersection([.command, .shift])
-
-        if modifiers.contains(.shift) {
-            extendSelection(to: paperID)
-            return
+            .width(90)
         }
-
-        if modifiers.contains(.command) {
-            toggleSelection(for: paperID)
-            selectionAnchorID = paperID
-            return
-        }
-
-        selection = [paperID]
-        selectionAnchorID = paperID
-    }
-
-    private func toggleSelection(for paperID: UUID) {
-        if selection.contains(paperID) {
-            selection.remove(paperID)
-        } else {
-            selection.insert(paperID)
-        }
-    }
-
-    private func extendSelection(to paperID: UUID) {
-        guard let anchorID = selectionAnchorID,
-              let anchorIndex = filteredPapers.firstIndex(where: { $0.id == anchorID }),
-              let targetIndex = filteredPapers.firstIndex(where: { $0.id == paperID }) else {
-            selection = [paperID]
-            selectionAnchorID = paperID
-            return
-        }
-
-        let lowerBound = min(anchorIndex, targetIndex)
-        let upperBound = max(anchorIndex, targetIndex)
-        selection = Set(filteredPapers[lowerBound...upperBound].map(\.id))
-    }
-
-    private func updateSelectionState() {
-        inspectedPaperID = selection.count == 1 ? selection.first : nil
-        if inspectedPaperID != nil && !showInspector {
-            showInspector = true
-        }
-        syncCommandRouter()
     }
 
     // MARK: - Context Menu
@@ -344,13 +208,6 @@ struct PaperTableView: View {
                         }
                     }
                 }
-                Divider()
-                Button("Copier la cite key") { copyCiteKeys(for: items) }
-                Button("Copier le BibTeX") { copyBibTeX(for: items) }
-                Button("Exporter en .bib") { exportBibTeX(for: items) }
-                Button("Ajouter à references.bib") { appendToProjectBibliography(for: items) }
-                    .disabled(projectRoot == nil)
-                Button("Rafraîchir depuis le DOI") { refreshMetadata(for: items) }
                 Divider()
                 Button("Favori") { toggleFavorite(items) }
                 Button("Marquer lu/non-lu") { toggleRead(items) }
@@ -420,35 +277,30 @@ struct PaperTableView: View {
         for paper in allPapers where ids.contains(paper.id) {
             paper.isFavorite.toggle()
         }
-        syncCommandRouter()
     }
 
     private func toggleRead(_ ids: Set<UUID>) {
         for paper in allPapers where ids.contains(paper.id) {
             paper.isRead.toggle()
         }
-        syncCommandRouter()
     }
 
     private func toggleFlag(_ ids: Set<UUID>) {
         for paper in allPapers where ids.contains(paper.id) {
             paper.isFlagged.toggle()
         }
-        syncCommandRouter()
     }
 
     private func setLabel(_ ids: Set<UUID>, color: String?) {
         for paper in allPapers where ids.contains(paper.id) {
             paper.labelColor = color
         }
-        syncCommandRouter()
     }
 
     private func setShape(_ ids: Set<UUID>, shape: String) {
         for paper in allPapers where ids.contains(paper.id) {
             paper.labelShape = shape
         }
-        syncCommandRouter()
     }
 
     private func currentShape(for ids: Set<UUID>) -> String {
@@ -464,14 +316,12 @@ struct PaperTableView: View {
                 paper.collections.append(collection)
             }
         }
-        syncCommandRouter()
     }
 
     private func removeFromCollection(_ ids: Set<UUID>, collection: PaperCollection) {
         for paper in allPapers where ids.contains(paper.id) {
             paper.collections.removeAll { $0.id == collection.id }
         }
-        syncCommandRouter()
     }
 
     private func collectionsForPapers(_ ids: Set<UUID>) -> [PaperCollection] {
@@ -494,7 +344,6 @@ struct PaperTableView: View {
             PDFFileManager.deletePDF(fileName: paper.fileName)
             modelContext.delete(paper)
         }
-        syncCommandRouter()
     }
 
     // MARK: - Import
@@ -535,17 +384,6 @@ struct PaperTableView: View {
             paper.year = metadata.year
             paper.doi = metadata.doi
             paper.journal = metadata.journal
-            paper.entryType = metadata.entryType
-            paper.url = metadata.url
-            paper.volume = metadata.volume
-            paper.issue = metadata.issue
-            paper.pages = metadata.pages
-            paper.publisher = metadata.publisher
-            paper.booktitle = metadata.booktitle
-            paper.citeKey = CitationKeyService.uniqueKey(
-                for: paper,
-                existingKeys: Set(allPapers.compactMap { normalizedKey($0.citeKey) })
-            )
             if case .collection(let collectionID) = sidebarSelection {
                 let descriptor = FetchDescriptor<PaperCollection>(
                     predicate: #Predicate { $0.persistentModelID == collectionID }
@@ -560,207 +398,14 @@ struct PaperTableView: View {
             if let doi = metadata.doi {
                 MetadataExtractor.enrichWithCrossRef(doi: doi) { crossRef in
                     guard let crossRef else { return }
-                    apply(metadata: crossRef, to: paper)
-                    syncCommandRouter()
+                    if let title = crossRef.title { paper.title = title }
+                    if let authors = crossRef.authors { paper.authors = authors }
+                    if let year = crossRef.year { paper.year = year }
+                    if let journal = crossRef.journal { paper.journal = journal }
                 }
             }
-            syncCommandRouter()
         } catch {
             print("Failed to import PDF: \(error)")
         }
-    }
-
-    private func copyCiteKeys(for ids: Set<UUID>) {
-        let records = BibliographyExportService.records(for: papers(for: ids), allPapers: allPapers)
-        let citeKeys = records.map(\.citeKey)
-        guard !citeKeys.isEmpty else { return }
-        ClipboardCitationService.copy(citeKeys.joined(separator: ","))
-        syncCommandRouter()
-    }
-
-    private func copyBibTeX(for ids: Set<UUID>) {
-        let papers = papers(for: ids)
-        guard !papers.isEmpty else { return }
-        ClipboardCitationService.copy(BibliographyExportService.bibTeX(for: papers, allPapers: allPapers))
-        syncCommandRouter()
-    }
-
-    private func exportBibTeX(for ids: Set<UUID>) {
-        let papers = papers(for: ids)
-        guard !papers.isEmpty else { return }
-        let suggestedFileName = papers.count == 1
-            ? "\(BibliographyExportService.records(for: papers, allPapers: allPapers).first?.citeKey ?? "references").bib"
-            : "references.bib"
-        _ = BibliographyExportService.exportBibTeX(
-            papers: papers,
-            allPapers: allPapers,
-            suggestedFileName: suggestedFileName
-        )
-        syncCommandRouter()
-    }
-
-    private func appendToProjectBibliography(for ids: Set<UUID>) {
-        guard let projectRoot else { return }
-        let papers = papers(for: ids)
-        guard !papers.isEmpty else { return }
-        _ = BibliographyExportService.appendToProjectBibliography(
-            papers: papers,
-            allPapers: allPapers,
-            projectRoot: projectRoot
-        )
-        syncCommandRouter()
-    }
-
-    private func refreshMetadata(for ids: Set<UUID>) {
-        for paper in papers(for: ids) {
-            guard let doi = paper.doi, !doi.isEmpty else { continue }
-            MetadataExtractor.enrichWithCrossRef(doi: doi) { metadata in
-                guard let metadata else { return }
-                apply(metadata: metadata, to: paper)
-                syncCommandRouter()
-            }
-        }
-    }
-
-    private func papers(for ids: Set<UUID>) -> [Paper] {
-        allPapers.filter { ids.contains($0.id) }
-    }
-
-    private func apply(metadata: PaperMetadata, to paper: Paper) {
-        if let title = metadata.title { paper.title = title }
-        if let authors = metadata.authors { paper.authors = authors }
-        if let year = metadata.year { paper.year = year }
-        if let journal = metadata.journal { paper.journal = journal }
-        if let entryType = metadata.entryType { paper.entryType = entryType }
-        if let url = metadata.url { paper.url = url }
-        if let volume = metadata.volume { paper.volume = volume }
-        if let issue = metadata.issue { paper.issue = issue }
-        if let pages = metadata.pages { paper.pages = pages }
-        if let publisher = metadata.publisher { paper.publisher = publisher }
-        if let booktitle = metadata.booktitle { paper.booktitle = booktitle }
-        if normalizedKey(paper.citeKey) == nil {
-            paper.citeKey = CitationKeyService.uniqueKey(
-                for: paper,
-                existingKeys: Set(
-                    allPapers
-                        .filter { $0.id != paper.id }
-                        .compactMap { normalizedKey($0.citeKey) }
-                )
-            )
-        }
-    }
-
-    private func normalizedKey(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed.lowercased()
-    }
-
-    private func syncCommandRouter() {
-        guard isActive else {
-            commandRouter.clearActions()
-            return
-        }
-
-        guard !selectedPapers.isEmpty else {
-            commandRouter.setLibraryActions(
-                copyCiteKey: nil,
-                copyBibTeX: nil,
-                exportBibTeX: nil,
-                appendToBibliography: nil
-            )
-            return
-        }
-
-        let selectedIDs = selection
-        commandRouter.setLibraryActions(
-            copyCiteKey: { copyCiteKeys(for: selectedIDs) },
-            copyBibTeX: { copyBibTeX(for: selectedIDs) },
-            exportBibTeX: { exportBibTeX(for: selectedIDs) },
-            appendToBibliography: projectRoot == nil ? nil : { appendToProjectBibliography(for: selectedIDs) }
-        )
-    }
-}
-
-private enum LibrarySortOption: CaseIterable {
-    case dateAddedDescending
-    case dateAddedAscending
-    case yearDescending
-    case titleAscending
-    case authorAscending
-    case ratingDescending
-
-    var title: String {
-        switch self {
-        case .dateAddedDescending:
-            return "Ajout récent"
-        case .dateAddedAscending:
-            return "Ajout ancien"
-        case .yearDescending:
-            return "Année décroissante"
-        case .titleAscending:
-            return "Titre"
-        case .authorAscending:
-            return "Auteur"
-        case .ratingDescending:
-            return "Note"
-        }
-    }
-
-    var shortTitle: String {
-        switch self {
-        case .dateAddedDescending:
-            return "Récent"
-        case .dateAddedAscending:
-            return "Ancien"
-        case .yearDescending:
-            return "Année"
-        case .titleAscending:
-            return "Titre"
-        case .authorAscending:
-            return "Auteur"
-        case .ratingDescending:
-            return "Note"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .dateAddedDescending:
-            return "clock.arrow.circlepath"
-        case .dateAddedAscending:
-            return "clock"
-        case .yearDescending:
-            return "calendar"
-        case .titleAscending:
-            return "textformat.abc"
-        case .authorAscending:
-            return "person.text.rectangle"
-        case .ratingDescending:
-            return "star.leadinghalf.filled"
-        }
-    }
-
-    func areInIncreasingOrder(_ lhs: Paper, _ rhs: Paper) -> Bool {
-        switch self {
-        case .dateAddedDescending:
-            if lhs.dateAdded != rhs.dateAdded { return lhs.dateAdded > rhs.dateAdded }
-        case .dateAddedAscending:
-            if lhs.dateAdded != rhs.dateAdded { return lhs.dateAdded < rhs.dateAdded }
-        case .yearDescending:
-            let leftYear = lhs.year ?? Int.min
-            let rightYear = rhs.year ?? Int.min
-            if leftYear != rightYear { return leftYear > rightYear }
-        case .titleAscending:
-            let comparison = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
-            if comparison != .orderedSame { return comparison == .orderedAscending }
-        case .authorAscending:
-            let comparison = lhs.authorsShort.localizedCaseInsensitiveCompare(rhs.authorsShort)
-            if comparison != .orderedSame { return comparison == .orderedAscending }
-        case .ratingDescending:
-            if lhs.rating != rhs.rating { return lhs.rating > rhs.rating }
-        }
-
-        return lhs.dateAdded > rhs.dateAdded
     }
 }

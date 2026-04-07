@@ -128,7 +128,7 @@ struct ReferencePDFToolCluster: View {
     @ObservedObject var state: ReferencePDFUIState
 
     var body: some View {
-        AppChromeToolbarCluster(zone: .primary, title: title) {
+        AppChromeToolbarCluster(zone: .primary, title: title, collapsible: true) {
             HStack(spacing: 6) {
                 ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
                     ReferencePDFToolbarIconButton(
@@ -165,7 +165,7 @@ struct ReferencePDFActionsCluster: View {
     let onToggleAnnotations: () -> Void
 
     var body: some View {
-        AppChromeToolbarCluster(zone: .primary, title: title) {
+        AppChromeToolbarCluster(zone: .primary, title: title, collapsible: true) {
             HStack(spacing: 6) {
                 Menu {
                     ForEach(AnnotationColor.all, id: \.name) { item in

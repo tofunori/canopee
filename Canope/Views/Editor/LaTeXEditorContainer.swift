@@ -192,24 +192,18 @@ struct LaTeXEditorContainer: View {
         }
     }
 
+    /// Sentinel URL used when no file is open — triggers the "no file" placeholder in UnifiedEditorView.
+    private static let noFileURL = URL(string: "canope://no-file")!
+
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if openPaths.isEmpty {
-                LaTeXLandingView(
-                    onOpenTeX: onOpenTeX,
-                    onOpenFolder: { openFolderFromLanding() },
-                    workspaceRoot: resolvedWorkspaceRoot,
-                    allPapers: allPapers,
-                    referencePaperIDs: workspaceState.referencePaperIDs,
-                    selectedReferencePaperID: $workspaceState.selectedReferencePaperID,
-                    referencePDFs: workspaceState.referencePDFs,
-                    onCloseReference: closeReference
-                )
-            }
-
-            if let activePath, !activePath.isEmpty {
-                editorView(for: URL(fileURLWithPath: activePath))
-            }
+            let activeURL: URL = {
+                if let activePath, !activePath.isEmpty {
+                    return URL(fileURLWithPath: activePath)
+                }
+                return Self.noFileURL
+            }()
+            editorView(for: activeURL)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
@@ -285,9 +279,7 @@ struct LaTeXEditorContainer: View {
     private func syncCodeDocumentStates() {
         for path in openPaths {
             let url = URL(fileURLWithPath: path)
-            if EditorDocumentMode(fileURL: url).isRunnableCode {
-                codeDocumentStateStore.ensureState(for: url)
-            }
+            codeDocumentStateStore.ensureState(for: url)
         }
         codeDocumentStateStore.removeMissingStates(keepingPaths: openPaths)
     }
