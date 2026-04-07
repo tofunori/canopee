@@ -2086,10 +2086,12 @@ struct UnifiedEditorView: View {
 
     private func configureDocumentLayoutIfNeeded() {
         guard documentMode == .markdown else { return }
-        if showPDFPreview {
+        // Don't force editorOnly when reference PDFs are open
+        let hasReferences = !workspaceState.referencePaperIDs.isEmpty
+        if showPDFPreview && !hasReferences {
             showPDFPreview = false
         }
-        if splitLayout != .editorOnly {
+        if splitLayout != .editorOnly && !hasReferences {
             workspaceState.splitLayout = LaTeXEditorSplitLayout.editorOnly.rawValue
         }
     }

@@ -6,8 +6,6 @@ import SwiftData
 struct LibraryView: View {
     @Binding var paperToOpen: UUID?
     @Binding var isImportingPDF: Bool
-    let isActive: Bool
-    let projectRoot: URL?
     @State private var sidebarSelection: SidebarSelection? = .allPapers
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showInspector = false
@@ -27,10 +25,7 @@ struct LibraryView: View {
             PaperTableView(
                 sidebarSelection: sidebarSelection ?? .allPapers,
                 inspectedPaperID: $inspectedPaperID,
-                showInspector: $showInspector,
                 isImporting: $isImportingPDF,
-                isActive: isActive,
-                projectRoot: projectRoot,
                 onOpenPaper: { paper in
                     paperToOpen = paper.id
                 }
@@ -38,12 +33,7 @@ struct LibraryView: View {
         }
         .inspector(isPresented: $showInspector) {
             if let paper = inspectedPaper {
-                PaperInfoPanel(
-                    paper: paper,
-                    allPapers: allPapers,
-                    isActive: isActive,
-                    projectRoot: projectRoot
-                )
+                PaperInfoPanel(paper: paper)
             } else {
                 ContentUnavailableView(
                     "Aucun article sélectionné",
