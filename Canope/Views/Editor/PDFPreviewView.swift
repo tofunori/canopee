@@ -108,6 +108,10 @@ struct PDFPreviewView: NSViewRepresentable {
         context.coordinator.syncSearchQuery(in: pdfView, force: false)
     }
 
+    static func dismantleNSView(_ container: NSView, coordinator: Coordinator) {
+        coordinator.cleanup()
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(searchState: searchState) }
 
     @MainActor
@@ -195,6 +199,19 @@ struct PDFPreviewView: NSViewRepresentable {
 
         func resetSearchQueryCache() {
             lastSearchQuery = ""
+        }
+
+        func cleanup() {
+            if let observedSelectionPDFView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: Notification.Name.PDFViewSelectionChanged,
+                    object: observedSelectionPDFView
+                )
+            }
+            observedSelectionPDFView = nil
+            pdfView = nil
+            searchState?.configureActions(next: nil, previous: nil, clear: nil)
         }
 
         @objc func handleClick(_ gesture: NSClickGestureRecognizer) {

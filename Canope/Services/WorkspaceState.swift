@@ -153,12 +153,12 @@ struct MainWindowWorkspaceState: Codable, Equatable {
 
 struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var showSidebar: Bool
-    var selectedSidebarSection: String
+    var selectedSidebarSection: LaTeXEditorSidebarSection
     var sidebarWidth: Double
     var showEditorPane: Bool
     var showPDFPreview: Bool
     var showErrors: Bool
-    var splitLayout: String
+    var splitLayout: LaTeXEditorSplitLayout
     var panelArrangement: PanelArrangement
     var threePaneLeadingWidth: Double?
     var threePaneTrailingWidth: Double?
@@ -167,7 +167,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var markdownEditorMode: MarkdownEditorDisplayMode
     var referencePaperIDs: [UUID]
     var selectedReferencePaperID: UUID?
-    var layoutBeforeReference: String?
+    var layoutBeforeReference: LaTeXEditorSplitLayout?
     var workspaceRootPath: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -192,12 +192,12 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
 
     init(
         showSidebar: Bool,
-        selectedSidebarSection: String,
+        selectedSidebarSection: LaTeXEditorSidebarSection,
         sidebarWidth: Double,
         showEditorPane: Bool,
         showPDFPreview: Bool,
         showErrors: Bool,
-        splitLayout: String,
+        splitLayout: LaTeXEditorSplitLayout,
         panelArrangement: PanelArrangement,
         threePaneLeadingWidth: Double?,
         threePaneTrailingWidth: Double?,
@@ -206,7 +206,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         markdownEditorMode: MarkdownEditorDisplayMode,
         referencePaperIDs: [UUID],
         selectedReferencePaperID: UUID?,
-        layoutBeforeReference: String?,
+        layoutBeforeReference: LaTeXEditorSplitLayout?,
         workspaceRootPath: String? = nil
     ) {
         self.showSidebar = showSidebar
@@ -231,12 +231,14 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         showSidebar = try container.decode(Bool.self, forKey: .showSidebar)
-        selectedSidebarSection = try container.decode(String.self, forKey: .selectedSidebarSection)
+        selectedSidebarSection = try container.decodeIfPresent(LaTeXEditorSidebarSection.self, forKey: .selectedSidebarSection)
+            ?? .files
         sidebarWidth = try container.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 220
         showEditorPane = try container.decodeIfPresent(Bool.self, forKey: .showEditorPane) ?? true
         showPDFPreview = try container.decode(Bool.self, forKey: .showPDFPreview)
         showErrors = try container.decode(Bool.self, forKey: .showErrors)
-        splitLayout = try container.decode(String.self, forKey: .splitLayout)
+        splitLayout = try container.decodeIfPresent(LaTeXEditorSplitLayout.self, forKey: .splitLayout)
+            ?? .editorOnly
         panelArrangement = try container.decodeIfPresent(PanelArrangement.self, forKey: .panelArrangement) ?? .terminalEditorContent
         threePaneLeadingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneLeadingWidth)
         threePaneTrailingWidth = try container.decodeIfPresent(Double.self, forKey: .threePaneTrailingWidth)
@@ -245,7 +247,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         markdownEditorMode = try container.decodeIfPresent(MarkdownEditorDisplayMode.self, forKey: .markdownEditorMode) ?? .livePreview
         referencePaperIDs = try container.decode([UUID].self, forKey: .referencePaperIDs)
         selectedReferencePaperID = try container.decodeIfPresent(UUID.self, forKey: .selectedReferencePaperID)
-        layoutBeforeReference = try container.decodeIfPresent(String.self, forKey: .layoutBeforeReference)
+        layoutBeforeReference = try container.decodeIfPresent(LaTeXEditorSplitLayout.self, forKey: .layoutBeforeReference)
         workspaceRootPath = try container.decodeIfPresent(String.self, forKey: .workspaceRootPath)
     }
 

@@ -29,12 +29,15 @@
 		21F48FB74A057ABF3322903A /* LaTeXAnnotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DB6386D580EA00D1FCBD94 /* LaTeXAnnotation.swift */; };
 		24F2D588DE8FEC5A8627F220 /* PaperListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99A2DC0425870E2AB2A007BD /* PaperListView.swift */; };
 		279F6A45E8847EC75E797096 /* LaTeXUnicode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E1AB66B0A3B251CFA072C38 /* LaTeXUnicode.swift */; };
+		2B1F7F187BE645AE4D93C400 /* UnifiedEditorAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = D85697D00C8144CC24AF7621 /* UnifiedEditorAnnotations.swift */; };
 		2CC9CDCA03E977B2FAB69601 /* AnnotationToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1906D7A3427DFFCE569C97C8 /* AnnotationToolbar.swift */; };
+		2FAB80B0254720625815F0CD /* UnifiedEditorExecutionActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED0AD2020FB30E831985E99C /* UnifiedEditorExecutionActions.swift */; };
 		3AAF798637E4A87DB4061B44 /* FileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C6E1C98265B6FD8F69A4D6 /* FileBrowserView.swift */; };
 		3B3A24AE001C83466A0A4F5E /* diff-match-patch in Frameworks */ = {isa = PBXBuildFile; productRef = A22AFD7EEA6F3B484C6AE288 /* diff-match-patch */; };
 		3C6F9350D0458B3FC6F28B68 /* LaTeXAnnotationNoteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49047073DF53BF3E31133AC2 /* LaTeXAnnotationNoteSheet.swift */; };
 		3C7F8F4C59A8487A06693974 /* ReferencePDFComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 453D812A98854A78635A8BA6 /* ReferencePDFComponents.swift */; };
 		42AD09DF307CDFE216658713 /* RichMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 221ACF8C5634C933DA0ACD86 /* RichMarkdownView.swift */; };
+		42CAC4A87F086C53AE16C27E /* EditorDocumentState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B92D6B1F6294DD6EDD6414C0 /* EditorDocumentState.swift */; };
 		447727A09D887EC79884B52C /* CitationKeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07E3E32FED9791404F430AF7 /* CitationKeyService.swift */; };
 		46604D86F75C2FA8E8CFF70B /* NavigationTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 046014EEA7227AD6E73526F5 /* NavigationTypes.swift */; };
 		47901DCCA17ED3B6787099A7 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 650A9684E43A16704D17EB30 /* SidebarView.swift */; };
@@ -48,7 +51,9 @@
 		5A5C3C970350B253F747E628 /* ClaudeIDESelectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE7CABB496A722FDA2F4D18E /* ClaudeIDESelectionState.swift */; };
 		5C28940D18AE2A973DBCCA3C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CF070FD58C3AF62DE1BB997D /* Assets.xcassets */; };
 		5D74AA253AD2BD102297AA51 /* MarkdownFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E2E074A291DEEC80A5C0346 /* MarkdownFormatting.swift */; };
+		5F0DBB2FD861D5AD77E6ADC2 /* MarkdownEditorPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8747D09D0D2598E0346790 /* MarkdownEditorPreviewView.swift */; };
 		676D9C605B9AB759B62B8459 /* ShapeAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E472B4EC8C837F4FB0A749 /* ShapeAnnotations.swift */; };
+		6A172AE0DDA83B7FF8F8B41D /* UnifiedEditorFileOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 012CED37B0EE64872AC05361 /* UnifiedEditorFileOperations.swift */; };
 		6E893E157652FF2DAAB5111D /* BibliographyCommandRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82008C95D05B12E56942D883 /* BibliographyCommandRouter.swift */; };
 		6E95467401766C2F88815BCD /* LaTeXEditorReferenceActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6618946B15E66FCAD408426A /* LaTeXEditorReferenceActions.swift */; };
 		70C75ABE02D9FD0C5D3AF412 /* HeadlessChatProviding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DA16CAB845F1F4C1A1223DD /* HeadlessChatProviding.swift */; };
@@ -125,6 +130,7 @@
 
 /* Begin PBXFileReference section */
 		0124D8B26DAB0457F43AB2B1 /* MainWindowTitleBarBehavior.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowTitleBarBehavior.swift; sourceTree = "<group>"; };
+		012CED37B0EE64872AC05361 /* UnifiedEditorFileOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEditorFileOperations.swift; sourceTree = "<group>"; };
 		04324231EDCC41DC5B45C566 /* LaTeXEditorContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXEditorContainer.swift; sourceTree = "<group>"; };
 		046014EEA7227AD6E73526F5 /* NavigationTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationTypes.swift; sourceTree = "<group>"; };
 		072AB3955BD28ED994A248C2 /* canope_claude_ide_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = canope_claude_ide_bridge.py; sourceTree = "<group>"; };
@@ -190,6 +196,7 @@
 		8BB1A62E7F2F664FEE636B9C /* AnnotationSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationSidebarView.swift; sourceTree = "<group>"; };
 		8C7D3AE3E860936DB5CB1AE6 /* CompilationErrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompilationErrorView.swift; sourceTree = "<group>"; };
 		8CD3FA75BF9C25FA63230DB4 /* SyncTeXService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTeXService.swift; sourceTree = "<group>"; };
+		8E8747D09D0D2598E0346790 /* MarkdownEditorPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownEditorPreviewView.swift; sourceTree = "<group>"; };
 		8FA4593E482ECD462DF9FFA8 /* ChatSolidificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSolidificationTests.swift; sourceTree = "<group>"; };
 		9150735813E3A10D61D07D74 /* PaperTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperTableView.swift; sourceTree = "<group>"; };
 		9516CD22BCEDBB5CEC7272F9 /* ClaudeHeadlessProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHeadlessProvider.swift; sourceTree = "<group>"; };
@@ -208,6 +215,7 @@
 		B4E7451D1F83D2C977E175D1 /* AIHeadlessProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIHeadlessProvider.swift; sourceTree = "<group>"; };
 		B57071B4DCB48AFE3F0C4E19 /* LaTeXEditorAnnotationExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXEditorAnnotationExport.swift; sourceTree = "<group>"; };
 		B6863275D849EA554D73845B /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
+		B92D6B1F6294DD6EDD6414C0 /* EditorDocumentState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentState.swift; sourceTree = "<group>"; };
 		BF2088594C9985A874B328F3 /* PDFReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFReaderView.swift; sourceTree = "<group>"; };
 		C2168A22984A0573806D7375 /* CodeOutputWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeOutputWorkspace.swift; sourceTree = "<group>"; };
 		C57612B1DBD072F8ECA3D83D /* WorkspaceSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSessionStore.swift; sourceTree = "<group>"; };
@@ -215,6 +223,7 @@
 		CAED9E2A18A12DF28633AD06 /* CursorTrackingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorTrackingView.swift; sourceTree = "<group>"; };
 		CE7CABB496A722FDA2F4D18E /* ClaudeIDESelectionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeIDESelectionState.swift; sourceTree = "<group>"; };
 		CF070FD58C3AF62DE1BB997D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D85697D00C8144CC24AF7621 /* UnifiedEditorAnnotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEditorAnnotations.swift; sourceTree = "<group>"; };
 		D8B83A592C289026BD042DF0 /* BibliographicRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographicRecord.swift; sourceTree = "<group>"; };
 		D8FD75E4A5D68AC9725D6DFD /* AnnotationCursorFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationCursorFactory.swift; sourceTree = "<group>"; };
 		D9374D4066FF6C281C46D277 /* TextNoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextNoteEditorView.swift; sourceTree = "<group>"; };
@@ -222,6 +231,7 @@
 		DBE937CC6E9F3F88708FD66B /* ChatMarkdownPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMarkdownPolicy.swift; sourceTree = "<group>"; };
 		DD29038B45F072F61CB07A2F /* ChatSpinner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSpinner.swift; sourceTree = "<group>"; };
 		E33D2548F1DC7AA906538177 /* MarkdownPreviewRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPreviewRenderer.swift; sourceTree = "<group>"; };
+		ED0AD2020FB30E831985E99C /* UnifiedEditorExecutionActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEditorExecutionActions.swift; sourceTree = "<group>"; };
 		F170D57B17CC00EA3EC557CD /* UnifiedEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEditorView.swift; sourceTree = "<group>"; };
 		F49AD7E417225E7720D493C5 /* PDFKitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFKitView.swift; sourceTree = "<group>"; };
 		F63CE44FF6158ED19809BED5 /* MetadataExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataExtractor.swift; sourceTree = "<group>"; };
@@ -435,6 +445,7 @@
 				C2168A22984A0573806D7375 /* CodeOutputWorkspace.swift */,
 				5B29836069A5EA8CAA41CDDE /* CodeTextEditor.swift */,
 				8C7D3AE3E860936DB5CB1AE6 /* CompilationErrorView.swift */,
+				B92D6B1F6294DD6EDD6414C0 /* EditorDocumentState.swift */,
 				32C6E1C98265B6FD8F69A4D6 /* FileBrowserView.swift */,
 				49047073DF53BF3E31133AC2 /* LaTeXAnnotationNoteSheet.swift */,
 				B57071B4DCB48AFE3F0C4E19 /* LaTeXEditorAnnotationExport.swift */,
@@ -447,9 +458,13 @@
 				60D85B0F6F272FE9FB671B5B /* LaTeXLandingView.swift */,
 				64494B3369625558447F0913 /* LaTeXTextEditor.swift */,
 				13A9A2F1AF101D865F019ED8 /* LaTeXToolbarComponents.swift */,
+				8E8747D09D0D2598E0346790 /* MarkdownEditorPreviewView.swift */,
 				28C43470BF6EC95273414A17 /* MarkdownLiveEditor.swift */,
 				38C3B2C3057BF4BF27EA2E49 /* PDFPreviewView.swift */,
 				453D812A98854A78635A8BA6 /* ReferencePDFComponents.swift */,
+				D85697D00C8144CC24AF7621 /* UnifiedEditorAnnotations.swift */,
+				ED0AD2020FB30E831985E99C /* UnifiedEditorExecutionActions.swift */,
+				012CED37B0EE64872AC05361 /* UnifiedEditorFileOperations.swift */,
 				F170D57B17CC00EA3EC557CD /* UnifiedEditorView.swift */,
 			);
 			path = Editor;
@@ -645,6 +660,7 @@
 				C93CB667735089A3825C9E48 /* CompilationErrorView.swift in Sources */,
 				0362F30C6A3AB582D90240D1 /* CursorTrackingView.swift in Sources */,
 				7C8E8AF16DD8ABF9EF0C6FAE /* DiffEngine.swift in Sources */,
+				42CAC4A87F086C53AE16C27E /* EditorDocumentState.swift in Sources */,
 				3AAF798637E4A87DB4061B44 /* FileBrowserView.swift in Sources */,
 				70C75ABE02D9FD0C5D3AF412 /* HeadlessChatProviding.swift in Sources */,
 				8FF2D8D280A74E5EA19E0F24 /* InteractivePDFView.swift in Sources */,
@@ -668,6 +684,7 @@
 				BAC7E6254D074088B2207B2B /* MainWindowTabController.swift in Sources */,
 				F14246A9D812FF0E8F672034 /* MainWindowTitleBarBehavior.swift in Sources */,
 				095E8A059F42ED68E68962F4 /* MarkdownBlockView.swift in Sources */,
+				5F0DBB2FD861D5AD77E6ADC2 /* MarkdownEditorPreviewView.swift in Sources */,
 				5D74AA253AD2BD102297AA51 /* MarkdownFormatting.swift in Sources */,
 				4924B513DC2546A11533638F /* MarkdownLiveEditor.swift in Sources */,
 				AC71B1B032FCC7FC91511099 /* MarkdownPreviewRenderer.swift in Sources */,
@@ -700,6 +717,9 @@
 				E677B769BAD8B1A4B17C0844 /* TabBarComponents.swift in Sources */,
 				068F8F649D14185E05258883 /* TextNoteEditorView.swift in Sources */,
 				BAA58AD3F47FBC5419FD4533 /* ThreePaneLayout.swift in Sources */,
+				2B1F7F187BE645AE4D93C400 /* UnifiedEditorAnnotations.swift in Sources */,
+				2FAB80B0254720625815F0CD /* UnifiedEditorExecutionActions.swift in Sources */,
+				6A172AE0DDA83B7FF8F8B41D /* UnifiedEditorFileOperations.swift in Sources */,
 				777E23C22D1D291C6EF3A714 /* UnifiedEditorView.swift in Sources */,
 				992B2AE06A1940F4E500F096 /* WorkspaceSessionStore.swift in Sources */,
 				1CF349C784559A1A75E1E643 /* WorkspaceState.swift in Sources */,

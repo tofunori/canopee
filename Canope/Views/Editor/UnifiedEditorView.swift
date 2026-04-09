@@ -34,6 +34,7 @@ struct UnifiedEditorView: View {
     @ObservedObject var terminalWorkspaceState: TerminalWorkspaceState
     /// When false, do not push `projectRoot` into the shared terminal/chat cwd (another pane owns it).
     var isEditorSectionActive: Bool = true
+    @ObservedObject var documentState: EditorDocumentUIState
     @ObservedObject var codeDocumentState: CodeDocumentUIState
     var onOpenPDF: ((URL) -> Void)?
     var onOpenInNewTab: ((URL) -> Void)?
@@ -47,31 +48,15 @@ struct UnifiedEditorView: View {
 
     // MARK: - State: Shared
 
-    @State var text = ""
-    @State var savedText = ""
-    @State var lastModified: Date?
     @State var pollTimer: Timer?
     @State var sidebarResizeStartWidth: CGFloat?
     @State var sidebarDragWidth: CGFloat?
-    @State private var toolbarStatus: ToolbarStatusState = .idle
-    @State private var toolbarStatusClearWorkItem: DispatchWorkItem?
-    @State private var fileCreationError: String?
+    @State var fileCreationError: String?
     @State var fitToWidthTrigger = false
 
     // MARK: - State: LaTeX / Markdown specific
 
-    @State var compiledPDF: PDFDocument?
-    @State var errors: [CompilationError] = []
-    @State private var compileOutput: String = ""
-    @State private var isCompiling = false
-    @State var syncTarget: SyncTeXForwardResult?
-    @State var inverseSyncResult: SyncTeXInverseResult?
-    @State private var latexAnnotations: [LaTeXAnnotation] = []
-    @State private var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] = []
-    @State private var selectedEditorRange: NSRange?
-    @State private var pendingAnnotation: LaTeXEditorPendingAnnotation?
     @State var annotationExportError: String?
-    @State var referenceContextWriteID = UUID()
     @StateObject var compiledPDFSearchState = PDFSearchUIState()
     @Namespace var pdfTabIndicatorNamespace
 
@@ -86,6 +71,95 @@ struct UnifiedEditorView: View {
     var documentMode: EditorDocumentMode { EditorDocumentMode(fileURL: fileURL) }
     var projectRoot: URL {
         workspaceState.treeViewRootURL(openPaths: openEditorPaths, selectedTab: mainWindowTab)
+    }
+
+    var text: String {
+        get { documentState.text }
+        nonmutating set { documentState.text = newValue }
+    }
+
+    var savedText: String {
+        get { documentState.savedText }
+        nonmutating set { documentState.savedText = newValue }
+    }
+
+    var lastModified: Date? {
+        get { documentState.lastModified }
+        nonmutating set { documentState.lastModified = newValue }
+    }
+
+    var toolbarStatus: ToolbarStatusState {
+        get { documentState.toolbarStatus }
+        nonmutating set { documentState.toolbarStatus = newValue }
+    }
+
+    var compiledPDF: PDFDocument? {
+        get { documentState.compiledPDF }
+        nonmutating set { documentState.compiledPDF = newValue }
+    }
+
+    var errors: [CompilationError] {
+        get { documentState.errors }
+        nonmutating set { documentState.errors = newValue }
+    }
+
+    var compileOutput: String {
+        get { documentState.compileOutput }
+        nonmutating set { documentState.compileOutput = newValue }
+    }
+
+    var isCompiling: Bool {
+        get { documentState.isCompiling }
+        nonmutating set { documentState.isCompiling = newValue }
+    }
+
+    var syncTarget: SyncTeXForwardResult? {
+        get { documentState.syncTarget }
+        nonmutating set { documentState.syncTarget = newValue }
+    }
+
+    var inverseSyncResult: SyncTeXInverseResult? {
+        get { documentState.inverseSyncResult }
+        nonmutating set { documentState.inverseSyncResult = newValue }
+    }
+
+    var latexAnnotations: [LaTeXAnnotation] {
+        get { documentState.latexAnnotations }
+        nonmutating set { documentState.latexAnnotations = newValue }
+    }
+
+    var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] {
+        get { documentState.resolvedLaTeXAnnotations }
+        nonmutating set { documentState.resolvedLaTeXAnnotations = newValue }
+    }
+
+    var selectedEditorRange: NSRange? {
+        get { documentState.selectedEditorRange }
+        nonmutating set { documentState.selectedEditorRange = newValue }
+    }
+
+    var pendingAnnotation: LaTeXEditorPendingAnnotation? {
+        get { documentState.pendingAnnotation }
+        nonmutating set { documentState.pendingAnnotation = newValue }
+    }
+
+    var referenceContextWriteID: UUID {
+        get { documentState.referenceContextWriteID }
+        nonmutating set { documentState.referenceContextWriteID = newValue }
+    }
+
+    var textBinding: Binding<String> {
+        Binding(
+            get: { documentState.text },
+            set: { documentState.text = $0 }
+        )
+    }
+
+    var pendingAnnotationBinding: Binding<LaTeXEditorPendingAnnotation?> {
+        Binding(
+            get: { documentState.pendingAnnotation },
+            set: { documentState.pendingAnnotation = $0 }
+        )
     }
 
     // MARK: - Computed: LaTeX themes
@@ -282,8 +356,8 @@ struct UnifiedEditorView: View {
     }
 
     var selectedSidebarSection: LaTeXEditorSidebarSection {
-        get { LaTeXEditorSidebarSection(rawValue: workspaceState.selectedSidebarSection) ?? .files }
-        nonmutating set { workspaceState.selectedSidebarSection = newValue.rawValue }
+        get { workspaceState.selectedSidebarSection }
+        nonmutating set { workspaceState.selectedSidebarSection = newValue }
     }
 
     var sidebarWidth: CGFloat {
@@ -317,9 +391,9 @@ struct UnifiedEditorView: View {
     }
 
     var splitLayout: LaTeXEditorSplitLayout {
-        get { LaTeXEditorSplitLayout(rawValue: workspaceState.splitLayout) ?? .editorOnly }
+        get { workspaceState.splitLayout }
         nonmutating set {
-            workspaceState.splitLayout = newValue.rawValue
+            workspaceState.splitLayout = newValue
             workspaceState.showPDFPreview = newValue != .editorOnly
         }
     }
@@ -387,8 +461,8 @@ struct UnifiedEditorView: View {
     }
 
     var layoutBeforeReference: LaTeXEditorSplitLayout? {
-        get { workspaceState.layoutBeforeReference.flatMap(LaTeXEditorSplitLayout.init(rawValue:)) }
-        nonmutating set { workspaceState.layoutBeforeReference = newValue?.rawValue }
+        get { workspaceState.layoutBeforeReference }
+        nonmutating set { workspaceState.layoutBeforeReference = newValue }
     }
 
     // MARK: - Code-specific per-document state
@@ -433,7 +507,7 @@ struct UnifiedEditorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(item: $pendingAnnotation) { pending in
+        .sheet(item: pendingAnnotationBinding) { pending in
             LaTeXAnnotationNoteSheet(
                 title: pending.existingAnnotationID == nil ? "Nouvelle annotation" : "Modifier l'annotation",
                 selectedText: pending.draft.selectedText,
@@ -455,14 +529,7 @@ struct UnifiedEditorView: View {
         }
         .onAppear {
             if !AppRuntime.isRunningTests { ClaudeIDEBridgeService.shared.startIfNeeded() }
-            if hasNoFile { text = ""; savedText = "" }
-            else {
-                loadFile()
-                if !documentMode.isRunnableCode { loadExistingPDF() }
-                configureDocumentLayoutIfNeeded()
-                if isActive { startFileWatcher() }
-                if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
-            }
+            prepareEditorStateForDisplay()
             syncBibliographyCommandRouter()
         }
         .onDisappear {
@@ -472,7 +539,9 @@ struct UnifiedEditorView: View {
         }
         .onChange(of: isActive) {
             if isActive {
-                loadFile(); configureDocumentLayoutIfNeeded(); startFileWatcher()
+                refreshEditorStateForActivation()
+                configureDocumentLayoutIfNeeded()
+                startFileWatcher()
                 if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
                 syncBibliographyCommandRouter()
             } else {
@@ -484,18 +553,8 @@ struct UnifiedEditorView: View {
         .onChange(of: fileURL) {
             stopFileWatcher()
             toolbarStatus = .idle
-            if hasNoFile {
-                text = ""; savedText = ""
-            } else {
-                loadFile()
-                if !documentMode.isRunnableCode {
-                    loadExistingPDF()
-                    latexAnnotations = documentMode == .latex ? LaTeXAnnotationStore.load(for: fileURL) : []
-                    reconcileAnnotations()
-                }
-                configureDocumentLayoutIfNeeded()
-                if isActive { startFileWatcher() }
-            }
+            documentState.resetTransientNavigationState()
+            prepareEditorStateForDisplay()
             syncBibliographyCommandRouter()
         }
         .onChange(of: workspaceState.referencePaperIDs) { syncBibliographyCommandRouter() }
@@ -752,7 +811,7 @@ struct UnifiedEditorView: View {
                 )
             } else if documentMode.isRunnableCode {
                 CodeTextEditor(
-                    text: $text,
+                    text: textBinding,
                     language: syntaxLanguage,
                     fontSize: editorFontSize,
                     theme: codeTheme,
@@ -761,7 +820,7 @@ struct UnifiedEditorView: View {
             } else if documentMode.usesDedicatedInlineEditor && markdownEditorDisplayMode == .livePreview {
                 MarkdownLiveEditor(
                     fileURL: fileURL,
-                    text: $text,
+                    text: textBinding,
                     fontSize: editorFontSize,
                     theme: markdownTheme,
                     displayMode: markdownEditorDisplayMode,
@@ -770,7 +829,7 @@ struct UnifiedEditorView: View {
             } else {
                 LaTeXTextEditor(
                     fileURL: fileURL,
-                    text: $text,
+                    text: textBinding,
                     errorLines: errorLines,
                     fontSize: editorFontSize,
                     theme: Self.editorThemes[editorTheme],
@@ -942,7 +1001,7 @@ struct UnifiedEditorView: View {
         pdfPaneTabs
     }
 
-    private var selectedContentTab: LaTeXEditorPdfPaneTab {
+    var selectedContentTab: LaTeXEditorPdfPaneTab {
         selectedPdfTab
     }
 
@@ -1565,25 +1624,6 @@ struct UnifiedEditorView: View {
         }
     }
 
-    func setToolbarStatus(_ status: ToolbarStatusState, autoClearAfter delay: TimeInterval? = nil) {
-        toolbarStatusClearWorkItem?.cancel()
-        toolbarStatusClearWorkItem = nil
-        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-            toolbarStatus = status
-        }
-
-        guard let delay, status != .idle else { return }
-
-        let workItem = DispatchWorkItem {
-            AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                toolbarStatus = .idle
-            }
-            toolbarStatusClearWorkItem = nil
-        }
-        toolbarStatusClearWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-    }
-
     func toggleSidebar(section: LaTeXEditorSidebarSection? = nil) {
         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
             if let section {
@@ -1616,986 +1656,6 @@ struct UnifiedEditorView: View {
         toggleSidebar(section: .annotations)
     }
 
-    // MARK: - File Operations
-
-    func loadFile(useAsBaseline: Bool = true) {
-        guard !hasNoFile, let content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
-        text = content
-        if useAsBaseline {
-            savedText = content
-        }
-        if !documentMode.isRunnableCode {
-            latexAnnotations = documentMode == .latex ? LaTeXAnnotationStore.load(for: fileURL) : []
-            reconcileAnnotations()
-        }
-        lastModified = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
-    }
-
-    func saveFile() {
-        if documentMode.isRunnableCode {
-            guard writeCurrentTextToDisk() else { return }
-            setToolbarStatus(.saved, autoClearAfter: 1.4)
-        } else if documentMode == .latex {
-            compile()
-        } else if documentMode == .markdown {
-            guard writeCurrentTextToDisk() else { return }
-            setToolbarStatus(.saved, autoClearAfter: 1.4)
-        } else {
-            renderMarkdownPreview()
-        }
-    }
-
-    func createNewEditorFile(_ kind: NewEditorFileKind) {
-        let panel = NSSavePanel()
-        panel.canCreateDirectories = true
-        panel.directoryURL = projectRoot
-        panel.nameFieldStringValue = kind.defaultFileName
-        panel.allowedContentTypes = [kind.contentType]
-        panel.isExtensionHidden = false
-        panel.title = kind.title
-        panel.message = kind.message
-        panel.prompt = "Créer"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        do {
-            try kind.template.write(to: url, atomically: true, encoding: .utf8)
-            setToolbarStatus(.saved, autoClearAfter: 1.4)
-            onOpenInNewTab?(url)
-        } catch {
-            fileCreationError = error.localizedDescription
-        }
-    }
-
-    func openFile(_ url: URL) {
-        if EditorFileSupport.isEditorDocument(url) {
-            try? text.write(to: fileURL, atomically: true, encoding: .utf8)
-            if let content = try? String(contentsOf: url, encoding: .utf8) {
-                text = content
-                savedText = content
-                latexAnnotations = EditorDocumentMode(fileURL: url) == .latex ? LaTeXAnnotationStore.load(for: url) : []
-                reconcileAnnotations()
-            }
-        }
-    }
-
-    func openFolderPicker() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Choisir un dossier de travail"
-        panel.prompt = "Ouvrir"
-        panel.directoryURL = workspaceState.workspaceRoot ?? FileManager.default.homeDirectoryForCurrentUser
-        if let window = NSApp.keyWindow {
-            panel.beginSheetModal(for: window) { response in
-                guard response == .OK, let url = panel.url else { return }
-                self.workspaceState.workspaceRoot = url
-                if !self.showSidebar { self.showSidebar = true }
-            }
-        } else {
-            guard panel.runModal() == .OK, let url = panel.url else { return }
-            workspaceState.workspaceRoot = url
-            if !showSidebar { showSidebar = true }
-        }
-    }
-
-    @discardableResult
-    func writeCurrentTextToDisk() -> Bool {
-        do {
-            try text.write(to: fileURL, atomically: true, encoding: .utf8)
-            savedText = text
-            if !documentMode.isRunnableCode {
-                reconcileAnnotations()
-            }
-            lastModified = modificationDate()
-            return true
-        } catch {
-            if documentMode.isRunnableCode {
-                codeDocumentState.outputLog = error.localizedDescription
-                codeDocumentState.showLogs = true
-                setToolbarStatus(.errors(1))
-            } else {
-                errors = [
-                    CompilationError(
-                        line: 0,
-                        message: error.localizedDescription,
-                        file: fileURL.lastPathComponent,
-                        isWarning: false
-                    )
-                ]
-                compileOutput = error.localizedDescription
-                showErrors = true
-                setToolbarStatus(.errors(1))
-            }
-            return false
-        }
-    }
-
-    /// Reflow: join paragraph lines into single lines. Visual word wrap handles display.
-    /// Preserves blank lines and LaTeX structural commands.
-    func reflowParagraphs() {
-        let lines = text.components(separatedBy: "\n")
-        var result: [String] = []
-        var currentParagraph: [String] = []
-
-        func flushParagraph() {
-            if !currentParagraph.isEmpty {
-                result.append(currentParagraph.joined(separator: " "))
-                currentParagraph = []
-            }
-        }
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.isEmpty {
-                flushParagraph()
-                result.append("")
-                continue
-            }
-
-            let isStructural = trimmed.hasPrefix("\\begin") || trimmed.hasPrefix("\\end") ||
-                trimmed.hasPrefix("\\section") || trimmed.hasPrefix("\\subsection") ||
-                trimmed.hasPrefix("\\title") || trimmed.hasPrefix("\\author") ||
-                trimmed.hasPrefix("\\date") || trimmed.hasPrefix("\\documentclass") ||
-                trimmed.hasPrefix("\\usepackage") || trimmed.hasPrefix("\\maketitle") ||
-                trimmed.hasPrefix("\\item") || trimmed.hasPrefix("\\label") ||
-                trimmed.hasPrefix("\\input") || trimmed.hasPrefix("\\include") ||
-                trimmed.hasPrefix("\\newcommand") || trimmed.hasPrefix("\\renewcommand") ||
-                trimmed.hasPrefix("\\tableofcontents") || trimmed.hasPrefix("\\bibliography") ||
-                trimmed.hasPrefix("\\onehalfspacing") || trimmed.hasPrefix("\\setlength") ||
-                trimmed.hasPrefix("%")
-
-            if isStructural {
-                flushParagraph()
-                result.append(line)
-            } else {
-                currentParagraph.append(trimmed)
-            }
-        }
-        flushParagraph()
-
-        text = result.joined(separator: "\n")
-        savedText = text
-        try? text.write(to: fileURL, atomically: true, encoding: .utf8)
-        reconcileAnnotations()
-        lastModified = modificationDate()
-    }
-
-    func reconcileAnnotations() {
-        guard documentMode == .latex else {
-            resolvedLaTeXAnnotations = []
-            return
-        }
-        resolvedLaTeXAnnotations = LaTeXAnnotationStore.resolve(latexAnnotations, in: text)
-    }
-
-    func persistAnnotations() {
-        guard documentMode == .latex else { return }
-        if latexAnnotations.isEmpty {
-            try? LaTeXAnnotationStore.deleteSidecar(for: fileURL)
-        } else {
-            try? LaTeXAnnotationStore.save(latexAnnotations, for: fileURL)
-        }
-    }
-
-    // MARK: - LaTeX Annotation Actions
-
-    func beginAnnotationFromSelection() {
-        guard documentMode == .latex else { return }
-        guard let range = selectedEditorRange,
-              canAnnotateCurrentDocument,
-              let draft = LaTeXAnnotationStore.makeDraft(from: range, in: text) else {
-            return
-        }
-
-        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-            if !showSidebar {
-                showSidebar = true
-            }
-            selectedSidebarSection = .annotations
-        }
-        pendingAnnotation = LaTeXEditorPendingAnnotation(draft: draft, existingAnnotationID: nil)
-    }
-
-    func saveLaTeXEditorPendingAnnotation(note: String, sendToClaude: Bool = false) {
-        guard var draft = pendingAnnotation?.draft else { return }
-        draft.note = note
-
-        let annotationToSend: LaTeXAnnotation
-        if let existingAnnotationID = pendingAnnotation?.existingAnnotationID,
-           let index = latexAnnotations.firstIndex(where: { $0.id == existingAnnotationID }) {
-            latexAnnotations[index] = LaTeXAnnotationStore.update(latexAnnotations[index], note: note, in: text)
-            annotationToSend = latexAnnotations[index]
-        } else {
-            let annotation = LaTeXAnnotationStore.createAnnotation(from: draft)
-            latexAnnotations.append(annotation)
-            annotationToSend = annotation
-        }
-        persistAnnotations()
-        reconcileAnnotations()
-        pendingAnnotation = nil
-
-        if sendToClaude,
-           let resolved = LaTeXAnnotationStore.resolve([annotationToSend], in: text).first {
-            sendAnnotationToClaude(resolved)
-        }
-    }
-
-    func deleteAnnotation(_ annotationID: UUID) {
-        latexAnnotations.removeAll { $0.id == annotationID }
-        persistAnnotations()
-        reconcileAnnotations()
-    }
-
-    func sendAnnotationToClaude(_ resolved: ResolvedLaTeXAnnotation) {
-        let prompt = annotationPrompt(for: resolved)
-        sendPromptToClaudeTerminal(prompt, selectionContent: resolved.annotation.selectedText)
-    }
-
-    func sendAllAnnotationsToClaude() {
-        let prompt = batchAnnotationPrompt(for: sidebarAnnotations)
-        let selectionContent = sidebarAnnotations
-            .map(\.annotation.selectedText)
-            .joined(separator: "\n\n---\n\n")
-        sendPromptToClaudeTerminal(prompt, selectionContent: selectionContent)
-    }
-
-    func sendPromptToClaudeTerminal(_ prompt: String, selectionContent: String) {
-        CanopeContextFiles.writeAnnotationPrompt(prompt)
-        CanopeContextFiles.writeIDESelectionState(
-            ClaudeIDESelectionState.makeSnapshot(
-                selectedText: selectionContent,
-                fileURL: fileURL
-            )
-        )
-        CanopeContextFiles.clearLegacySelectionMirror()
-        showTerminal = true
-
-        let userInfo = ["prompt": prompt]
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NotificationCenter.default.post(name: .canopeSendPromptToTerminal, object: nil, userInfo: userInfo)
-        }
-    }
-
-    func addTerminalTab() {
-        NotificationCenter.default.post(name: .canopeTerminalAddTab, object: nil)
-    }
-
-    private func annotationPrompt(for resolved: ResolvedLaTeXAnnotation) -> String {
-        let annotation = resolved.annotation
-        let status = resolved.isDetached ? "detached" : "anchored"
-
-        return """
-        <canope_annotation>
-        file: \(fileURL.path)
-        status: \(status)
-
-        selected_text:
-        \(annotation.selectedText)
-
-        note:
-        \(annotation.note)
-        </canope_annotation>
-
-        Aide-moi avec cette annotation LaTeX. Réponds d'abord sur ce passage précis en tenant compte de la note.
-        """
-    }
-
-    func batchAnnotationPrompt(for annotations: [ResolvedLaTeXAnnotation]) -> String {
-        let blocks = annotations.enumerated().map { index, resolved in
-            let annotation = resolved.annotation
-            let status = resolved.isDetached ? "detached" : "anchored"
-
-            return """
-            <annotation index="\(index + 1)">
-            status: \(status)
-
-            selected_text:
-            \(annotation.selectedText)
-
-            note:
-            \(annotation.note)
-            </annotation>
-            """
-        }
-        .joined(separator: "\n\n")
-
-        return """
-        <canope_annotation_batch>
-        file: \(fileURL.path)
-        count: \(annotations.count)
-
-        \(blocks)
-        </canope_annotation_batch>
-
-        Aide-moi avec ce lot d'annotations LaTeX. Traite-les une par une, puis propose au besoin une synthèse courte des problèmes principaux du texte.
-        """
-    }
-
-    func beginEditingAnnotation(_ annotationID: UUID) {
-        guard let resolved = resolvedLaTeXAnnotations.first(where: { $0.annotation.id == annotationID }) else {
-            return
-        }
-
-        if let range = resolved.resolvedRange,
-           let draft = LaTeXAnnotationStore.makeDraft(from: range, in: text, note: resolved.annotation.note) {
-            pendingAnnotation = LaTeXEditorPendingAnnotation(draft: draft, existingAnnotationID: annotationID)
-            return
-        }
-
-        pendingAnnotation = LaTeXEditorPendingAnnotation(
-            draft: LaTeXAnnotationDraft(
-                selectedText: resolved.annotation.selectedText,
-                note: resolved.annotation.note,
-                utf16Range: resolved.annotation.utf16Range,
-                prefixContext: resolved.annotation.prefixContext,
-                suffixContext: resolved.annotation.suffixContext
-            ),
-            existingAnnotationID: annotationID
-        )
-    }
-
-    @ViewBuilder
-    func sidebarButton(for section: LaTeXEditorSidebarSection, systemImage: String) -> some View {
-        let isActive = showSidebar && selectedSidebarSection == section
-
-        Button {
-            toggleSidebar(section: section)
-        } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 30, height: 30)
-                .foregroundStyle(isActive ? Color.accentColor : .secondary)
-                .background(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .help(section == .files ? "Fichiers" : "Annotations")
-    }
-
-    func annotationRow(_ resolved: ResolvedLaTeXAnnotation) -> some View {
-        let annotation = resolved.annotation
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Circle()
-                    .fill(resolved.isDetached ? Color.orange : Color.yellow)
-                    .frame(width: 7, height: 7)
-                Text(resolved.isDetached ? "À recoller" : "Ancrée")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    deleteAnnotation(annotation.id)
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .help("Supprimer l'annotation")
-            }
-
-            Button {
-                beginEditingAnnotation(annotation.id)
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(annotation.selectedText.replacingOccurrences(of: "\n", with: " "))
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
-
-                    if !annotation.note.isEmpty {
-                        Text(annotation.note)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-
-            HStack(spacing: 12) {
-                Button("Modifier") {
-                    beginEditingAnnotation(annotation.id)
-                }
-                .buttonStyle(.plain)
-                .font(.caption)
-
-                Button("Envoyer") {
-                    sendAnnotationToClaude(resolved)
-                }
-                .buttonStyle(.plain)
-                .font(.caption)
-            }
-            .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-    }
-
-    // MARK: - Diff Actions
-
-    func acceptLaTeXEditorDiffGroup(_ group: LaTeXEditorDiffGroup) {
-        savedText = DiffEngine.replacingOldBlock(in: savedText, with: group.block)
-    }
-
-    func rejectLaTeXEditorDiffGroup(_ group: LaTeXEditorDiffGroup) {
-        text = DiffEngine.replacingNewBlock(in: text, with: group.block)
-        reconcileAnnotations()
-    }
-
-    func acceptAllDiffs() {
-        savedText = text
-        reconcileAnnotations()
-    }
-
-    func rejectAllDiffs() {
-        text = savedText
-        reconcileAnnotations()
-    }
-
-    // MARK: - PDF / Compilation
-
-    func loadExistingPDF() {
-        if FileManager.default.fileExists(atPath: previewPDFURL.path) {
-            compiledPDF = PDFDocument(url: previewPDFURL)
-        } else {
-            compiledPDF = nil
-        }
-    }
-
-    func reloadActiveFileState() {
-        stopFileWatcher()
-        pendingAnnotation = nil
-        selectedEditorRange = nil
-        syncTarget = nil
-        inverseSyncResult = nil
-        errors = []
-        compileOutput = ""
-        setToolbarStatus(.idle)
-        loadFile()
-        loadExistingPDF()
-        configureDocumentLayoutIfNeeded()
-        if isActive {
-            startFileWatcher()
-        }
-        refreshSplitGrabAreas()
-    }
-
-    /// For markdown files there is no compiled PDF, but we no longer force the
-    /// layout to editorOnly — the user may have reference PDFs open, and
-    /// aggressively switching layouts when changing tabs is disorienting.
-    private func configureDocumentLayoutIfNeeded() {
-        // No-op: let the user control the layout via toolbar buttons.
-    }
-
-    private func sendMarkdownCommand(_ command: MarkdownLiveEditor.Command) {
-        guard documentMode == .markdown else { return }
-        NotificationCenter.default.post(
-            name: .markdownEditorCommand,
-            object: nil,
-            userInfo: [
-                "filePath": fileURL.path,
-                "command": command.rawValue,
-            ]
-        )
-    }
-
-    func refreshSplitGrabAreas() {
-        for delay in [0.05, 0.2, 0.45] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                for window in NSApp.windows {
-                    guard let contentView = window.contentView else { continue }
-                    SplitViewHelper.thickenSplitViews(contentView)
-                }
-            }
-        }
-    }
-
-    func scrollEditorToLine(_ lineNumber: Int, selectingLine: Bool = true) {
-        let lines = text.components(separatedBy: "\n")
-        guard lineNumber > 0 && lineNumber <= lines.count else { return }
-        var charOffset = 0
-        for i in 0..<(lineNumber - 1) {
-            charOffset += (lines[i] as NSString).length + 1
-        }
-        let lineLength = (lines[lineNumber - 1] as NSString).length
-        let range = NSRange(location: charOffset, length: lineLength)
-        NotificationCenter.default.post(
-            name: .syncTeXScrollToLine,
-            object: nil,
-            userInfo: [
-                "range": range,
-                "select": selectingLine,
-            ]
-        )
-    }
-
-    func scrollEditorToInverseSyncResult(_ result: SyncTeXInverseResult) {
-        let lines = text.components(separatedBy: "\n")
-        guard result.line > 0 && result.line <= lines.count else { return }
-
-        let lineText = lines[result.line - 1]
-        let lineNSString = lineText as NSString
-        let column = resolvedInverseSyncColumn(in: lineText, result: result)
-        let clampedColumn = min(max(column, 0), lineNSString.length)
-        revealEditorLocationForLine(
-            result.line,
-            columnOffset: clampedColumn,
-            highlightLength: inverseSyncHighlightLength(in: lineText, result: result)
-        )
-    }
-
-    func resolvedInverseSyncColumn(in lineText: String, result: SyncTeXInverseResult) -> Int {
-        let lineNSString = lineText as NSString
-        if let column = result.column, column >= 0 {
-            return min(column, lineNSString.length)
-        }
-
-        guard let context = result.context?
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              context.isEmpty == false,
-              let offset = result.offset,
-              offset >= 0 else {
-            return 0
-        }
-
-        if let fullContextRange = lineText.range(of: context, options: [.caseInsensitive]) {
-            let utf16Range = NSRange(fullContextRange, in: lineText)
-            return min(utf16Range.location + offset, lineNSString.length)
-        }
-
-        let anchor = syncHintAnchor(in: context, offset: offset)
-        if anchor.isEmpty == false,
-           let anchorRange = lineText.range(of: anchor, options: [.caseInsensitive]) {
-            return NSRange(anchorRange, in: lineText).location
-        }
-
-        return 0
-    }
-
-    func syncHintAnchor(in context: String, offset: Int) -> String {
-        let nsContext = context as NSString
-        let length = nsContext.length
-        guard length > 0 else { return "" }
-        let clampedOffset = min(max(offset, 0), max(length - 1, 0))
-        let wordSeparators = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
-        var start = clampedOffset
-        var end = clampedOffset
-
-        while start > 0 {
-            let scalar = UnicodeScalar(nsContext.character(at: start - 1))
-            if let scalar, wordSeparators.contains(scalar) { break }
-            start -= 1
-        }
-        while end < length {
-            let scalar = UnicodeScalar(nsContext.character(at: end))
-            if let scalar, wordSeparators.contains(scalar) { break }
-            end += 1
-        }
-
-        return nsContext.substring(with: NSRange(location: start, length: max(0, end - start)))
-    }
-
-    func inverseSyncHighlightLength(in lineText: String, result: SyncTeXInverseResult) -> Int {
-        guard let context = result.context?
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              context.isEmpty == false,
-              let offset = result.offset,
-              offset >= 0 else {
-            return 1
-        }
-
-        let anchor = syncHintAnchor(in: context, offset: offset)
-        guard anchor.isEmpty == false,
-              let anchorRange = lineText.range(of: anchor, options: [.caseInsensitive]) else {
-            return 1
-        }
-
-        return max(1, NSRange(anchorRange, in: lineText).length)
-    }
-
-    func revealEditorLocation(for group: LaTeXEditorDiffGroup) {
-        revealEditorLocationForLine(
-            max(group.preferredRevealLine, 1),
-            columnOffset: group.preferredRevealColumn,
-            highlightLength: group.preferredRevealLength
-        )
-    }
-
-    func revealEditorLocationForLine(
-        _ lineNumber: Int,
-        columnOffset: Int = 0,
-        highlightLength: Int = 1
-    ) {
-        let lines = text.components(separatedBy: "\n")
-        guard lineNumber > 0 && lineNumber <= lines.count else { return }
-        var charOffset = 0
-        for i in 0..<(lineNumber - 1) {
-            charOffset += (lines[i] as NSString).length + 1
-        }
-        let lineNSString = lines[lineNumber - 1] as NSString
-        let clampedColumnOffset = min(max(columnOffset, 0), lineNSString.length)
-        NotificationCenter.default.post(
-            name: .editorRevealLocation,
-            object: nil,
-            userInfo: [
-                "location": charOffset + clampedColumnOffset,
-                "length": max(1, highlightLength),
-            ]
-        )
-    }
-
-    // MARK: - SyncTeX
-
-    func forwardSync(line: Int) {
-        guard documentMode == .latex else { return }
-        let pdfPath = previewPDFURL.path
-        guard FileManager.default.fileExists(atPath: pdfPath) else { return }
-        let texFile = fileURL.lastPathComponent
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            if let result = SyncTeXService.forwardSync(line: line, texFile: texFile, pdfPath: pdfPath) {
-                DispatchQueue.main.async {
-                    syncTarget = result
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        syncTarget = nil
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Compilation
-
-    func runPrimaryDocumentAction() {
-        switch documentMode {
-        case .latex:
-            compile()
-        case .markdown:
-            renderMarkdownPreview()
-        case .python, .r:
-            break
-        }
-    }
-
-    func compile() {
-        guard documentMode == .latex, !isCompiling else { return }
-        guard writeCurrentTextToDisk() else { return }
-        isCompiling = true
-        setToolbarStatus(documentMode.runningStatus)
-        Task {
-            let result = await LaTeXCompiler.compile(file: fileURL)
-            await MainActor.run {
-                errors = result.errors
-                compileOutput = result.log
-                showErrors = true
-                if let pdfURL = result.pdfURL {
-                    compiledPDF = PDFDocument(url: pdfURL)
-                }
-                isCompiling = false
-                if activeErrorCount > 0 {
-                    setToolbarStatus(.errors(activeErrorCount))
-                } else {
-                    setToolbarStatus(documentMode.successStatus, autoClearAfter: 1.6)
-                }
-            }
-        }
-    }
-
-    func renderMarkdownPreview() {
-        guard documentMode == .markdown, !isCompiling else { return }
-        guard writeCurrentTextToDisk() else { return }
-        isCompiling = true
-        setToolbarStatus(documentMode.runningStatus)
-        Task {
-            let result = await MarkdownPreviewRenderer.render(file: fileURL)
-            await MainActor.run {
-                errors = result.errors
-                compileOutput = result.log
-                showErrors = !result.success || !result.errors.isEmpty
-                if let pdfURL = result.pdfURL {
-                    compiledPDF = PDFDocument(url: pdfURL)
-                } else if !result.success {
-                    compiledPDF = nil
-                }
-                isCompiling = false
-                if activeErrorCount > 0 {
-                    setToolbarStatus(.errors(activeErrorCount))
-                } else {
-                    setToolbarStatus(documentMode.successStatus, autoClearAfter: 1.6)
-                }
-            }
-        }
-    }
-
-    // MARK: - Code Run
-
-    private func runScript() {
-        guard documentMode.isRunnableCode, !codeDocumentState.isRunning else { return }
-        guard writeCurrentTextToDisk() else { return }
-
-        let commandName = documentMode == .python ? "python3 \(fileURL.lastPathComponent)" : "Rscript \(fileURL.lastPathComponent)"
-        codeDocumentState.beginRun(commandDescription: commandName)
-        setToolbarStatus(documentMode.runningStatus)
-
-        Task {
-            let result = await CodeRunService.run(file: fileURL, mode: documentMode)
-            await MainActor.run {
-                codeDocumentState.applyRunResult(result)
-                if result.succeeded {
-                    setToolbarStatus(result.artifacts.isEmpty ? .completed : .previewReady, autoClearAfter: 1.6)
-                } else {
-                    setToolbarStatus(.errors(1))
-                }
-                persistDocumentWorkspaceState()
-            }
-        }
-    }
-
-    private func revealArtifactDirectoryInFinder() {
-        if FileManager.default.fileExists(atPath: outputDirectoryURL.path) {
-            NSWorkspace.shared.activateFileViewerSelecting([outputDirectoryURL])
-        } else {
-            NSWorkspace.shared.open(projectRoot)
-        }
-    }
-
-    private func refreshSelectedRun() {
-        guard let selectedRun = codeDocumentState.selectedRun else { return }
-        let refreshed = CodeRunService.refresh(selectedRun, sourceDocumentPath: fileURL.path)
-        codeDocumentState.applyRefreshedRun(refreshed)
-        setToolbarStatus(refreshed.artifacts.isEmpty ? .completed : .previewReady, autoClearAfter: 1.2)
-        persistDocumentWorkspaceState()
-    }
-
-    func persistDocumentWorkspaceState() {
-        onPersistWorkspaceState?()
-    }
-
-    // MARK: - Code Reference PDF Helpers
-
-    private var codeActiveReferencePDFID: UUID? {
-        if case .reference(let id) = selectedContentTab { return id }
-        return nil
-    }
-
-    private var codeActiveReferencePDFState: ReferencePDFUIState? {
-        guard let id = codeActiveReferencePDFID else { return nil }
-        return workspaceState.referencePDFUIStates[id]
-    }
-
-    private var codeActiveReferencePDFDocument: PDFDocument? {
-        guard let id = codeActiveReferencePDFID else { return nil }
-        return workspaceState.referencePDFs[id]
-    }
-
-    private var codeActiveReferenceAnnotationCount: Int {
-        guard let document = codeActiveReferencePDFDocument else { return 0 }
-        return (0..<document.pageCount).reduce(0) { count, pageIndex in
-            guard let page = document.page(at: pageIndex) else { return count }
-            return count + page.annotations.filter { $0.type != "Link" && $0.type != "Widget" }.count
-        }
-    }
-
-    private func codeDeleteSelectedReferenceAnnotation() {
-        guard let id = codeActiveReferencePDFID,
-              let annotation = codeActiveReferencePDFState?.selectedAnnotation,
-              let page = annotation.page else { return }
-        let state = workspaceState.referencePDFUIStates[id]
-        let wasSelected = state?.selectedAnnotation === annotation
-        state?.pushUndoAction { [weak state] in
-            page.addAnnotation(annotation)
-            if wasSelected { state?.selectedAnnotation = annotation }
-            state?.annotationRefreshToken = UUID()
-            codeReferencePDFDocumentDidChange(id: id)
-        }
-        if wasSelected { state?.selectedAnnotation = nil }
-        page.removeAnnotation(annotation)
-        state?.annotationRefreshToken = UUID()
-        codeReferencePDFDocumentDidChange(id: id)
-    }
-
-    private func codeDeleteAllReferenceAnnotations() {
-        guard let id = codeActiveReferencePDFID,
-              let document = codeActiveReferencePDFDocument else { return }
-        var removed: [(page: PDFPage, annotation: PDFAnnotation)] = []
-        for i in 0..<document.pageCount {
-            guard let page = document.page(at: i) else { continue }
-            for ann in page.annotations where ann.type != "Link" && ann.type != "Widget" {
-                removed.append((page, ann))
-                page.removeAnnotation(ann)
-            }
-        }
-        workspaceState.referencePDFUIStates[id]?.pushUndoAction {
-            for (page, ann) in removed { page.addAnnotation(ann) }
-            workspaceState.referencePDFUIStates[id]?.annotationRefreshToken = UUID()
-            codeReferencePDFDocumentDidChange(id: id)
-        }
-        codeActiveReferencePDFState?.selectedAnnotation = nil
-        workspaceState.referencePDFUIStates[id]?.annotationRefreshToken = UUID()
-        codeReferencePDFDocumentDidChange(id: id)
-    }
-
-    private func codeChangeSelectedReferenceAnnotationColor(_ color: NSColor) {
-        guard let id = codeActiveReferencePDFID,
-              let state = codeActiveReferencePDFState,
-              let annotation = state.selectedAnnotation else { return }
-        let prevCurrent = state.currentColor
-        let prevAnnotation = annotation.isTextBoxAnnotation ? annotation.textBoxFillColor : annotation.color
-        state.pushUndoAction { [weak state] in
-            guard let state else { return }
-            state.currentColor = prevCurrent
-            AnnotationService.applyColor(prevAnnotation, to: annotation)
-            state.selectedAnnotation = annotation
-            state.annotationRefreshToken = UUID()
-            codeReferencePDFDocumentDidChange(id: id)
-        }
-        state.currentColor = color
-        state.selectedAnnotation = annotation
-        AnnotationService.applyColor(color, to: annotation)
-        codeReferencePDFDocumentDidChange(id: id)
-    }
-
-    private func codeSaveCurrentReferencePDF() {
-        guard let id = codeActiveReferencePDFID else { return }
-        codeSaveReferencePDF(id: id)
-    }
-
-    private func codeRefreshCurrentReference() {
-        guard let id = codeActiveReferencePDFID else { return }
-        codeReloadReferencePDFDocument(id: id)
-    }
-
-    private var codeActiveReferenceCompanionExportFileName: String {
-        guard let id = codeActiveReferencePDFID,
-              let paper = paperFor(id) else { return "annotations.md" }
-        return PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL).lastPathComponent
-    }
-
-    private func codeExportActiveReferencePDFAnnotationsToCompanionMarkdown() {
-        guard let id = codeActiveReferencePDFID,
-              let document = workspaceState.referencePDFs[id],
-              let paper = paperFor(id) else { return }
-        let companionURL = PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL)
-        try? PDFAnnotationMarkdownExporter.export(
-            document: document,
-            source: .reference(pdfURL: paper.fileURL),
-            target: .companionFile(companionURL)
-        )
-    }
-
-    private func codeChooseActiveReferencePDFAnnotationsMarkdownDestination() {
-        guard let id = codeActiveReferencePDFID,
-              let document = workspaceState.referencePDFs[id],
-              let paper = paperFor(id) else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = PDFAnnotationMarkdownExporter.companionURL(for: paper.fileURL).lastPathComponent
-        panel.directoryURL = paper.fileURL.deletingLastPathComponent()
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? PDFAnnotationMarkdownExporter.export(
-            document: document,
-            source: .reference(pdfURL: paper.fileURL),
-            target: .companionFile(url)
-        )
-    }
-
-    private func codeReferencePDFDocumentDidChange(id: UUID) {
-        guard let state = workspaceState.referencePDFUIStates[id] else { return }
-        state.hasUnsavedChanges = true
-        state.annotationRefreshToken = UUID()
-        let delay: TimeInterval = (state.selectedAnnotation?.isTextBoxAnnotation == true || state.currentTool == .textBox) ? 0.9 : 0.25
-        state.pendingSaveWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak state] in
-            state?.pendingSaveWorkItem = nil
-            codeSaveReferencePDF(id: id)
-        }
-        state.pendingSaveWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-    }
-
-    private func codeSaveReferencePDF(id: UUID) {
-        guard let document = workspaceState.referencePDFs[id],
-              let paper = paperFor(id) else { return }
-        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
-        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem = nil
-        if AnnotationService.save(document: document, to: paper.fileURL) {
-            workspaceState.referencePDFUIStates[id]?.hasUnsavedChanges = false
-        }
-    }
-
-    private func codeReloadReferencePDFDocument(id: UUID) {
-        guard let paper = paperFor(id) else { return }
-        let state = workspaceState.referencePDFUIStates[id]
-        state?.selectedAnnotation = nil
-        state?.requestedRestorePageIndex = state?.lastKnownPageIndex
-        guard let data = try? Data(contentsOf: paper.fileURL),
-              let refreshed = PDFDocument(data: data) else {
-            if let loaded = PDFDocument(url: paper.fileURL) {
-                AnnotationService.normalizeDocumentAnnotations(in: loaded)
-                workspaceState.referencePDFs[id] = loaded
-            }
-            state?.annotationRefreshToken = UUID()
-            state?.pdfViewRefreshToken = UUID()
-            return
-        }
-        AnnotationService.normalizeDocumentAnnotations(in: refreshed)
-        workspaceState.referencePDFs[id] = refreshed
-        state?.annotationRefreshToken = UUID()
-        state?.pdfViewRefreshToken = UUID()
-    }
-
-    private func codeSaveReferenceAnnotationNote(for id: UUID) {
-        guard let state = workspaceState.referencePDFUIStates[id],
-              let annotation = state.selectedAnnotation else { return }
-        annotation.contents = state.editingNoteText
-        state.isEditingNote = false
-        state.annotationRefreshToken = UUID()
-        codeReferencePDFDocumentDidChange(id: id)
-    }
-
-    // MARK: - File Watching (polling-based for reliability with external editors)
-
-    func startFileWatcher() {
-        guard !hasNoFile, pollTimer == nil else { return }
-        lastModified = modificationDate()
-        let watchedURL = fileURL
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            let currentMod = Self.modificationDate(for: watchedURL)
-            Task { @MainActor in
-                guard isActive else { return }
-                if let currentMod, currentMod != lastModified {
-                    lastModified = currentMod
-                    loadFile(useAsBaseline: false)
-                }
-            }
-        }
-    }
-
-    func stopFileWatcher() {
-        pollTimer?.invalidate()
-        pollTimer = nil
-    }
-
-    func modificationDate() -> Date? {
-        Self.modificationDate(for: fileURL)
-    }
-
-    nonisolated static func modificationDate(for url: URL) -> Date? {
-        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
-    }
 }
 
 private struct MarkdownToolbarModeButton: View {

@@ -21,6 +21,7 @@ struct LaTeXEditorContainer: View {
     @State private var didRestoreWorkspaceState = AppRuntime.isRunningTests
     @Namespace private var editorTabIndicatorNamespace
     @StateObject private var codeDocumentStateStore = CodeDocumentStateStore()
+    @StateObject private var editorDocumentStateStore = EditorDocumentStateStore()
 
     /// The currently active editor path
     private var activePath: String? {
@@ -37,6 +38,7 @@ struct LaTeXEditorContainer: View {
 
     private func closeEditor(_ path: String) {
         codeDocumentStateStore.removeState(for: URL(fileURLWithPath: path))
+        editorDocumentStateStore.removeState(for: URL(fileURLWithPath: path))
         onCloseEditor(path)
         if activePath == path {
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
@@ -227,6 +229,7 @@ struct LaTeXEditorContainer: View {
     }
 
     private func editorView(for fileURL: URL) -> some View {
+        let editorDocumentState = editorDocumentStateStore.stateOrCreate(for: fileURL)
         let codeDocumentState = codeDocumentStateStore.stateOrCreate(for: fileURL)
         return UnifiedEditorView(
             fileURL: fileURL,
@@ -237,6 +240,7 @@ struct LaTeXEditorContainer: View {
             workspaceState: workspaceState,
             terminalWorkspaceState: terminalWorkspaceState,
             isEditorSectionActive: isEditorSectionActive,
+            documentState: editorDocumentState,
             codeDocumentState: codeDocumentState,
             onOpenPDF: onOpenPDF,
             onOpenInNewTab: onOpenTeX,
@@ -247,6 +251,17 @@ struct LaTeXEditorContainer: View {
                 persistWorkspaceState()
             }
         )
+        // Recreate the AppKit-backed editor host when the active file changes.
+        // Per-file state lives in the external stores, so this avoids stale NSTextView/PDFView reuse
+        // across .tex -> .md tab switches without losing document-local state.
+        .id(editorViewIdentity(for: fileURL))
+    }
+
+    private func editorViewIdentity(for fileURL: URL) -> String {
+        if fileURL.isFileURL {
+            return fileURL.standardizedFileURL.path
+        }
+        return fileURL.absoluteString
     }
 
     private func openFolderFromLanding() {
@@ -269,8 +284,10 @@ struct LaTeXEditorContainer: View {
     private func syncCodeDocumentStates() {
         for path in openPaths {
             let url = URL(fileURLWithPath: path)
+            editorDocumentStateStore.ensureState(for: url)
             codeDocumentStateStore.ensureState(for: url)
         }
+        editorDocumentStateStore.removeMissingStates(keepingPaths: openPaths)
         codeDocumentStateStore.removeMissingStates(keepingPaths: openPaths)
     }
 }

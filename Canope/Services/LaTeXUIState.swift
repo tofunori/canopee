@@ -119,12 +119,12 @@ final class ReferencePDFUIState: ObservableObject {
 final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var workspaceRoot: URL?
     @Published var showSidebar = false
-    @Published var selectedSidebarSection = "files"
+    @Published var selectedSidebarSection: LaTeXEditorSidebarSection = .files
     @Published var sidebarWidth: Double = 220
     @Published var showEditorPane = true
     @Published var showPDFPreview = false
     @Published var showErrors = false
-    @Published var splitLayout = "editorOnly"
+    @Published var splitLayout: LaTeXEditorSplitLayout = .editorOnly
     @Published var panelArrangement: PanelArrangement = .terminalEditorContent
     @Published var threePaneLeadingWidth: Double?
     @Published var threePaneTrailingWidth: Double?
@@ -133,7 +133,7 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var markdownEditorMode: MarkdownEditorDisplayMode = .livePreview
     @Published var referencePaperIDs: [UUID] = []
     @Published var selectedReferencePaperID: UUID?
-    @Published var layoutBeforeReference: String?
+    @Published var layoutBeforeReference: LaTeXEditorSplitLayout?
     @Published var referencePDFs: [UUID: PDFDocument] = [:]
     @Published var referencePDFUIStates: [UUID: ReferencePDFUIState] = [:]
 

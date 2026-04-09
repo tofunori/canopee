@@ -24,7 +24,7 @@ enum LaTeXEditorThreePaneRole {
     case pdf
 }
 
-enum LaTeXEditorSplitLayout: String {
+enum LaTeXEditorSplitLayout: String, Codable, CaseIterable {
     case horizontal
     case vertical
     case editorOnly
@@ -32,7 +32,7 @@ enum LaTeXEditorSplitLayout: String {
 
 // MARK: - LaTeX Editor Sidebar
 
-enum LaTeXEditorSidebarSection: String {
+enum LaTeXEditorSidebarSection: String, Codable, CaseIterable {
     case files
     case annotations
     case diff

@@ -156,10 +156,10 @@ struct MainWindow: View {
         }
 
         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-            if latexWorkspaceState.splitLayout == "editorOnly" {
-                latexWorkspaceState.layoutBeforeReference = "editorOnly"
+            if latexWorkspaceState.splitLayout == .editorOnly {
+                latexWorkspaceState.layoutBeforeReference = .editorOnly
             }
-            latexWorkspaceState.splitLayout = "horizontal"
+            latexWorkspaceState.splitLayout = .horizontal
             latexWorkspaceState.showPDFPreview = true
         }
     }

@@ -910,12 +910,12 @@ final class ServiceParsingTests: XCTestCase {
     func testLaTeXEditorWorkspaceStateRoundTripsMarkdownEditorMode() throws {
         let snapshot = LaTeXEditorWorkspaceState(
             showSidebar: true,
-            selectedSidebarSection: "files",
+            selectedSidebarSection: .files,
             sidebarWidth: 220,
             showEditorPane: true,
             showPDFPreview: false,
             showErrors: false,
-            splitLayout: "editorOnly",
+            splitLayout: .editorOnly,
             panelArrangement: .terminalEditorContent,
             threePaneLeadingWidth: nil,
             threePaneTrailingWidth: nil,
@@ -932,6 +932,61 @@ final class ServiceParsingTests: XCTestCase {
         let decoded = try JSONDecoder().decode(LaTeXEditorWorkspaceState.self, from: data)
 
         XCTAssertEqual(decoded.markdownEditorMode, .source)
+        XCTAssertEqual(decoded.selectedSidebarSection, .files)
+        XCTAssertEqual(decoded.splitLayout, .editorOnly)
+        XCTAssertEqual(decoded.workspaceRootPath, "/tmp")
+    }
+
+    func testLaTeXEditorWorkspaceStateDecodesLegacyStringBackedLayoutState() throws {
+        let data = Data(
+            #"""
+            {
+              "showSidebar": true,
+              "selectedSidebarSection": "annotations",
+              "sidebarWidth": 220,
+              "showEditorPane": true,
+              "showPDFPreview": true,
+              "showErrors": false,
+              "splitLayout": "horizontal",
+              "panelArrangement": "terminalEditorPDF",
+              "editorFontSize": 14,
+              "editorTheme": 1,
+              "markdownEditorMode": "livePreview",
+              "referencePaperIDs": [],
+              "layoutBeforeReference": "editorOnly",
+              "workspaceRootPath": "/tmp/project"
+            }
+            """#.utf8
+        )
+
+        let decoded = try JSONDecoder().decode(LaTeXEditorWorkspaceState.self, from: data)
+
+        XCTAssertEqual(decoded.selectedSidebarSection, .annotations)
+        XCTAssertEqual(decoded.splitLayout, .horizontal)
+        XCTAssertEqual(decoded.panelArrangement, .terminalEditorContent)
+        XCTAssertEqual(decoded.layoutBeforeReference, .editorOnly)
+        XCTAssertEqual(decoded.workspaceRootPath, "/tmp/project")
+    }
+
+    @MainActor
+    func testEditorDocumentStateStoreReusesStatePerPathAndDropsRemovedPaths() {
+        let store = EditorDocumentStateStore()
+        let firstURL = URL(fileURLWithPath: "/tmp/main.tex")
+        let secondURL = URL(fileURLWithPath: "/tmp/notes.md")
+
+        let firstState = store.stateOrCreate(for: firstURL)
+        firstState.text = "bonjour"
+
+        let reusedState = store.stateOrCreate(for: firstURL)
+        XCTAssertTrue(firstState === reusedState)
+        XCTAssertEqual(reusedState.text, "bonjour")
+
+        _ = store.stateOrCreate(for: secondURL)
+        store.removeMissingStates(keepingPaths: [firstURL.path])
+
+        let recreatedSecondState = store.stateOrCreate(for: secondURL)
+        XCTAssertFalse(recreatedSecondState === firstState)
+        XCTAssertEqual(recreatedSecondState.text, "")
     }
 
     func testClaudeResumeStripsInjectedIDEContextFromUserMessage() {
