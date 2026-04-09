@@ -4,19 +4,48 @@ import SwiftUI
 
 // MARK: - Codex app-server JSON-RPC (stdio JSONL)
 
+private enum CodexTraceLog {
+    private static let fileURL = URL(fileURLWithPath: "/tmp/canope_codex_trace.log")
+    private static let queue = DispatchQueue(label: "Canope.CodexTraceLog")
+
+    static func write(_ message: String) {
+        queue.async {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let line = "[\(formatter.string(from: Date()))] \(message)\n"
+            guard let data = line.data(using: .utf8) else { return }
+            if FileManager.default.fileExists(atPath: fileURL.path) == false {
+                FileManager.default.createFile(atPath: fileURL.path, contents: data)
+                return
+            }
+            guard let handle = try? FileHandle(forWritingTo: fileURL) else { return }
+            defer { try? handle.close() }
+            do {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            } catch {
+                return
+            }
+        }
+    }
+}
+
 /// Single-session JSON-RPC client for `codex app-server --listen stdio://`.
 private final class CodexAppServerRPCSession: @unchecked Sendable {
     private let lock = NSLock()
+    private let ioQueue = DispatchQueue(label: "CodexAppServerRPCSession.io")
     private var nextRequestID = 1
     /// Success payloads are JSON-encoded `result` (Sendable `Data`).
     private var pending: [Int: (Result<Data?, NSError>) -> Void] = [:]
     private var buffer = Data()
     private var process: Process?
     private var stdoutHandle: FileHandle?
+    private var stderrHandle: FileHandle?
     private var stdinHandle: FileHandle?
 
     /// Params are JSON-encoded dictionary (`Data`) for Swift 6 cross-isolation safety.
     var onNotification: (@Sendable (String, Data) -> Void)?
+    var onRequest: (@Sendable (Int, String, Data) -> Void)?
 
     func startProcess(arguments: [String], environment: [String: String]) throws {
         guard process == nil else { return }
@@ -29,28 +58,49 @@ private final class CodexAppServerRPCSession: @unchecked Sendable {
 
         let out = Pipe()
         let input = Pipe()
+        let err = Pipe()
         proc.standardOutput = out
         proc.standardInput = input
-        proc.standardError = Pipe()
+        proc.standardError = err
+
+        let pathValue = environment["PATH"] ?? ""
+        let shellValue = environment["SHELL"] ?? ""
+        let homeValue = environment["HOME"] ?? ""
+        CodexTraceLog.write("startProcess executable=\(arguments[0]) args=\(Array(arguments.dropFirst())) PATH=\(pathValue) SHELL=\(shellValue) HOME=\(homeValue)")
 
         try proc.run()
         process = proc
         stdoutHandle = out.fileHandleForReading
+        stderrHandle = err.fileHandleForReading
         stdinHandle = input.fileHandleForWriting
 
         stdoutHandle?.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
             guard let self else { return }
             if chunk.isEmpty { return }
-            self.appendAndDispatch(chunk)
+            self.ioQueue.async {
+                self.appendAndDispatch(chunk)
+            }
+        }
+
+        stderrHandle?.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty,
+                  let text = String(data: chunk, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty
+            else { return }
+            CodexTraceLog.write("stderr \(text)")
         }
     }
 
     func terminate() {
         stdoutHandle?.readabilityHandler = nil
+        stderrHandle?.readabilityHandler = nil
         if let proc = process, proc.isRunning { proc.terminate() }
         process = nil
         stdoutHandle = nil
+        stderrHandle = nil
         stdinHandle = nil
         lock.lock()
         let waiters = pending
@@ -75,9 +125,18 @@ private final class CodexAppServerRPCSession: @unchecked Sendable {
     }
 
     private func dispatchLine(_ line: String) {
+        CodexTraceLog.write("recv \(line)")
         guard let data = line.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
+
+        if let method = obj["method"] as? String,
+           let idNum = jsonInt(obj["id"]) {
+            let params = obj["params"] as? [String: Any] ?? [:]
+            let paramsData = (try? JSONSerialization.data(withJSONObject: params)) ?? Data("{}".utf8)
+            onRequest?(idNum, method, paramsData)
+            return
+        }
 
         if let idNum = jsonInt(obj["id"]) {
             lock.lock()
@@ -101,6 +160,22 @@ private final class CodexAppServerRPCSession: @unchecked Sendable {
         }
     }
 
+    private func writeJSONLine(_ payload: [String: Any]) throws {
+        try ioQueue.sync {
+            guard let payloadBytes = try? JSONSerialization.data(withJSONObject: payload),
+                  var line = String(data: payloadBytes, encoding: .utf8)
+            else {
+                throw NSError(domain: "CodexAppServer", code: 2, userInfo: [NSLocalizedDescriptionKey: "Encode failed"])
+            }
+            line.append("\n")
+            guard let stdin = stdinHandle else {
+                throw NSError(domain: "CodexAppServer", code: 3, userInfo: [NSLocalizedDescriptionKey: "No stdin"])
+            }
+            CodexTraceLog.write("send \(line.trimmingCharacters(in: .whitespacesAndNewlines))")
+            stdin.write(Data(line.utf8))
+        }
+    }
+
     func call(method: String, params: [String: Any], requestId: Int? = nil) async throws -> Any? {
         let id: Int = lock.withLock {
             if let requestId { return requestId }
@@ -109,15 +184,6 @@ private final class CodexAppServerRPCSession: @unchecked Sendable {
             return i
         }
         let payload: [String: Any] = ["method": method, "id": id, "params": params]
-        guard let payloadBytes = try? JSONSerialization.data(withJSONObject: payload),
-              var line = String(data: payloadBytes, encoding: .utf8)
-        else {
-            throw NSError(domain: "CodexAppServer", code: 2, userInfo: [NSLocalizedDescriptionKey: "Encode failed"])
-        }
-        line.append("\n")
-        guard let stdin = stdinHandle else {
-            throw NSError(domain: "CodexAppServer", code: 3, userInfo: [NSLocalizedDescriptionKey: "No stdin"])
-        }
 
         let resultData: Data? = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data?, Error>) in
             lock.lock()
@@ -130,18 +196,37 @@ private final class CodexAppServerRPCSession: @unchecked Sendable {
                 }
             }
             lock.unlock()
-            stdin.write(Data(line.utf8))
+            do {
+                try self.writeJSONLine(payload)
+            } catch {
+                self.lock.lock()
+                let waiter = self.pending.removeValue(forKey: id)
+                self.lock.unlock()
+                waiter?(.failure(error as NSError))
+            }
         }
         return try decodeJSONRPCResult(resultData)
     }
 
     func notify(method: String, params: [String: Any]) throws {
-        let payload: [String: Any] = ["method": method, "params": params]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              var line = String(data: data, encoding: .utf8)
-        else { return }
-        line.append("\n")
-        stdinHandle?.write(Data(line.utf8))
+        try writeJSONLine(["method": method, "params": params])
+    }
+
+    func respond(id: Int, result: Any?) throws {
+        try writeJSONLine([
+            "id": id,
+            "result": result ?? NSNull(),
+        ])
+    }
+
+    func respondError(id: Int, code: Int = -32000, message: String) throws {
+        try writeJSONLine([
+            "id": id,
+            "error": [
+                "code": code,
+                "message": message,
+            ],
+        ])
     }
 }
 
@@ -160,6 +245,12 @@ private func jsonInt(_ value: Any?) -> Int? {
     case let d as Double: return Int(d)
     case let n as NSNumber: return n.intValue
     default: return nil
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 
@@ -188,12 +279,31 @@ private func decodeJSONRPCResult(_ data: Data?) throws -> Any? {
 
 @MainActor
 final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
+    enum ServerRequestDisposition: Equatable {
+        case autoApprove
+        case inlineApproval
+        case reject
+        case denyPermissions
+        case unsupported
+    }
+
+    private struct PendingServerRequest {
+        let id: Int
+        let method: String
+        let itemID: String?
+        let threadID: String?
+        let turnID: String?
+        let params: [String: Any]
+    }
+
     @Published var messages: [ChatMessage] = []
     @Published var isProcessing = false
     @Published var isConnected = false
     @Published var session = SessionInfo()
     @Published var selectedModel: String = "gpt-5.4"
     @Published var selectedEffort: String = "medium"
+    @Published var chatInteractionMode: ChatInteractionMode = .agent
+    @Published var pendingApprovalRequest: ChatApprovalRequest?
 
     let providerName = "Codex"
     let providerIcon = "chevron.left.forwardslash.chevron.right"
@@ -215,6 +325,12 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private var assistantDeltaFlushTask: Task<Void, Never>?
     private var pendingMarkdown: [(UUID, String)] = []
     private var markdownTask: Task<Void, Never>?
+    private var currentRunInteractionMode: ChatInteractionMode = .agent
+    private var currentRunPrompt = ""
+    private var currentRunDisplayText = ""
+    private var pendingServerRequests: [Int: PendingServerRequest] = [:]
+    private var itemToolUseMessageIndex: [String: Int] = [:]
+    private var itemOutputBuffers: [String: String] = [:]
 
     private static let assistantDeltaThrottleNanoseconds: UInt64 = 60_000_000
     private static let markdownPreRenderDelayNanoseconds: UInt64 = 80_000_000
@@ -253,6 +369,9 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         flushPendingAssistantDelta()
         clearAssistantDeltaWork()
         clearMarkdownPreRenderWork()
+        pendingServerRequests.removeAll()
+        itemToolUseMessageIndex.removeAll()
+        itemOutputBuffers.removeAll()
         isProcessing = false
         if let idx = currentAssistantMessageIndex, idx < messages.count {
             messages[idx].isStreaming = false
@@ -265,14 +384,16 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         if !isConnected { start() }
-        Task { await sendUserMessage(trimmed, display: trimmed) }
+        pendingApprovalRequest = nil
+        Task { await sendUserMessage(trimmed, display: trimmed, interactionMode: chatInteractionMode) }
     }
 
     func sendMessageWithDisplay(displayText: String, prompt: String) {
         let p = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !p.isEmpty else { return }
         if !isConnected { start() }
-        Task { await sendUserMessage(p, display: displayText) }
+        pendingApprovalRequest = nil
+        Task { await sendUserMessage(p, display: displayText, interactionMode: chatInteractionMode) }
     }
 
     // MARK: - Connection
@@ -315,19 +436,18 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 self?.handleNotification(method: method, params: params)
             }
         }
+        rpcSession.onRequest = { [weak self] id, method, paramsData in
+            Task { @MainActor in
+                let params = (try? JSONSerialization.jsonObject(with: paramsData)) as? [String: Any] ?? [:]
+                self?.handleServerRequest(id: id, method: method, params: params)
+            }
+        }
         self.rpc = rpcSession
 
         let args = Self.buildAppServerArguments(bridgeURL: Self.resolvedBridgeURL())
 
         do {
-            var env = ProcessInfo.processInfo.environment
-            env["NO_COLOR"] = "1"
-            for entry in CanopeContextFiles.terminalEnvironment {
-                let parts = entry.split(separator: "=", maxSplits: 1)
-                if parts.count == 2 {
-                    env[String(parts[0])] = String(parts[1])
-                }
-            }
+            let env = Self.buildProcessEnvironment()
             try rpcSession.startProcess(arguments: Self.codexLaunchArguments() + args, environment: env)
 
             _ = try await rpcSession.call(
@@ -384,40 +504,55 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
     // MARK: - Send flow
 
-    private func sendUserMessage(_ prompt: String, display: String) async {
-        messages.append(
-            ChatMessage(
-                role: .user,
-                content: display,
-                timestamp: Date(),
-                isStreaming: false,
-                isCollapsed: false
+    private func sendUserMessage(
+        _ prompt: String,
+        display: String,
+        interactionMode: ChatInteractionMode,
+        appendUserMessage: Bool = true
+    ) async {
+        if appendUserMessage {
+            messages.append(
+                ChatMessage(
+                    role: .user,
+                    content: display,
+                    timestamp: Date(),
+                    isStreaming: false,
+                    isCollapsed: false
+                )
             )
-        )
+        }
 
         isProcessing = true
+        currentRunInteractionMode = interactionMode
+        currentRunPrompt = prompt
+        currentRunDisplayText = display
         currentAssistantMessageIndex = nil
         currentAgentItemId = nil
         lastRetryStatusMessage = nil
+        itemToolUseMessageIndex.removeAll()
+        itemOutputBuffers.removeAll()
+        CodexTraceLog.write("sendUserMessage mode=\(interactionMode.rawValue) display=\(display.replacingOccurrences(of: "\n", with: "\\n"))")
 
         await ensureConnected()
         guard let rpc else {
+            CodexTraceLog.write("sendUserMessage aborted: rpc unavailable")
             isProcessing = false
             return
         }
 
-        let fullPrompt = Self.buildPromptWithIDEContext(prompt)
+        let fullPrompt = Self.buildPromptForInteractionMode(prompt, mode: interactionMode)
 
         do {
             if currentThreadId == nil {
                 let cwd = workingDirectoryURL.path
+                CodexTraceLog.write("thread/start cwd=\(cwd) model=\(self.selectedModel) approval=\(Self.approvalPolicy(for: interactionMode)) sandbox=\(Self.threadSandboxMode(for: interactionMode))")
                 let result = try await rpc.call(
                     method: "thread/start",
                     params: [
                         "model": selectedModel,
                         "cwd": cwd,
-                        "approvalPolicy": "never",
-                        "sandbox": "workspace-write",
+                        "approvalPolicy": Self.approvalPolicy(for: interactionMode),
+                        "sandbox": Self.threadSandboxMode(for: interactionMode),
                         "serviceName": "canope",
                     ]
                 ) as? [String: Any]
@@ -427,6 +562,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                     session.id = id
                     session.name = thread["name"] as? String
                     session.turns = 0
+                    CodexTraceLog.write("thread/start result threadId=\(id)")
                 }
             }
 
@@ -440,22 +576,23 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 "cwd": workingDirectoryURL.path,
                 "model": selectedModel,
                 "effort": selectedEffort,
-                "approvalPolicy": "never",
-                "sandboxPolicy": [
-                    "type": "workspaceWrite",
-                    "writableRoots": [workingDirectoryURL.path],
-                    "networkAccess": true,
-                ],
+                "approvalPolicy": Self.approvalPolicy(for: interactionMode),
+                "sandboxPolicy": Self.sandboxPolicy(for: interactionMode, workingDirectory: workingDirectoryURL),
             ]
+            CodexTraceLog.write("turn/start threadId=\(threadId) effort=\(self.selectedEffort) model=\(self.selectedModel)")
             _ = try await rpc.call(method: "turn/start", params: turnParams)
+            CodexTraceLog.write("turn/start returned")
             session.turns += 1
         } catch {
+            CodexTraceLog.write("sendUserMessage error \(error.localizedDescription)")
             appendSystem("Codex: \(error.localizedDescription)")
             isProcessing = false
         }
     }
 
     private func handleNotification(method: String, params: [String: Any]) {
+        let paramsSummary = Self.jsonString(params) ?? "{}"
+        CodexTraceLog.write("notification \(method) params=\(paramsSummary)")
         switch method {
         case "turn/started":
             if let turn = params["turn"] as? [String: Any],
@@ -463,52 +600,31 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 currentTurnId = tid
             }
         case "item/started":
-            if let item = params["item"] as? [String: Any],
-               let type = item["type"] as? String {
-                if type == "agentMessage" {
-                    clearAssistantDeltaWork()
-                    let iid = (item["id"] as? String) ?? UUID().uuidString
-                    currentAgentItemId = iid
-                    let msg = ChatMessage(
-                        role: .assistant,
-                        content: "",
-                        timestamp: Date(),
-                        isStreaming: true,
-                        isCollapsed: false
-                    )
-                    messages.append(msg)
-                    currentAssistantMessageIndex = messages.count - 1
-                } else if type == "mcpToolCall" {
-                    flushPendingAssistantDelta()
-                    clearAssistantDeltaWork()
-                    let name = (item["tool"] as? String) ?? "mcp"
-                    let summary = (item["server"] as? String).map { "\($0) · \(name)" } ?? name
-                    messages.append(
-                        ChatMessage(
-                            role: .toolUse,
-                            content: summary,
-                            timestamp: Date(),
-                            toolName: name,
-                            toolInput: Self.jsonString(item["arguments"]),
-                            isStreaming: false,
-                            isCollapsed: true
-                        )
-                    )
-                }
+            if let item = params["item"] as? [String: Any] {
+                handleItemStarted(item)
             }
         case "item/agentMessage/delta":
             let delta = extractDeltaText(params) ?? ""
-            bufferAssistantDelta(delta)
+            bufferAssistantDelta(delta, itemID: params["itemId"] as? String)
+        case "item/plan/delta":
+            let delta = extractDeltaText(params) ?? ""
+            bufferAssistantDelta(delta, itemID: params["itemId"] as? String)
+        case "item/commandExecution/outputDelta",
+             "item/fileChange/outputDelta":
+            if let itemID = params["itemId"] as? String {
+                let delta = extractDeltaText(params)
+                    ?? (params["output"] as? String)
+                    ?? (params["aggregatedOutput"] as? String)
+                    ?? ""
+                if !delta.isEmpty {
+                    itemOutputBuffers[itemID, default: ""].append(delta)
+                }
+            }
         case "item/completed":
             flushPendingAssistantDelta()
             clearAssistantDeltaWork()
-            if let item = params["item"] as? [String: Any],
-               (item["type"] as? String) == "agentMessage",
-               let idx = currentAssistantMessageIndex, idx < messages.count {
-                messages[idx].isStreaming = false
-                enqueueMarkdownPreRender(for: messages[idx].id, text: messages[idx].content)
-                currentAssistantMessageIndex = nil
-                currentAgentItemId = nil
+            if let item = params["item"] as? [String: Any] {
+                handleItemCompleted(item)
             }
         case "turn/completed":
             flushPendingAssistantDelta()
@@ -521,6 +637,20 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             isProcessing = false
             currentTurnId = nil
             lastRetryStatusMessage = nil
+            pendingServerRequests.removeAll()
+        case "turn/plan/updated":
+            handleTurnPlanUpdated(params)
+        case "serverRequest/resolved":
+            if let requestId = jsonInt(params["requestId"]) {
+                pendingServerRequests.removeValue(forKey: requestId)
+                if pendingApprovalRequest?.rpcRequestID == requestId {
+                    pendingApprovalRequest = nil
+                }
+            }
+        case "item/commandExecution/approvalResolved",
+             "item/fileChange/approvalResolved",
+             "item/tool/requestUserInputResolved":
+            clearResolvedApproval(for: params["itemId"] as? String)
         case "error":
             let errorPayload = params["error"] as? [String: Any]
             let message = (errorPayload?["message"] as? String)
@@ -553,6 +683,277 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
+    private func handleServerRequest(id: Int, method: String, params: [String: Any]) {
+        let paramsSummary = Self.jsonString(params) ?? "{}"
+        CodexTraceLog.write("serverRequest id=\(id) method=\(method) params=\(paramsSummary)")
+        let request = PendingServerRequest(
+            id: id,
+            method: method,
+            itemID: params["itemId"] as? String,
+            threadID: params["threadId"] as? String,
+            turnID: params["turnId"] as? String,
+            params: params
+        )
+        pendingServerRequests[id] = request
+        switch Self.serverRequestDisposition(for: method, mode: currentRunInteractionMode, params: params) {
+        case .autoApprove:
+            isProcessing = true
+            Task { [weak self] in
+                await self?.replyToServerRequest(id: id, method: method, approved: true)
+            }
+        case .inlineApproval:
+            pendingApprovalRequest = ChatApprovalRequest(
+                toolName: Self.serverRequestToolName(method: method, params: params),
+                prompt: currentRunPrompt,
+                displayText: currentRunDisplayText,
+                rpcRequestID: id,
+                rpcMethod: method,
+                itemID: request.itemID,
+                threadID: request.threadID,
+                turnID: request.turnID
+            )
+            isProcessing = false
+        case .reject:
+            appendSystem(Self.blockedServerRequestMessage(method: method, mode: currentRunInteractionMode, params: params))
+            Task { [weak self] in
+                await self?.replyToServerRequest(id: id, method: method, approved: false)
+            }
+            isProcessing = false
+        case .denyPermissions:
+            appendSystem(Self.blockedServerRequestMessage(method: method, mode: currentRunInteractionMode, params: params))
+            Task { [weak self] in
+                await self?.replyToPermissionsRequest(id: id, grant: false)
+            }
+            isProcessing = false
+        case .unsupported:
+            let message = Self.unsupportedServerRequestMessage(for: method)
+            appendSystem(message)
+            Task { [weak self] in
+                await self?.replyUnsupportedServerRequest(id: id, method: method, message: message)
+            }
+            isProcessing = false
+        }
+    }
+
+    private func handleItemStarted(_ item: [String: Any]) {
+        guard let type = item["type"] as? String else { return }
+        switch type {
+        case "agentMessage", "plan":
+            beginStreamingAssistantItem(item, type: type)
+        case "mcpToolCall":
+            handleMCPToolCallStarted(item)
+        case "commandExecution":
+            appendToolUseItem(
+                itemID: item["id"] as? String,
+                toolName: "Bash",
+                content: Self.commandExecutionSummary(item),
+                toolInput: Self.jsonString(item["command"] ?? item["commandActions"] ?? item)
+            )
+        case "fileChange":
+            appendToolUseItem(
+                itemID: item["id"] as? String,
+                toolName: "Edit",
+                content: Self.fileChangeSummary(item),
+                toolInput: Self.jsonString(item["changes"] ?? item)
+            )
+        case "dynamicToolCall":
+            appendToolUseItem(
+                itemID: item["id"] as? String,
+                toolName: (item["tool"] as? String) ?? "dynamicTool",
+                content: "Appel d’outil dynamique",
+                toolInput: Self.jsonString(item["arguments"] ?? item)
+            )
+        default:
+            break
+        }
+    }
+
+    private func beginStreamingAssistantItem(_ item: [String: Any], type: String) {
+        let traceItemID = (item["id"] as? String) ?? ""
+        CodexTraceLog.write("beginStreamingAssistantItem type=\(type) itemId=\(traceItemID)")
+        clearAssistantDeltaWork()
+        let itemID = (item["id"] as? String) ?? UUID().uuidString
+        currentAgentItemId = itemID
+        let text = (item["text"] as? String) ?? ""
+        let presentationKind: ChatMessage.PresentationKind = type == "plan" ? .plan : (currentRunInteractionMode == .plan ? .plan : .standard)
+        let message = ChatMessage(
+            role: .assistant,
+            content: text,
+            timestamp: Date(),
+            isStreaming: true,
+            isCollapsed: false,
+            presentationKind: presentationKind
+        )
+        messages.append(message)
+        currentAssistantMessageIndex = messages.count - 1
+        if !text.isEmpty {
+            enqueueMarkdownPreRender(for: message.id, text: text)
+        }
+    }
+
+    private func handleMCPToolCallStarted(_ item: [String: Any]) {
+        let toolName = (item["tool"] as? String) ?? ""
+        let itemID = (item["id"] as? String) ?? ""
+        CodexTraceLog.write("handleMCPToolCallStarted tool=\(toolName) itemId=\(itemID)")
+        flushPendingAssistantDelta()
+        clearAssistantDeltaWork()
+        let name = (item["tool"] as? String) ?? "mcp"
+        if ClaudeHeadlessProvider.shouldBlockTool(
+            name: name,
+            input: item["arguments"] as? [String: Any],
+            mode: currentRunInteractionMode
+        ) {
+            if currentRunInteractionMode == .acceptEdits {
+                pendingApprovalRequest = ChatApprovalRequest(
+                    toolName: name,
+                    prompt: currentRunPrompt,
+                    displayText: currentRunDisplayText,
+                    itemID: item["id"] as? String,
+                    threadID: currentThreadId,
+                    turnID: currentTurnId
+                )
+            } else {
+                appendSystem(ClaudeHeadlessProvider.blockedToolMessage(
+                    toolName: name,
+                    mode: currentRunInteractionMode
+                ))
+            }
+            Task { await interruptIfNeeded() }
+            isProcessing = false
+            currentTurnId = nil
+            return
+        }
+        let summary = (item["server"] as? String).map { "\($0) · \(name)" } ?? name
+        appendToolUseItem(
+            itemID: item["id"] as? String,
+            toolName: name,
+            content: summary,
+            toolInput: Self.jsonString(item["arguments"])
+        )
+    }
+
+    private func handleItemCompleted(_ item: [String: Any]) {
+        guard let type = item["type"] as? String else { return }
+        switch type {
+        case "agentMessage", "plan":
+            completeAssistantItem(item)
+        case "commandExecution":
+            completeToolItem(
+                itemID: item["id"] as? String,
+                toolName: "Bash",
+                summary: Self.completedCommandExecutionSummary(item, bufferedOutput: itemOutputBuffers[item["id"] as? String ?? ""])
+            )
+        case "fileChange":
+            completeToolItem(
+                itemID: item["id"] as? String,
+                toolName: "Edit",
+                summary: Self.completedFileChangeSummary(item, bufferedOutput: itemOutputBuffers[item["id"] as? String ?? ""])
+            )
+        case "dynamicToolCall":
+            completeToolItem(
+                itemID: item["id"] as? String,
+                toolName: (item["tool"] as? String) ?? "dynamicTool",
+                summary: Self.completedDynamicToolCallSummary(item)
+            )
+        case "mcpToolCall":
+            completeToolItem(
+                itemID: item["id"] as? String,
+                toolName: (item["tool"] as? String) ?? "mcp",
+                summary: Self.completedDynamicToolCallSummary(item)
+            )
+        default:
+            break
+        }
+    }
+
+    private func completeAssistantItem(_ item: [String: Any]) {
+        let itemID = (item["id"] as? String) ?? ""
+        CodexTraceLog.write("completeAssistantItem itemId=\(itemID)")
+        if let text = item["text"] as? String,
+           let idx = currentAssistantMessageIndex,
+           idx < messages.count,
+           messages[idx].content.isEmpty {
+            messages[idx].content = text
+        }
+
+        if let idx = currentAssistantMessageIndex, idx < messages.count {
+            messages[idx].isStreaming = false
+            enqueueMarkdownPreRender(for: messages[idx].id, text: messages[idx].content)
+        }
+        currentAssistantMessageIndex = nil
+        currentAgentItemId = nil
+    }
+
+    private func appendToolUseItem(itemID: String?, toolName: String, content: String, toolInput: String?) {
+        messages.append(
+            ChatMessage(
+                role: .toolUse,
+                content: content,
+                timestamp: Date(),
+                toolName: toolName,
+                toolInput: toolInput,
+                isStreaming: false,
+                isCollapsed: true
+            )
+        )
+        if let itemID {
+            itemToolUseMessageIndex[itemID] = messages.count - 1
+        }
+    }
+
+    private func completeToolItem(itemID: String?, toolName: String, summary: String?) {
+        guard let summary, !summary.isEmpty else { return }
+        if let itemID,
+           let idx = itemToolUseMessageIndex[itemID],
+           idx < messages.count {
+            messages[idx].toolOutput = summary
+            messages[idx].isCollapsed = false
+            itemToolUseMessageIndex.removeValue(forKey: itemID)
+            itemOutputBuffers.removeValue(forKey: itemID)
+        }
+        messages.append(
+            ChatMessage(
+                role: .toolResult,
+                content: summary,
+                timestamp: Date(),
+                toolName: toolName,
+                isStreaming: false,
+                isCollapsed: false
+            )
+        )
+    }
+
+    private func handleTurnPlanUpdated(_ params: [String: Any]) {
+        guard currentAssistantMessageIndex == nil,
+              let plan = params["plan"] as? [[String: Any]],
+              !plan.isEmpty
+        else { return }
+        let text = Self.renderPlanText(plan: plan, explanation: params["explanation"] as? String)
+        messages.append(
+            ChatMessage(
+                role: .assistant,
+                content: text,
+                timestamp: Date(),
+                isStreaming: false,
+                isCollapsed: false,
+                presentationKind: .plan
+            )
+        )
+        if let id = messages.last?.id {
+            enqueueMarkdownPreRender(for: id, text: text)
+        }
+    }
+
+    private func clearResolvedApproval(for itemID: String?) {
+        guard let itemID else { return }
+        if pendingApprovalRequest?.itemID == itemID {
+            pendingApprovalRequest = nil
+        }
+        pendingServerRequests = pendingServerRequests.filter { _, value in
+            value.itemID != itemID
+        }
+    }
+
     private func extractDeltaText(_ params: [String: Any]) -> String? {
         if let s = params["delta"] as? String { return s }
         if let s = params["text"] as? String { return s }
@@ -572,14 +973,35 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         )
     }
 
-    private func bufferAssistantDelta(_ delta: String) {
+    private func bufferAssistantDelta(_ delta: String, itemID: String?) {
         guard !delta.isEmpty,
-              let idx = currentAssistantMessageIndex,
+              let idx = assistantMessageIndex(for: itemID),
               idx < messages.count
         else { return }
+        let itemIDSummary = itemID ?? ""
+        CodexTraceLog.write("assistantDelta itemId=\(itemIDSummary) chars=\(delta.count)")
+        if let itemID, currentAgentItemId == nil {
+            currentAgentItemId = itemID
+        }
         pendingAssistantDelta += delta
         messages[idx].isStreaming = true
         scheduleAssistantDeltaFlushIfNeeded()
+    }
+
+    private func assistantMessageIndex(for itemID: String?) -> Int? {
+        if let itemID,
+           let currentAgentItemId,
+           currentAgentItemId == itemID,
+           let currentAssistantMessageIndex,
+           currentAssistantMessageIndex < messages.count {
+            return currentAssistantMessageIndex
+        }
+        if itemID == nil,
+           let currentAssistantMessageIndex,
+           currentAssistantMessageIndex < messages.count {
+            return currentAssistantMessageIndex
+        }
+        return currentAssistantMessageIndex
     }
 
     private func scheduleAssistantDeltaFlushIfNeeded() {
@@ -655,6 +1077,95 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         markdownTask = nil
     }
 
+    private func replyToServerRequest(id: Int, method: String, approved: Bool) async {
+        guard let rpc else { return }
+        do {
+            CodexTraceLog.write("replyToServerRequest id=\(id) method=\(method) approved=\(approved)")
+            switch method {
+            case "item/commandExecution/requestApproval",
+                 "item/fileChange/requestApproval":
+                try rpc.respond(
+                    id: id,
+                    result: [
+                        "decision": approved ? "accept" : "decline",
+                    ]
+                )
+            case "item/permissions/requestApproval":
+                try rpc.respond(
+                    id: id,
+                    result: [
+                        "permissions": Self.grantedPermissions(
+                            from: pendingServerRequests[id]?.params ?? [:],
+                            grant: approved,
+                            workingDirectory: workingDirectoryURL
+                        ),
+                        "scope": "turn",
+                    ]
+                )
+            case "mcpServer/elicitation/request":
+                try rpc.respond(
+                    id: id,
+                    result: Self.elicitationResponseResult(
+                        from: pendingServerRequests[id]?.params ?? [:],
+                        approved: approved
+                    )
+                )
+            default:
+                try rpc.respondError(id: id, message: Self.unsupportedServerRequestMessage(for: method))
+            }
+            pendingServerRequests.removeValue(forKey: id)
+        } catch {
+            appendSystem("Codex: \(error.localizedDescription)")
+            isProcessing = false
+        }
+    }
+
+    private func replyToPermissionsRequest(id: Int, grant: Bool) async {
+        guard let rpc else { return }
+        do {
+            CodexTraceLog.write("replyToPermissionsRequest id=\(id) grant=\(grant)")
+            try rpc.respond(
+                id: id,
+                result: [
+                    "permissions": Self.grantedPermissions(
+                        from: pendingServerRequests[id]?.params ?? [:],
+                        grant: grant,
+                        workingDirectory: workingDirectoryURL
+                    ),
+                    "scope": "turn",
+                ]
+            )
+            pendingServerRequests.removeValue(forKey: id)
+        } catch {
+            appendSystem("Codex: \(error.localizedDescription)")
+        }
+    }
+
+    private func replyUnsupportedServerRequest(id: Int, method: String, message: String) async {
+        guard let rpc else { return }
+        do {
+            CodexTraceLog.write("replyUnsupportedServerRequest id=\(id) method=\(method) message=\(message)")
+            switch method {
+            case "item/tool/call":
+                try rpc.respond(
+                    id: id,
+                    result: [
+                        "success": false,
+                        "contentItems": [[
+                            "type": "inputText",
+                            "text": message,
+                        ]],
+                    ]
+                )
+            default:
+                try rpc.respondError(id: id, message: message)
+            }
+            pendingServerRequests.removeValue(forKey: id)
+        } catch {
+            appendSystem("Codex: \(error.localizedDescription)")
+        }
+    }
+
     private static func jsonString(_ obj: Any?) -> String? {
         guard let obj else { return nil }
         if let s = obj as? String { return s }
@@ -663,6 +1174,308 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
               let str = String(data: d, encoding: .utf8)
         else { return String(describing: obj) }
         return str
+    }
+
+    private static func commandExecutionSummary(_ item: [String: Any]) -> String {
+        let command = (item["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cwd = (item["cwd"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let command, !command.isEmpty, let cwd, !cwd.isEmpty {
+            return "\(command) · \(cwd)"
+        }
+        if let command, !command.isEmpty {
+            return command
+        }
+        return "Commande en cours"
+    }
+
+    private static func fileChangeSummary(_ item: [String: Any]) -> String {
+        if let changes = item["changes"] as? [[String: Any]], !changes.isEmpty {
+            let firstPath = (changes.first?["path"] as? String) ?? (changes.first?["newPath"] as? String)
+            if let firstPath, !firstPath.isEmpty {
+                return "Modification proposee · \((firstPath as NSString).lastPathComponent)"
+            }
+            return "Modification proposee · \(changes.count) fichier(s)"
+        }
+        return "Modification proposee"
+    }
+
+    private static func completedCommandExecutionSummary(_ item: [String: Any], bufferedOutput: String?) -> String? {
+        let status = (item["status"] as? String) ?? "completed"
+        let command = (item["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Commande"
+        let exitCode = jsonInt(item["exitCode"])
+        let output = ((item["aggregatedOutput"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
+            ?? (bufferedOutput?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
+        let statusLabel: String
+        switch status {
+        case "declined":
+            statusLabel = "Commande refusee"
+        case "failed":
+            statusLabel = "Commande echouee"
+        default:
+            statusLabel = "Commande terminee"
+        }
+        let suffix = exitCode.map { " (code \($0))" } ?? ""
+        if let output {
+            return "\(statusLabel)\(suffix) · \(command)\n\(output)"
+        }
+        return "\(statusLabel)\(suffix) · \(command)"
+    }
+
+    private static func completedFileChangeSummary(_ item: [String: Any], bufferedOutput: String?) -> String? {
+        let status = (item["status"] as? String) ?? "completed"
+        let base = fileChangeSummary(item)
+        let output = (bufferedOutput?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
+        switch status {
+        case "declined":
+            return "\(base) refusee"
+        case "failed":
+            if let output {
+                return "\(base) echouee\n\(output)"
+            }
+            return "\(base) echouee"
+        default:
+            if let output {
+                return "\(base) appliquee\n\(output)"
+            }
+            return "\(base) appliquee"
+        }
+    }
+
+    private static func completedDynamicToolCallSummary(_ item: [String: Any]) -> String? {
+        let status = (item["status"] as? String) ?? "completed"
+        let text = extractText(fromContentItems: item["contentItems"] as? [[String: Any]])
+        switch status {
+        case "failed":
+            return text ?? "Appel d’outil echoue"
+        default:
+            return text ?? "Appel d’outil termine"
+        }
+    }
+
+    private static func extractText(fromContentItems items: [[String: Any]]?) -> String? {
+        items?
+            .compactMap { item in
+                if let text = item["text"] as? String { return text }
+                if let text = item["content"] as? String { return text }
+                return nil
+            }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+    }
+
+    private static func renderPlanText(plan: [[String: Any]], explanation: String?) -> String {
+        var lines: [String] = []
+        if let explanation, !explanation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("Objectif")
+            lines.append(explanation)
+            lines.append("")
+        }
+        lines.append("Plan")
+        for (index, step) in plan.enumerated() {
+            let status = (step["status"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = (step["step"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Etape \(index + 1)"
+            if let status, !status.isEmpty {
+                lines.append("\(index + 1). [\(status)] \(text)")
+            } else {
+                lines.append("\(index + 1). \(text)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func grantedPermissions(from params: [String: Any], grant: Bool, workingDirectory: URL) -> [String: Any] {
+        guard grant else { return [:] }
+        if let additionalPermissions = params["additionalPermissions"] as? [String: Any] {
+            return additionalPermissions
+        }
+        if let permissions = params["permissions"] as? [String: Any] {
+            return permissions
+        }
+        return [
+            "fileSystem": [
+                "write": [workingDirectory.path],
+            ],
+        ]
+    }
+
+    nonisolated private static func elicitationResponseResult(from params: [String: Any], approved: Bool) -> [String: Any] {
+        if approved {
+            return [
+                "action": "accept",
+                "content": [:] as [String: Any],
+            ]
+        }
+        return [
+            "action": "decline",
+        ]
+    }
+
+    nonisolated private static func supportsSimpleMCPApprovalElicitation(_ params: [String: Any]) -> Bool {
+        guard let requestedSchema = params["requestedSchema"] as? [String: Any],
+              (requestedSchema["type"] as? String) == "object"
+        else {
+            return false
+        }
+        let properties = requestedSchema["properties"] as? [String: Any] ?? [:]
+        let required = requestedSchema["required"] as? [Any] ?? []
+        return properties.isEmpty && required.isEmpty
+    }
+
+    nonisolated private static func mcpElicitationToolName(from params: [String: Any]) -> String {
+        if let message = params["message"] as? String,
+           let toolStart = message.range(of: "\""),
+           let toolEnd = message[toolStart.upperBound...].range(of: "\"") {
+            return String(message[toolStart.upperBound..<toolEnd.lowerBound])
+        }
+        if let meta = params["_meta"] as? [String: Any],
+           let toolDescription = (meta["tool_description"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !toolDescription.isEmpty {
+            return toolDescription
+        }
+        if let serverName = (params["serverName"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !serverName.isEmpty {
+            return "\(serverName) MCP"
+        }
+        return "Appel MCP"
+    }
+
+    nonisolated static func serverRequestDisposition(
+        for method: String,
+        mode: ChatInteractionMode,
+        params: [String: Any] = [:]
+    ) -> ServerRequestDisposition {
+        switch method {
+        case "item/commandExecution/requestApproval",
+             "item/fileChange/requestApproval":
+            switch mode {
+            case .agent: return .autoApprove
+            case .acceptEdits: return .inlineApproval
+            case .plan: return .reject
+            }
+        case "item/permissions/requestApproval":
+            switch mode {
+            case .agent: return .autoApprove
+            case .acceptEdits, .plan: return .denyPermissions
+            }
+        case "mcpServer/elicitation/request":
+            guard supportsSimpleMCPApprovalElicitation(params) else { return .unsupported }
+            switch mode {
+            case .agent: return .autoApprove
+            case .acceptEdits: return .inlineApproval
+            case .plan: return .reject
+            }
+        case "item/tool/call",
+             "item/tool/requestUserInput",
+             "account/chatgptAuthTokens/refresh":
+            return .unsupported
+        default:
+            return .unsupported
+        }
+    }
+
+    nonisolated static func serverRequestToolName(method: String, params: [String: Any]) -> String {
+        switch method {
+        case "item/commandExecution/requestApproval":
+            if let command = params["command"] as? String, !command.isEmpty {
+                return command
+            }
+            return "Commande"
+        case "item/fileChange/requestApproval":
+            if let files = params["paths"] as? [String], let first = files.first {
+                return (first as NSString).lastPathComponent
+            }
+            return "Edition"
+        case "item/permissions/requestApproval":
+            return "Permissions"
+        case "mcpServer/elicitation/request":
+            return mcpElicitationToolName(from: params)
+        default:
+            return method
+        }
+    }
+
+    nonisolated static func blockedServerRequestMessage(
+        method: String,
+        mode: ChatInteractionMode,
+        params: [String: Any] = [:]
+    ) -> String {
+        switch method {
+        case "item/commandExecution/requestApproval":
+            return ClaudeHeadlessProvider.blockedToolMessage(toolName: "Bash", mode: mode)
+        case "item/fileChange/requestApproval":
+            return ClaudeHeadlessProvider.blockedToolMessage(toolName: "Edit", mode: mode)
+        case "mcpServer/elicitation/request":
+            return ClaudeHeadlessProvider.blockedToolMessage(
+                toolName: mcpElicitationToolName(from: params),
+                mode: mode
+            )
+        case "item/permissions/requestApproval":
+            switch mode {
+            case .plan:
+                return "Mode plan: la demande de permissions supplementaires a ete bloquee."
+            case .acceptEdits:
+                return "Mode accept edits: la demande de permissions supplementaires a ete bloquee en attendant ton approbation."
+            case .agent:
+                return "Demande de permissions supplementaires."
+            }
+        default:
+            return unsupportedServerRequestMessage(for: method)
+        }
+    }
+
+    nonisolated static func unsupportedServerRequestMessage(for method: String) -> String {
+        switch method {
+        case "item/tool/call":
+            return "Codex: les appels d’outils dynamiques ne sont pas encore pris en charge dans Canope."
+        case "item/tool/requestUserInput":
+            return "Codex: cette demande d’entrée utilisateur interactive n’est pas encore prise en charge dans Canope."
+        case "mcpServer/elicitation/request":
+            return "Codex: cette demande MCP exige un formulaire interactif qui n’est pas encore pris en charge dans Canope."
+        case "account/chatgptAuthTokens/refresh":
+            return "Codex: le rafraichissement des jetons ChatGPT n’est pas encore pris en charge dans Canope."
+        default:
+            return "Codex: requete app-server non prise en charge (\(method))."
+        }
+    }
+
+    nonisolated static func approvalPolicy(for mode: ChatInteractionMode) -> String {
+        switch mode {
+        case .agent, .acceptEdits:
+            return "on-request"
+        case .plan:
+            return "never"
+        }
+    }
+
+    nonisolated static func threadSandboxMode(for mode: ChatInteractionMode) -> String {
+        switch mode {
+        case .plan:
+            return "read-only"
+        case .agent, .acceptEdits:
+            return "workspace-write"
+        }
+    }
+
+    nonisolated static func sandboxPolicy(
+        for mode: ChatInteractionMode,
+        workingDirectory: URL
+    ) -> [String: Any] {
+        switch mode {
+        case .plan:
+            return [
+                "type": "readOnly",
+                "networkAccess": true,
+            ]
+        case .agent, .acceptEdits:
+            return [
+                "type": "workspaceWrite",
+                "writableRoots": [workingDirectory.path],
+                "networkAccess": true,
+            ]
+        }
     }
 
     // MARK: - CLI
@@ -701,9 +1514,10 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let argsArr = ["-y", "mcp-remote", bridgeURL, "--transport", "sse-only"]
-        let argsToml = (try? JSONSerialization.data(withJSONObject: argsArr))
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let bridgeURLToml = bridgeURL
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let argsToml = "[\"-y\", \"mcp-remote\", \"\(bridgeURLToml)\", \"--transport\", \"sse-only\"]"
         return [
             "app-server",
             "--listen", "stdio://",
@@ -713,6 +1527,46 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             "-c", "mcp_servers.canope.command=\"npx\"",
             "-c", "mcp_servers.canope.args=\(argsToml)",
         ]
+    }
+
+    nonisolated static func buildProcessEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env["NO_COLOR"] = "1"
+        for entry in CanopeContextFiles.terminalEnvironment {
+            let parts = entry.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 {
+                env[String(parts[0])] = String(parts[1])
+            }
+        }
+
+        let shell = env["SHELL"] ?? "/bin/zsh"
+        let applied = ClaudeCLIWrapperService.shared.apply(
+            to: env.map { "\($0.key)=\($0.value)" },
+            shellPath: shell
+        )
+
+        var normalized: [String: String] = [:]
+        for entry in applied {
+            let parts = entry.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 {
+                normalized[String(parts[0])] = String(parts[1])
+            }
+        }
+
+        if normalized["PATH"]?.isEmpty != false {
+            normalized["PATH"] = [
+                "/Users/\(NSUserName())/.local/bin",
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin",
+                "/Library/TeX/texbin",
+            ].joined(separator: ":")
+        }
+
+        return normalized
     }
 
     nonisolated static func buildPromptWithIDEContext(_ userMessage: String) -> String {
@@ -734,12 +1588,47 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         \(userMessage)
         """
     }
+
+    nonisolated static func buildPromptForInteractionMode(_ userMessage: String, mode: ChatInteractionMode) -> String {
+        let promptWithContext = buildPromptWithIDEContext(userMessage)
+        switch mode {
+        case .agent:
+            return promptWithContext
+        case .acceptEdits:
+            return """
+            [Canope Accept Edits Mode]
+            Tu es en mode accept edits.
+            - N'applique aucune edition de fichier sans approbation explicite.
+            - N'utilise pas Bash ni aucune commande shell.
+            - N'utilise aucune action de terminal, d'execution ou avec effets de bord.
+            - Propose les changements de facon concrete et ciblee.
+            - Si un outil d'edition serait necessaire, attends l'approbation au lieu d'agir.
+            [/Canope Accept Edits Mode]
+
+            \(promptWithContext)
+            """
+        case .plan:
+            return """
+            [Canope Plan Mode]
+            Tu es en mode plan strict.
+            - N'execute aucune edition de fichier.
+            - N'utilise aucune commande mutante.
+            - Ne lance aucune action avec effets de bord.
+            - Produis seulement un plan structure avec: Objectif, Changements proposes, Validation, Risques.
+            - Si une information manque, formule des hypotheses explicites au lieu d'agir.
+            [/Canope Plan Mode]
+
+            \(promptWithContext)
+            """
+        }
+    }
 }
 
 // MARK: - HeadlessChatProviding
 
 extension CodexAppServerProvider: HeadlessChatProviding {
     var chatWorkingDirectory: URL { workingDirectoryURL }
+    var chatSupportsPlanMode: Bool { true }
 
     var chatSessionDisplayName: String {
         let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -804,8 +1693,41 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             if let lastUser = messages.lastIndex(where: { $0.role == .user }) {
                 messages.removeSubrange(lastUser...)
             }
-            await sendUserMessage(trimmed, display: trimmed)
+            await sendUserMessage(trimmed, display: trimmed, interactionMode: chatInteractionMode)
         }
+    }
+
+    func approvePendingApprovalRequest() {
+        guard let request = pendingApprovalRequest else { return }
+        pendingApprovalRequest = nil
+        if let rpcRequestID = request.rpcRequestID, let rpcMethod = request.rpcMethod {
+            isProcessing = true
+            Task { [weak self] in
+                await self?.replyToServerRequest(id: rpcRequestID, method: rpcMethod, approved: true)
+            }
+            return
+        }
+        Task {
+            await sendUserMessage(
+                request.prompt,
+                display: request.displayText,
+                interactionMode: .agent,
+                appendUserMessage: false
+            )
+        }
+    }
+
+    func dismissPendingApprovalRequest() {
+        if let request = pendingApprovalRequest,
+           let rpcRequestID = request.rpcRequestID,
+           let rpcMethod = request.rpcMethod {
+            pendingApprovalRequest = nil
+            Task { [weak self] in
+                await self?.replyToServerRequest(id: rpcRequestID, method: rpcMethod, approved: false)
+            }
+            return
+        }
+        pendingApprovalRequest = nil
     }
 
     func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem] {
@@ -839,6 +1761,10 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         lastRetryStatusMessage = nil
         session = SessionInfo()
         messages.removeAll()
+        pendingApprovalRequest = nil
+        pendingServerRequests.removeAll()
+        itemToolUseMessageIndex.removeAll()
+        itemOutputBuffers.removeAll()
     }
 
     private func resumeThread(id: String) async {
@@ -890,12 +1816,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         }
         let args = buildAppServerArguments(bridgeURL: resolvedBridgeStatic())
         let session = CodexAppServerRPCSession()
-        var env = ProcessInfo.processInfo.environment
-        env["NO_COLOR"] = "1"
-        for entry in CanopeContextFiles.terminalEnvironment {
-            let parts = entry.split(separator: "=", maxSplits: 1)
-            if parts.count == 2 { env[String(parts[0])] = String(parts[1]) }
-        }
+        let env = buildProcessEnvironment()
         try session.startProcess(arguments: codexLaunchArguments() + args, environment: env)
         _ = try await session.call(
             method: "initialize",
@@ -934,12 +1855,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         }
         let args = buildAppServerArguments(bridgeURL: resolvedBridgeStatic())
         let rpcSession = CodexAppServerRPCSession()
-        var env = ProcessInfo.processInfo.environment
-        env["NO_COLOR"] = "1"
-        for entry in CanopeContextFiles.terminalEnvironment {
-            let parts = entry.split(separator: "=", maxSplits: 1)
-            if parts.count == 2 { env[String(parts[0])] = String(parts[1]) }
-        }
+        let env = buildProcessEnvironment()
         do {
             try rpcSession.startProcess(arguments: codexLaunchArguments() + args, environment: env)
             _ = try await rpcSession.call(
@@ -999,6 +1915,10 @@ extension CodexAppServerProvider: HeadlessChatProviding {
 
 #if DEBUG
 extension CodexAppServerProvider {
+    func testHandleNotification(method: String, params: [String: Any]) {
+        handleNotification(method: method, params: params)
+    }
+
     func testReceiveAssistantDelta(_ delta: String) {
         handleNotification(method: "item/agentMessage/delta", params: ["delta": delta])
     }
@@ -1018,6 +1938,20 @@ extension CodexAppServerProvider {
 
     func testFlushMarkdownPreRender() {
         flushMarkdownPreRender()
+    }
+
+    func testHandleServerRequest(id: Int, method: String, params: [String: Any]) {
+        handleServerRequest(id: id, method: method, params: params)
+    }
+
+    func testSetCurrentRunState(
+        interactionMode: ChatInteractionMode,
+        prompt: String = "",
+        displayText: String = ""
+    ) {
+        currentRunInteractionMode = interactionMode
+        currentRunPrompt = prompt
+        currentRunDisplayText = displayText
     }
 
     func testResolvePendingMarkdownSynchronously() {

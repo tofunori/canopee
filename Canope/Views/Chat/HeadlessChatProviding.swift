@@ -6,6 +6,9 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     var chatWorkingDirectory: URL { get }
     var chatSessionDisplayName: String { get }
     var chatCanRenameCurrentSession: Bool { get }
+    var chatInteractionMode: ChatInteractionMode { get set }
+    var chatSupportsPlanMode: Bool { get }
+    var pendingApprovalRequest: ChatApprovalRequest? { get }
 
     var chatAvailableModels: [String] { get }
     var chatSelectedModel: String { get set }
@@ -18,6 +21,8 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     func renameCurrentChatSession(to name: String)
     func editAndResendLastUser(newText: String)
     func sendMessageWithDisplay(displayText: String, prompt: String)
+    func approvePendingApprovalRequest()
+    func dismissPendingApprovalRequest()
     func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem]
 
     static func renameChatSession(id: String, name: String)

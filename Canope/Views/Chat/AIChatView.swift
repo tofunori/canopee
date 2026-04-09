@@ -40,6 +40,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var isRenamingCurrentSession = false
     @State private var currentSessionNameDraft = ""
     @State private var cachedSelectionModifiedAt: Date?
+    @State private var modeStatusFlash = false
+
+    private var visibleMessages: [ChatMessage] {
+        provider.messages.filter { !$0.isLegacyAcceptEditsApprovalNotice }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -234,12 +239,12 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 // `LazyVStack` re-estimates off-screen row heights for rich markdown,
                 // which makes the scrollbar thumb resize and causes visible jumps.
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(provider.messages) { message in
+                    ForEach(visibleMessages) { message in
                         messageRow(message)
                     }
 
                     if provider.isProcessing,
-                       provider.messages.last?.role == .user || provider.messages.last?.isStreaming == false
+                       visibleMessages.last?.role == .user || visibleMessages.last?.isStreaming == false
                     {
                         thinkingIndicator
                             .id("thinking")
@@ -253,15 +258,19 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 .padding(.horizontal, 12)
             }
             .id(listResetID)
+            .onAppear {
+                scrollToBottom(using: proxy, animated: false)
+            }
             .onChange(of: provider.messages.count) {
                 if shouldAutoScroll {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        proxy.scrollTo("bottom_anchor", anchor: .bottom)
-                    }
+                    scrollToBottom(using: proxy, animated: true)
                 }
             }
             .onChange(of: provider.isProcessing) {
                 if provider.isProcessing { shouldAutoScroll = true }
+            }
+            .onChange(of: listResetID) {
+                scrollToBottom(using: proxy, animated: false)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -368,10 +377,14 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         SpinnerVerbView()
     }
 
+    @ViewBuilder
     private func assistantRow(_ message: ChatMessage) -> some View {
+        if message.presentationKind == .plan {
+            planAssistantCard(message)
+        } else {
         let needsBlockMarkdown = messageNeedsBlockMarkdown(message.content)
         let shouldUseRichMarkdown = !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content)
-        return HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Circle()
                 .fill(Color.orange.opacity(0.15))
                 .frame(width: 20, height: 20)
@@ -422,6 +435,59 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     assistantMarkdownStable(message, needsBlockMarkdown: needsBlockMarkdown)
                 }
             }
+
+            Spacer(minLength: 20)
+        }
+        .padding(.vertical, 4)
+        }
+    }
+
+    private func planAssistantCard(_ message: ChatMessage) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(Color.blue.opacity(0.14))
+                .frame(width: 20, height: 20)
+                .overlay {
+                    Image(systemName: "list.bullet.clipboard")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.blue)
+                }
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("Plan")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.blue)
+                    Text("Aucune action appliquee")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                if message.isStreaming {
+                    Text(message.content)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                    streamingCursor
+                } else if ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content) {
+                    Text(message.content)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                } else {
+                    MarkdownBlockView(text: message.content)
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.blue.opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.blue.opacity(0.18), lineWidth: 0.8)
+            )
 
             Spacer(minLength: 20)
         }
@@ -594,6 +660,40 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 Divider()
             }
 
+            if let approval = provider.pendingApprovalRequest {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: "checkmark.shield")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.green)
+
+                    Text("Autoriser l’action \(approval.toolName) ?")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 8)
+
+                    Button("Refuser") {
+                        provider.dismissPendingApprovalRequest()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                    Button("Autoriser") {
+                        provider.approvePendingApprovalRequest()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .font(.system(size: 11, weight: .semibold))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.green.opacity(0.08))
+
+                Divider()
+            }
+
             // @ file suggestions
             if !fileListItems.isEmpty {
                 ScrollView {
@@ -705,7 +805,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             }
 
             HStack(spacing: 8) {
-                TextField("Message à \(provider.providerName)…", text: $inputText, axis: .vertical)
+                TextField(chatInputPlaceholder, text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .lineLimit(1...6)
@@ -723,15 +823,68 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 Button {
                     send()
                 } label: {
-                    Image(systemName: "arrow.up.circle.fill")
+                    Image(systemName: provider.chatInteractionMode.sendButtonSymbolName)
                         .font(.system(size: 22))
-                        .foregroundStyle(canSend ? Color.accentColor : Color.secondary.opacity(0.4))
+                        .foregroundStyle(canSend ? provider.chatInteractionMode.tint : Color.secondary.opacity(0.4))
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
+                .help(sendButtonHelp)
+                .frame(width: 28, height: 28)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(ChatInteractionMode.allCases, id: \.self) { mode in
+                        Button {
+                            provider.chatInteractionMode = mode
+                            flashModeChange()
+                        } label: {
+                            HStack {
+                                Text(mode.badgeLabel)
+                                if provider.chatInteractionMode == mode {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: provider.chatInteractionMode.iconName)
+                            .font(.system(size: 10, weight: .semibold))
+                            .frame(width: 12, height: 12)
+
+                        Text(provider.chatInteractionMode.badgeLabel)
+                            .font(.system(size: 10, weight: .semibold))
+                            .lineLimit(1)
+
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                            .frame(width: 8, height: 8)
+                    }
+                        .foregroundStyle(provider.chatInteractionMode.tint)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background(provider.chatInteractionMode.tint.opacity(0.12))
+                        .clipShape(Capsule())
+                        .overlay {
+                            if modeStatusFlash {
+                                Capsule()
+                                    .strokeBorder(provider.chatInteractionMode.tint.opacity(0.45), lineWidth: 1)
+                            }
+                        }
+                }
+                .menuStyle(.borderlessButton)
+                .help("Mode courant · Shift+Tab pour cycler")
+
+                Spacer()
+            }
+            .frame(height: 22)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
         }
         .background(AppChromePalette.surfaceSubbar)
         .onAppear { installPasteMonitor() }
@@ -746,6 +899,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     // MARK: - Slash Commands
 
     private var slashCommands: [String] { [
+        "agent", "plan",
         "new", "resume", "continue",
         "compact", "context", "cost", "help", "init", "review",
         "commit", "simplify", "research", "plan-review", "diff-review",
@@ -949,9 +1103,16 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     private func installPasteMonitor() {
         guard pasteMonitor == nil else { return }
         pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-            guard event.modifierFlags.contains(.command),
-                  event.charactersIgnoringModifiers == "v",
-                  isInputFocused else { return event }
+            guard isInputFocused else { return event }
+            let relevantModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if event.keyCode == 48,
+               relevantModifiers == [.shift] {
+                provider.chatInteractionMode = provider.chatInteractionMode.next
+                flashModeChange()
+                return nil
+            }
+            guard relevantModifiers.contains(.command),
+                  event.charactersIgnoringModifiers == "v" else { return event }
             if pasteImageFromClipboard() { return nil }
             return event
         }
@@ -967,12 +1128,62 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @discardableResult
     private func pasteImageFromClipboard() -> Bool {
         let pb = NSPasteboard.general
-        guard let types = pb.types,
-              types.contains(where: { [.png, .tiff].contains($0) }) else { return false }
+        if let image = clipboardBitmapImage(from: pb) {
+            return attachClipboardImage(image, preferredFileName: nil)
+        }
 
-        guard let data = pb.data(forType: .png) ?? pb.data(forType: .tiff),
-              let nsImage = NSImage(data: data) else { return false }
+        if let fileURL = clipboardImageFileURL(from: pb) {
+            let preferredName = fileURL.deletingPathExtension().lastPathComponent
+            if let image = NSImage(contentsOf: fileURL) {
+                return attachClipboardImage(image, preferredFileName: preferredName)
+            }
+        }
 
+        return false
+    }
+
+    private func clipboardBitmapImage(from pasteboard: NSPasteboard) -> NSImage? {
+        guard let types = pasteboard.types,
+              types.contains(where: { [.png, .tiff].contains($0) }) else { return nil }
+        guard let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return nil }
+        return NSImage(data: data)
+    }
+
+    private func clipboardImageFileURL(from pasteboard: NSPasteboard) -> URL? {
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL],
+           let imageURL = urls.first(where: isSupportedPastedImageURL) {
+            return imageURL
+        }
+
+        if let rawString = pasteboard.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           rawString.isEmpty == false {
+            if rawString.hasPrefix("file://"),
+               let url = URL(string: rawString),
+               isSupportedPastedImageURL(url) {
+                return url
+            }
+
+            let fileURL = URL(fileURLWithPath: rawString)
+            if isSupportedPastedImageURL(fileURL) {
+                return fileURL
+            }
+        }
+
+        return nil
+    }
+
+    private func isSupportedPastedImageURL(_ url: URL) -> Bool {
+        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else { return false }
+        let ext = url.pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp", "heic", "heif"].contains(ext)
+    }
+
+    @discardableResult
+    private func attachClipboardImage(_ nsImage: NSImage, preferredFileName: String?) -> Bool {
         guard let tiffData = nsImage.tiffRepresentation,
               let bitmapRep = NSBitmapImageRep(data: tiffData),
               let pngData = bitmapRep.representation(using: .png, properties: [:]) else { return false }
@@ -982,12 +1193,26 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
         imageCounter += 1
-        let fileName = "image_\(String(format: "%03d", imageCounter)).png"
+        let baseName = preferredFileName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitizedBaseName = {
+            guard let baseName, !baseName.isEmpty else {
+                return "image_\(String(format: "%03d", imageCounter))"
+            }
+            let cleanedScalars = baseName.unicodeScalars.map { scalar -> Character in
+                if CharacterSet.alphanumerics.contains(scalar) || scalar == "-" || scalar == "_" {
+                    return Character(scalar)
+                }
+                return "_"
+            }
+            let cleaned = String(cleanedScalars).trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+            return cleaned.isEmpty ? "image_\(String(format: "%03d", imageCounter))" : cleaned
+        }()
+        let fileName = "\(sanitizedBaseName).png"
         let filePath = tempDir.appendingPathComponent(fileName)
         try? pngData.write(to: filePath)
 
         attachedFiles.append(AttachedFile(
-            name: "Image #\(imageCounter)",
+            name: fileName,
             path: filePath.path,
             content: "[Pasted image saved at: \(filePath.path)]",
             kind: .image
@@ -1000,8 +1225,28 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var shouldAutoScroll = false
     @State private var listResetID = UUID()
 
+    private var chatInputPlaceholder: String {
+        "\(provider.chatInteractionMode.inputPlaceholderSuffix) à \(provider.providerName)…"
+    }
+
+    private var sendButtonHelp: String {
+        provider.chatInteractionMode == .plan ? "Envoyer une demande de plan" : "Envoyer"
+    }
+
     private var canSend: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedFiles.isEmpty
+    }
+
+    private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if animated {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo("bottom_anchor", anchor: .bottom)
+            }
+        }
     }
 
     private func send() {
@@ -1009,6 +1254,18 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         guard !text.isEmpty || !attachedFiles.isEmpty else { return }
         inputText = ""
         refreshSelectionCache()
+
+        if text == "/plan" {
+            provider.chatInteractionMode = .plan
+            flashModeChange()
+            return
+        }
+
+        if text == "/agent" {
+            provider.chatInteractionMode = .agent
+            flashModeChange()
+            return
+        }
 
         // /new starts a fresh conversation
         if text == "/new" {
@@ -1046,6 +1303,13 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             provider.sendMessageWithDisplay(displayText: displayText, prompt: fullPrompt)
         } else {
             provider.sendMessage(text)
+        }
+    }
+
+    private func flashModeChange() {
+        modeStatusFlash = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            modeStatusFlash = false
         }
     }
 

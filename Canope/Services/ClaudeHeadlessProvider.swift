@@ -12,6 +12,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     @Published var session = SessionInfo()
     @Published var selectedModel: String = "opus"
     @Published var selectedEffort: String = "high"
+    @Published var chatInteractionMode: ChatInteractionMode = .agent
+    @Published var pendingApprovalRequest: ChatApprovalRequest?
 
     let providerName = "Claude"
     let providerIcon = "brain.head.profile"
@@ -32,10 +34,14 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     private var messageQueue: [QueuedMessage] = []
     private var pendingMarkdownPreRenders: [(UUID, String)] = []
     private var markdownPreRenderTask: Task<Void, Never>?
+    private var currentRunInteractionMode: ChatInteractionMode = .agent
+    private var currentRunPrompt = ""
+    private var currentRunDisplayText = ""
 
     private struct QueuedMessage {
         let messageID: UUID
         let prompt: String
+        let interactionMode: ChatInteractionMode
     }
 
     private enum ClaudeLaunchMode {
@@ -59,6 +65,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     func updateWorkingDirectory(_ url: URL) {
         workingDirectory = url
     }
+
+    var chatSupportsPlanMode: Bool { true }
 
     // MARK: - Lifecycle
 
@@ -258,7 +266,13 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             isStreaming: false, isCollapsed: false
         ))
 
-        beginClaudeRun(userPrompt: trimmed, mode: .forkEdit(sessionId: sid))
+        pendingApprovalRequest = nil
+        beginClaudeRun(
+            userPrompt: trimmed,
+            displayText: trimmed,
+            mode: .forkEdit(sessionId: sid),
+            interactionMode: chatInteractionMode
+        )
     }
 
     /// Start a fresh conversation, clearing all state.
@@ -511,15 +525,21 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         guard !trimmed.isEmpty else { return }
 
         if isProcessing {
-            enqueueUserMessage(displayText: displayText, prompt: trimmed)
+            enqueueUserMessage(displayText: displayText, prompt: trimmed, interactionMode: chatInteractionMode)
             return
         }
 
         if !isConnected { start() }
 
+        pendingApprovalRequest = nil
         appendUserMessage(displayText)
 
-        beginClaudeRun(userPrompt: trimmed, mode: .send)
+        beginClaudeRun(
+            userPrompt: trimmed,
+            displayText: displayText,
+            mode: .send,
+            interactionMode: chatInteractionMode
+        )
     }
 
     func sendMessage(_ text: String) {
@@ -528,15 +548,21 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
         // Queue if already processing
         if isProcessing {
-            enqueueUserMessage(displayText: trimmed, prompt: trimmed)
+            enqueueUserMessage(displayText: trimmed, prompt: trimmed, interactionMode: chatInteractionMode)
             return
         }
 
         if !isConnected { start() }
 
+        pendingApprovalRequest = nil
         appendUserMessage(trimmed)
 
-        beginClaudeRun(userPrompt: trimmed, mode: .send)
+        beginClaudeRun(
+            userPrompt: trimmed,
+            displayText: trimmed,
+            mode: .send,
+            interactionMode: chatInteractionMode
+        )
     }
 
     private func appendUserMessage(_ text: String, queuePosition: Int? = nil) {
@@ -550,7 +576,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         ))
     }
 
-    private func enqueueUserMessage(displayText: String, prompt: String) {
+    private func enqueueUserMessage(displayText: String, prompt: String, interactionMode: ChatInteractionMode) {
         let message = ChatMessage(
             role: .user,
             content: displayText,
@@ -560,7 +586,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             queuePosition: messageQueue.count + 1
         )
         messages.append(message)
-        messageQueue.append(QueuedMessage(messageID: message.id, prompt: prompt))
+        messageQueue.append(QueuedMessage(messageID: message.id, prompt: prompt, interactionMode: interactionMode))
         refreshQueuedMessagePositions()
     }
 
@@ -572,12 +598,20 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     }
 
     /// Single entry point for `claude` CLI runs (normal send and fork-edit).
-    private func beginClaudeRun(userPrompt trimmed: String, mode: ClaudeLaunchMode) {
+    private func beginClaudeRun(
+        userPrompt trimmed: String,
+        displayText: String,
+        mode: ClaudeLaunchMode,
+        interactionMode: ChatInteractionMode
+    ) {
         cancelInFlightWork()
 
         isProcessing = true
         currentAssistantIndex = nil
         outputBuffer = ""
+        currentRunInteractionMode = interactionMode
+        currentRunPrompt = trimmed
+        currentRunDisplayText = displayText
 
         let model = selectedModel
         let effort = selectedEffort
@@ -599,7 +633,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             let cliPath = Self.findCLI("claude")
             proc.executableURL = URL(fileURLWithPath: cliPath)
 
-            let prompt = Self.buildPromptWithIDEContext(trimmed)
+            let prompt = Self.buildPromptForInteractionMode(trimmed, mode: interactionMode)
             var args = ["-p", prompt, "--output-format", "stream-json", "--verbose",
                         "--model", model, "--effort", effort]
             switch mode {
@@ -699,7 +733,12 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             messages[idx].queuePosition = nil
         }
         refreshQueuedMessagePositions()
-        beginClaudeRun(userPrompt: next.prompt, mode: .send)
+        beginClaudeRun(
+            userPrompt: next.prompt,
+            displayText: queuedDisplayText(for: next.messageID, fallback: next.prompt),
+            mode: .send,
+            interactionMode: next.interactionMode
+        )
     }
 
     // MARK: - Output Parsing
@@ -780,7 +819,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                     let newIdx = messages.count
                     messages.append(ChatMessage(
                         role: .assistant, content: text, timestamp: Date(),
-                        isStreaming: true, isCollapsed: false
+                        isStreaming: true, isCollapsed: false,
+                        presentationKind: currentRunInteractionMode == .plan ? .plan : .standard
                     ))
                     currentAssistantIndex = newIdx
                 }
@@ -790,6 +830,14 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                 finalizeStreamingAssistant()
 
                 let toolName = block["name"] as? String ?? "tool"
+                if Self.shouldBlockTool(
+                    name: toolName,
+                    input: block["input"] as? [String: Any],
+                    mode: currentRunInteractionMode
+                ) {
+                    abortBlockedToolAttempt(toolName: toolName, mode: currentRunInteractionMode)
+                    return
+                }
                 var inputStr = ""
                 if let input = block["input"] as? [String: Any],
                    let inputData = try? JSONSerialization.data(
@@ -877,6 +925,41 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         currentAssistantIndex = nil
     }
 
+    private func abortBlockedToolAttempt(toolName: String, mode: ChatInteractionMode) {
+        finalizeStreamingAssistant()
+        if mode == .acceptEdits {
+            pendingApprovalRequest = ChatApprovalRequest(
+                toolName: toolName,
+                prompt: currentRunPrompt,
+                displayText: currentRunDisplayText
+            )
+        } else {
+            appendSystem(Self.blockedToolMessage(toolName: toolName, mode: mode))
+        }
+        cancelInFlightWork()
+        isProcessing = false
+    }
+
+    private func queuedDisplayText(for messageID: UUID, fallback: String) -> String {
+        guard let idx = messages.firstIndex(where: { $0.id == messageID }) else { return fallback }
+        return messages[idx].content
+    }
+
+    func approvePendingApprovalRequest() {
+        guard let request = pendingApprovalRequest else { return }
+        pendingApprovalRequest = nil
+        beginClaudeRun(
+            userPrompt: request.prompt,
+            displayText: request.displayText,
+            mode: .send,
+            interactionMode: .agent
+        )
+    }
+
+    func dismissPendingApprovalRequest() {
+        pendingApprovalRequest = nil
+    }
+
     private func clearMarkdownPreRenderWork() {
         pendingMarkdownPreRenders.removeAll()
         markdownPreRenderTask?.cancel()
@@ -947,6 +1030,58 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
+    nonisolated static func isMutatingTool(name: String, input: [String: Any]?) -> Bool {
+        switch name {
+        case "Edit", "Write", "MultiEdit", "NotebookEdit":
+            return true
+        case "Bash":
+            return true
+        default:
+            if let command = input?["command"] as? String {
+                let lowered = command.lowercased()
+                let mutatingHints = [
+                    "rm ", "mv ", "cp ", "mkdir ", "touch ", "tee ",
+                    "cat >", "sed -i", "python ", "python3 ",
+                    "git commit", "git push", "apply_patch"
+                ]
+                return mutatingHints.contains(where: lowered.contains)
+            }
+            return false
+        }
+    }
+
+    nonisolated static func isShellExecutionTool(name: String) -> Bool {
+        let lowered = name.lowercased()
+        return lowered == "bash"
+            || lowered == "shell"
+            || lowered.contains("exec_command")
+            || lowered.contains("write_stdin")
+            || lowered.contains("run_command")
+            || lowered.contains("terminal")
+    }
+
+    nonisolated static func shouldBlockTool(name: String, input: [String: Any]?, mode: ChatInteractionMode) -> Bool {
+        switch mode {
+        case .agent:
+            return false
+        case .acceptEdits:
+            return isMutatingTool(name: name, input: input) || isShellExecutionTool(name: name)
+        case .plan:
+            return isMutatingTool(name: name, input: input) || isShellExecutionTool(name: name)
+        }
+    }
+
+    nonisolated static func blockedToolMessage(toolName: String, mode: ChatInteractionMode) -> String {
+        switch mode {
+        case .agent:
+            return "L’action \(toolName) a ete bloquee."
+        case .acceptEdits:
+            return "Mode accept edits: l’action \(toolName) a ete bloquee en attendant ton approbation. L’approbation interactive n’est pas encore branchee."
+        case .plan:
+            return "Mode plan: l’action mutante \(toolName) a ete bloquee."
+        }
+    }
+
     /// Reads the current IDE selection state and injects it as context before the user's message.
     nonisolated static func buildPromptWithIDEContext(_ userMessage: String) -> String {
         let selectionPath = CanopeContextFiles.ideSelectionStatePaths[0]
@@ -969,6 +1104,40 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         \(userMessage)
         """
         return context
+    }
+
+    nonisolated static func buildPromptForInteractionMode(_ userMessage: String, mode: ChatInteractionMode) -> String {
+        let promptWithContext = buildPromptWithIDEContext(userMessage)
+        switch mode {
+        case .agent:
+            return promptWithContext
+        case .acceptEdits:
+            return """
+            [Canope Accept Edits Mode]
+            Tu es en mode accept edits.
+            - N'applique aucune edition de fichier sans approbation explicite.
+            - N'utilise pas Bash ni aucune commande shell.
+            - N'utilise aucune action de terminal, d'execution ou avec effets de bord.
+            - Propose les changements de facon concrete et ciblee.
+            - Si un outil d'edition serait necessaire, attends l'approbation au lieu d'agir.
+            [/Canope Accept Edits Mode]
+
+            \(promptWithContext)
+            """
+        case .plan:
+            return """
+            [Canope Plan Mode]
+            Tu es en mode plan strict.
+            - N'execute aucune edition de fichier.
+            - N'utilise aucune commande mutante.
+            - Ne lance aucune action avec effets de bord.
+            - Produis seulement un plan structure avec: Objectif, Changements proposes, Validation, Risques.
+            - Si une information manque, formule des hypotheses explicites au lieu d'agir.
+            [/Canope Plan Mode]
+
+            \(promptWithContext)
+            """
+        }
     }
 
     nonisolated static func findCLI(_ name: String) -> String {
