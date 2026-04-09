@@ -520,6 +520,12 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     }
 
     /// Send with a different display text than what's sent to Claude
+    func sendMessageWithDisplay(displayText: String, items: [ChatInputItem]) {
+        let prompt = ChatInputItem.legacyPrompt(from: items)
+        sendMessageWithDisplay(displayText: displayText, prompt: prompt)
+    }
+
+    /// Send with a different display text than what's sent to Claude
     func sendMessageWithDisplay(displayText: String, prompt: String) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

@@ -309,7 +309,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     let providerIcon = "chevron.left.forwardslash.chevron.right"
 
     static let defaultModels = ["gpt-5.4", "gpt-5.3-codex", "gpt-5.2"]
-    static let defaultEfforts = ["low", "medium", "high"]
+    static let defaultEfforts = ["low", "medium", "high", "xhigh"]
 
     private var workingDirectory: URL
     private var resumeWorkingDirectory: URL?
@@ -326,6 +326,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private var pendingMarkdown: [(UUID, String)] = []
     private var markdownTask: Task<Void, Never>?
     private var currentRunInteractionMode: ChatInteractionMode = .agent
+    private var currentRunInputItems: [ChatInputItem] = []
     private var currentRunPrompt = ""
     private var currentRunDisplayText = ""
     private var pendingServerRequests: [Int: PendingServerRequest] = [:]
@@ -385,7 +386,15 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         guard !trimmed.isEmpty else { return }
         if !isConnected { start() }
         pendingApprovalRequest = nil
-        Task { await sendUserMessage(trimmed, display: trimmed, interactionMode: chatInteractionMode) }
+        Task { await sendUserMessage([.text(trimmed)], display: trimmed, interactionMode: chatInteractionMode) }
+    }
+
+    func sendMessageWithDisplay(displayText: String, items: [ChatInputItem]) {
+        let prompt = ChatInputItem.legacyPrompt(from: items)
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if !isConnected { start() }
+        pendingApprovalRequest = nil
+        Task { await sendUserMessage(items, display: displayText, interactionMode: chatInteractionMode) }
     }
 
     func sendMessageWithDisplay(displayText: String, prompt: String) {
@@ -393,7 +402,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         guard !p.isEmpty else { return }
         if !isConnected { start() }
         pendingApprovalRequest = nil
-        Task { await sendUserMessage(p, display: displayText, interactionMode: chatInteractionMode) }
+        Task { await sendUserMessage([.text(p)], display: displayText, interactionMode: chatInteractionMode) }
     }
 
     // MARK: - Connection
@@ -505,11 +514,12 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     // MARK: - Send flow
 
     private func sendUserMessage(
-        _ prompt: String,
+        _ items: [ChatInputItem],
         display: String,
         interactionMode: ChatInteractionMode,
         appendUserMessage: Bool = true
     ) async {
+        let prompt = ChatInputItem.legacyPrompt(from: items)
         if appendUserMessage {
             messages.append(
                 ChatMessage(
@@ -524,6 +534,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
         isProcessing = true
         currentRunInteractionMode = interactionMode
+        currentRunInputItems = items
         currentRunPrompt = prompt
         currentRunDisplayText = display
         currentAssistantMessageIndex = nil
@@ -539,8 +550,6 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             isProcessing = false
             return
         }
-
-        let fullPrompt = Self.buildPromptForInteractionMode(prompt, mode: interactionMode)
 
         do {
             if currentThreadId == nil {
@@ -572,7 +581,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
             let turnParams: [String: Any] = [
                 "threadId": threadId,
-                "input": [["type": "text", "text": fullPrompt]],
+                "input": Self.buildTurnInputPayload(from: items, interactionMode: interactionMode),
                 "cwd": workingDirectoryURL.path,
                 "model": selectedModel,
                 "effort": selectedEffort,
@@ -907,9 +916,10 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
            let idx = itemToolUseMessageIndex[itemID],
            idx < messages.count {
             messages[idx].toolOutput = summary
-            messages[idx].isCollapsed = false
+            messages[idx].isCollapsed = true
             itemToolUseMessageIndex.removeValue(forKey: itemID)
             itemOutputBuffers.removeValue(forKey: itemID)
+            return
         }
         messages.append(
             ChatMessage(
@@ -1622,6 +1632,20 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             """
         }
     }
+
+    nonisolated static func buildTurnInputPayload(
+        from items: [ChatInputItem],
+        interactionMode: ChatInteractionMode
+    ) -> [[String: Any]] {
+        items.flatMap { item in
+            switch item {
+            case .text(let text):
+                return ChatInputItem.text(buildPromptForInteractionMode(text, mode: interactionMode)).codexPayloads
+            default:
+                return item.codexPayloads
+            }
+        }
+    }
 }
 
 // MARK: - HeadlessChatProviding
@@ -1693,7 +1717,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             if let lastUser = messages.lastIndex(where: { $0.role == .user }) {
                 messages.removeSubrange(lastUser...)
             }
-            await sendUserMessage(trimmed, display: trimmed, interactionMode: chatInteractionMode)
+            await sendUserMessage([.text(trimmed)], display: trimmed, interactionMode: chatInteractionMode)
         }
     }
 
@@ -1709,7 +1733,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         }
         Task {
             await sendUserMessage(
-                request.prompt,
+                currentRunInputItems.isEmpty ? [.text(request.prompt)] : currentRunInputItems,
                 display: request.displayText,
                 interactionMode: .agent,
                 appendUserMessage: false
@@ -1950,6 +1974,7 @@ extension CodexAppServerProvider {
         displayText: String = ""
     ) {
         currentRunInteractionMode = interactionMode
+        currentRunInputItems = prompt.isEmpty ? [] : [.text(prompt)]
         currentRunPrompt = prompt
         currentRunDisplayText = displayText
     }

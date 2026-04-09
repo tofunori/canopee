@@ -20,6 +20,17 @@ struct AttachedFile: Identifiable {
     }
 }
 
+extension AttachedFile {
+    var chatInputItem: ChatInputItem {
+        switch kind {
+        case .textFile:
+            return .textFile(name: name, path: path, content: content)
+        case .image:
+            return .localImage(path: path)
+        }
+    }
+}
+
 // MARK: - AI Chat View (Native headless chat panel)
 
 struct AIChatView<Provider: HeadlessChatProviding>: View {
@@ -805,6 +816,21 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             }
 
             HStack(spacing: 8) {
+                Button {
+                    openAttachmentPicker()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(AppChromePalette.surfaceSubbar)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Joindre un fichier")
+
                 TextField(chatInputPlaceholder, text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
@@ -1220,6 +1246,83 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         return true
     }
 
+    private func openAttachmentPicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.resolvesAliases = true
+        panel.title = "Joindre des fichiers au chat"
+        panel.prompt = "Joindre"
+
+        guard panel.runModal() == .OK else { return }
+        attachPickedFiles(panel.urls)
+    }
+
+    private func attachPickedFiles(_ urls: [URL]) {
+        var skippedNames: [String] = []
+
+        for url in urls {
+            guard url.isFileURL else {
+                skippedNames.append(url.lastPathComponent)
+                continue
+            }
+
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+            if values?.isDirectory == true {
+                skippedNames.append(url.lastPathComponent)
+                continue
+            }
+
+            if isSupportedPastedImageURL(url) {
+                attachedFiles.append(AttachedFile(
+                    name: url.lastPathComponent,
+                    path: url.path,
+                    content: "[Attached image at: \(url.path)]",
+                    kind: .image
+                ))
+                continue
+            }
+
+            if let content = tryReadTextAttachment(at: url) {
+                attachedFiles.append(AttachedFile(
+                    name: url.lastPathComponent,
+                    path: url.path,
+                    content: content,
+                    kind: .textFile
+                ))
+            } else {
+                skippedNames.append(url.lastPathComponent)
+            }
+        }
+
+        if !skippedNames.isEmpty {
+            let suffix = skippedNames.count == 1 ? skippedNames[0] : skippedNames.joined(separator: ", ")
+            provider.messages.append(
+                ChatMessage(
+                    role: .system,
+                    content: "Pièces jointes ignorées: \(suffix). Seules les images et les fichiers texte sont pris en charge pour l’instant.",
+                    timestamp: Date(),
+                    isStreaming: false,
+                    isCollapsed: false
+                )
+            )
+        }
+    }
+
+    private func tryReadTextAttachment(at url: URL) -> String? {
+        if let content = try? String(contentsOf: url, encoding: .utf8) {
+            return content
+        }
+        if let content = try? String(contentsOf: url, encoding: .unicode) {
+            return content
+        }
+        if let content = try? String(contentsOf: url, encoding: .isoLatin1) {
+            return content
+        }
+        return nil
+    }
+
     // MARK: - Helpers
 
     @State private var shouldAutoScroll = false
@@ -1286,21 +1389,16 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
 
         if !attachedFiles.isEmpty {
-            // Show clean message in UI, send full content to Claude
-            let fileNames = attachedFiles.map { $0.kind == .image ? "[\($0.name)]" : "📎 \($0.name)" }.joined(separator: " ")
-            let displayText = "\(text)\n\(fileNames)"
-
-            var fileContext = ""
-            for file in attachedFiles {
-                let truncated = file.content.count > 8000
-                    ? String(file.content.prefix(8000)) + "\n… (tronqué)"
-                    : file.content
-                fileContext += "\n[@\(file.name)]\n\(truncated)\n[/@\(file.name)]\n"
-            }
-            let fullPrompt = fileContext + "\n" + text
+            let fileNames = attachedFiles
+                .map { $0.kind == .image ? "[\($0.name)]" : "📎 \($0.name)" }
+                .joined(separator: " ")
+            let displayText = [text.isEmpty ? nil : text, fileNames]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+            let items = attachedFiles.map(\.chatInputItem) + (text.isEmpty ? [] : [.text(text)])
             attachedFiles.removeAll()
 
-            provider.sendMessageWithDisplay(displayText: displayText, prompt: fullPrompt)
+            provider.sendMessageWithDisplay(displayText: displayText, items: items)
         } else {
             provider.sendMessage(text)
         }

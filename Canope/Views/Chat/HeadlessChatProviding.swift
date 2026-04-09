@@ -20,6 +20,7 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     func resumeChatSession(id: String)
     func renameCurrentChatSession(to name: String)
     func editAndResendLastUser(newText: String)
+    func sendMessageWithDisplay(displayText: String, items: [ChatInputItem])
     func sendMessageWithDisplay(displayText: String, prompt: String)
     func approvePendingApprovalRequest()
     func dismissPendingApprovalRequest()

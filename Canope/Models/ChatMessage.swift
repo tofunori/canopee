@@ -86,6 +86,108 @@ struct ChatApprovalRequest: Identifiable, Equatable {
     }
 }
 
+enum ChatInputItem: Equatable {
+    static let maxInlineTextFileCharacters = 8_000
+
+    case text(String)
+    case image(URL)
+    case localImage(path: String)
+    case textFile(name: String, path: String, content: String)
+    case skill(name: String, path: String)
+    case mention(name: String, path: String)
+
+    var codexPayloads: [[String: Any]] {
+        switch self {
+        case .text(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return [] }
+            return [[
+                "type": "text",
+                "text": trimmed,
+                "text_elements": [],
+            ]]
+        case .image(let url):
+            return [[
+                "type": "image",
+                "url": url.absoluteString,
+            ]]
+        case .localImage(let path):
+            return [[
+                "type": "localImage",
+                "path": path,
+            ]]
+        case .textFile(let name, let path, let content):
+            return ChatInputItem.text(Self.legacyTextFilePrompt(name: name, path: path, content: content)).codexPayloads
+        case .skill(let name, let path):
+            return [[
+                "type": "skill",
+                "name": name,
+                "path": path,
+            ]]
+        case .mention(let name, let path):
+            return [[
+                "type": "mention",
+                "name": name,
+                "path": path,
+            ]]
+        }
+    }
+
+    static func legacyPrompt(from items: [ChatInputItem]) -> String {
+        var sections: [String] = []
+
+        for item in items {
+            switch item {
+            case .text(let text):
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    sections.append(trimmed)
+                }
+            case .textFile(let name, let path, let content):
+                sections.append(Self.legacyTextFilePrompt(name: name, path: path, content: content))
+            case .image(let url):
+                sections.append(Self.legacyImagePrompt(name: url.lastPathComponent, path: url.path))
+            case .localImage(let path):
+                sections.append(Self.legacyImagePrompt(name: URL(fileURLWithPath: path).lastPathComponent, path: path))
+            case .skill(let name, let path):
+                sections.append("""
+                [Attached skill: \(name)]
+                Path: \(path)
+                [/Attached skill]
+                """)
+            case .mention(let name, let path):
+                sections.append("""
+                [Attached mention: \(name)]
+                Path: \(path)
+                [/Attached mention]
+                """)
+            }
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    private static func legacyTextFilePrompt(name: String, path: String, content: String) -> String {
+        let truncated = content.count > maxInlineTextFileCharacters
+            ? String(content.prefix(maxInlineTextFileCharacters)) + "\n… (tronqué)"
+            : content
+        return """
+        [Attached file: \(name)]
+        Path: \(path)
+        \(truncated)
+        [/Attached file]
+        """
+    }
+
+    private static func legacyImagePrompt(name: String, path: String) -> String {
+        """
+        [Attached image: \(name)]
+        Path: \(path)
+        [/Attached image]
+        """
+    }
+}
+
 // MARK: - Chat Message Model
 
 struct ChatMessage: Identifiable, Equatable {

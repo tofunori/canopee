@@ -2,6 +2,42 @@ import XCTest
 @testable import Canope
 
 final class ChatSolidificationTests: XCTestCase {
+    func testAttachedFileMapsToStructuredChatInputItems() {
+        let textFile = AttachedFile(
+            name: "notes.md",
+            path: "/tmp/notes.md",
+            content: "# Notes"
+        )
+        let imageFile = AttachedFile(
+            name: "capture.png",
+            path: "/tmp/capture.png",
+            content: "[Pasted image saved at: /tmp/capture.png]",
+            kind: .image
+        )
+
+        XCTAssertEqual(
+            textFile.chatInputItem,
+            .textFile(name: "notes.md", path: "/tmp/notes.md", content: "# Notes")
+        )
+        XCTAssertEqual(
+            imageFile.chatInputItem,
+            .localImage(path: "/tmp/capture.png")
+        )
+    }
+
+    func testChatInputItemLegacyPromptKeepsFilesAndImagesReadable() {
+        let prompt = ChatInputItem.legacyPrompt(from: [
+            .textFile(name: "notes.md", path: "/tmp/notes.md", content: "# Notes"),
+            .localImage(path: "/tmp/capture.png"),
+            .text("Explique ce contenu"),
+        ])
+
+        XCTAssertTrue(prompt.contains("[Attached file: notes.md]"))
+        XCTAssertTrue(prompt.contains("Path: /tmp/notes.md"))
+        XCTAssertTrue(prompt.contains("[Attached image: capture.png]"))
+        XCTAssertTrue(prompt.contains("Explique ce contenu"))
+    }
+
     func testChatInteractionModeCyclesInExpectedOrder() {
         XCTAssertEqual(ChatInteractionMode.agent.next, .acceptEdits)
         XCTAssertEqual(ChatInteractionMode.acceptEdits.next, .plan)
@@ -260,12 +296,33 @@ final class ChatSolidificationTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testCodexApprovalPolicyMatchesInteractionMode() {
         XCTAssertEqual(CodexAppServerProvider.approvalPolicy(for: .agent), "on-request")
         XCTAssertEqual(CodexAppServerProvider.approvalPolicy(for: .acceptEdits), "on-request")
         XCTAssertEqual(CodexAppServerProvider.approvalPolicy(for: .plan), "never")
         XCTAssertEqual(CodexAppServerProvider.threadSandboxMode(for: .plan), "read-only")
         XCTAssertEqual(CodexAppServerProvider.threadSandboxMode(for: .agent), "workspace-write")
+        XCTAssertTrue(CodexAppServerProvider.defaultEfforts.contains("xhigh"))
+    }
+
+    func testCodexTurnInputPayloadPreservesStructuredInputs() {
+        let payload = CodexAppServerProvider.buildTurnInputPayload(
+            from: [
+                .textFile(name: "notes.md", path: "/tmp/notes.md", content: "# Notes"),
+                .localImage(path: "/tmp/capture.png"),
+                .text("Explique ce contenu"),
+            ],
+            interactionMode: .agent
+        )
+
+        XCTAssertEqual(payload.count, 3)
+        XCTAssertEqual(payload[0]["type"] as? String, "text")
+        XCTAssertEqual(payload[1]["type"] as? String, "localImage")
+        XCTAssertEqual(payload[1]["path"] as? String, "/tmp/capture.png")
+        XCTAssertEqual(payload[2]["type"] as? String, "text")
+        XCTAssertTrue((payload[0]["text"] as? String)?.contains("[Attached file: notes.md]") == true)
+        XCTAssertTrue((payload[2]["text"] as? String)?.contains("Explique ce contenu") == true)
     }
 
     @MainActor
@@ -342,7 +399,7 @@ final class ChatSolidificationTests: XCTestCase {
     }
 
     @MainActor
-    func testCodexCompletedCommandExecutionProducesToolResult() {
+    func testCodexCompletedCommandExecutionKeepsCompactToolCard() {
         let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
         provider.testHandleNotification(
             method: "item/started",
@@ -357,8 +414,10 @@ final class ChatSolidificationTests: XCTestCase {
             params: ["item": ["type": "commandExecution", "id": "cmd_1", "command": "ls -la", "status": "completed", "exitCode": 0]]
         )
 
-        XCTAssertEqual(provider.messages.last?.role, .toolResult)
-        XCTAssertTrue(provider.messages.last?.content.contains("Commande terminee") == true)
-        XCTAssertTrue(provider.messages.last?.content.contains("file.txt") == true)
+        XCTAssertEqual(provider.messages.count, 1)
+        XCTAssertEqual(provider.messages.last?.role, .toolUse)
+        XCTAssertTrue(provider.messages.last?.toolOutput?.contains("Commande terminee") == true)
+        XCTAssertTrue(provider.messages.last?.toolOutput?.contains("file.txt") == true)
+        XCTAssertEqual(provider.messages.last?.isCollapsed, true)
     }
 }
