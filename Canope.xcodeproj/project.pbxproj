@@ -107,6 +107,8 @@
 		E282F51EE6ACB9CE12273AF4 /* LaTeXLandingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60D85B0F6F272FE9FB671B5B /* LaTeXLandingView.swift */; };
 		E2B72C2390C87872E4893FA2 /* ClipboardCitationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84F5E69EE7A3B0F720B83B8C /* ClipboardCitationService.swift */; };
 		E3D04912305A19669C61147F /* StandalonePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293F7C980E5E160F1348EB20 /* StandalonePDFView.swift */; };
+		E46AB8027D18A7CCB1660831 /* DirectoryEventMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED6A374731ADD1C494DCDEB /* DirectoryEventMonitor.swift */; };
+		E4BF571F2C72CF6B5DA9F513 /* ImageArtifactRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 770C8EA54B75DAA627BCA017 /* ImageArtifactRepository.swift */; };
 		E4CEBC85E4ADC05A4374A1AC /* CanopeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22CE0F3F75B2FB0F7F0FB46 /* CanopeApp.swift */; };
 		E677B769BAD8B1A4B17C0844 /* TabBarComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 299BF29CC1FF9600B34192DE /* TabBarComponents.swift */; };
 		E961DA6526A566628D970803 /* LaTeXEditorContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04324231EDCC41DC5B45C566 /* LaTeXEditorContainer.swift */; };
@@ -151,6 +153,7 @@
 		1906D7A3427DFFCE569C97C8 /* AnnotationToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationToolbar.swift; sourceTree = "<group>"; };
 		1A9B7478F30A459BFAEEA8F7 /* CodeRunService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeRunService.swift; sourceTree = "<group>"; };
 		1CCFB1D31C977634472B234D /* RecentTeXFilesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentTeXFilesStore.swift; sourceTree = "<group>"; };
+		1ED6A374731ADD1C494DCDEB /* DirectoryEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectoryEventMonitor.swift; sourceTree = "<group>"; };
 		1F0E3A4CBD7E0C8753DA44D0 /* ClaudeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeService.swift; sourceTree = "<group>"; };
 		221ACF8C5634C933DA0ACD86 /* RichMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichMarkdownView.swift; sourceTree = "<group>"; };
 		27294933C87499758E8F72AD /* MainWindowTabController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowTabController.swift; sourceTree = "<group>"; };
@@ -184,6 +187,7 @@
 		6E3551EFCEDED294A25C2CF8 /* ThreePaneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreePaneLayout.swift; sourceTree = "<group>"; };
 		6F5330808F861EA6C2686A88 /* PaperRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperRowView.swift; sourceTree = "<group>"; };
 		75DB6386D580EA00D1FCBD94 /* LaTeXAnnotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXAnnotation.swift; sourceTree = "<group>"; };
+		770C8EA54B75DAA627BCA017 /* ImageArtifactRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageArtifactRepository.swift; sourceTree = "<group>"; };
 		78FF97BD833198CF2E966616 /* SwiftDataAndExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftDataAndExportTests.swift; sourceTree = "<group>"; };
 		79F2AFB9672171E0D8B26550 /* ClaudeCLIWrapperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCLIWrapperService.swift; sourceTree = "<group>"; };
 		7D23447DD7875D5F755F284E /* CanopeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CanopeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -407,6 +411,8 @@
 				455079B786FB26CBD1E28853 /* CodeSyntaxSupport.swift */,
 				132E2E5C613948B597078E88 /* CodexAppServerProvider.swift */,
 				888AB1D2ECB6F588E3C27898 /* DiffEngine.swift */,
+				1ED6A374731ADD1C494DCDEB /* DirectoryEventMonitor.swift */,
+				770C8EA54B75DAA627BCA017 /* ImageArtifactRepository.swift */,
 				FAD312ECC61638F9C7416BE7 /* LaTeXCompiler.swift */,
 				10CEB9D3C002C939383D24AB /* LaTeXUIState.swift */,
 				27294933C87499758E8F72AD /* MainWindowTabController.swift */,
@@ -667,9 +673,11 @@
 				C93CB667735089A3825C9E48 /* CompilationErrorView.swift in Sources */,
 				0362F30C6A3AB582D90240D1 /* CursorTrackingView.swift in Sources */,
 				7C8E8AF16DD8ABF9EF0C6FAE /* DiffEngine.swift in Sources */,
+				E46AB8027D18A7CCB1660831 /* DirectoryEventMonitor.swift in Sources */,
 				42CAC4A87F086C53AE16C27E /* EditorDocumentState.swift in Sources */,
 				3AAF798637E4A87DB4061B44 /* FileBrowserView.swift in Sources */,
 				70C75ABE02D9FD0C5D3AF412 /* HeadlessChatProviding.swift in Sources */,
+				E4BF571F2C72CF6B5DA9F513 /* ImageArtifactRepository.swift in Sources */,
 				8FF2D8D280A74E5EA19E0F24 /* InteractivePDFView.swift in Sources */,
 				21F48FB74A057ABF3322903A /* LaTeXAnnotation.swift in Sources */,
 				3C6F9350D0458B3FC6F28B68 /* LaTeXAnnotationNoteSheet.swift in Sources */,
@@ -753,7 +761,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ApplePressAndHoldEnabled = NO;
@@ -764,7 +772,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.4.1;
+				MARKETING_VERSION = 0.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.canope.app;
 				PRODUCT_MODULE_NAME = Canope;
 				PRODUCT_NAME = Canope;
@@ -900,7 +908,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ApplePressAndHoldEnabled = NO;
@@ -911,7 +919,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.4.1;
+				MARKETING_VERSION = 0.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.canope.app;
 				PRODUCT_MODULE_NAME = Canope;
 				PRODUCT_NAME = Canope;

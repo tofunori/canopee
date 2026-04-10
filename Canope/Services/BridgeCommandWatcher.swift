@@ -15,45 +15,60 @@ final class BridgeCommandWatcher: @unchecked Sendable {
     static let commandNotification = Notification.Name("CanopeBridgeCommandReceived")
 
     private let lock = NSLock()
-    private var timer: Timer?
+    private var monitors: [DirectoryEventMonitor] = []
     private var lastProcessedID: String?
 
     private init() {}
 
     func start() {
-        guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            self?.checkForCommand()
+        guard monitors.isEmpty else { return }
+
+        let directoryURLs = Set(
+            CanopeContextFiles.bridgeCommandPaths.map {
+                URL(fileURLWithPath: $0).deletingLastPathComponent()
+            }
+        )
+
+        monitors = directoryURLs.map { directoryURL in
+            DirectoryEventMonitor(directoryURL: directoryURL) { [weak self] in
+                self?.checkForCommand()
+            }
         }
+
+        monitors.forEach { $0.start() }
+        checkForCommand()
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
+        monitors.forEach { $0.stop() }
+        monitors.removeAll()
     }
 
-    // MARK: - Poll
+    // MARK: - Watch
 
     private func checkForCommand() {
-        guard let pending = latestPendingCommand() else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            guard let pending = self.latestPendingCommand() else { return }
 
-        lock.lock()
-        let alreadyProcessed = (pending.id == lastProcessedID)
-        if !alreadyProcessed {
-            lastProcessedID = pending.id
-        }
-        lock.unlock()
+            self.lock.lock()
+            let alreadyProcessed = (pending.id == self.lastProcessedID)
+            if !alreadyProcessed {
+                self.lastProcessedID = pending.id
+            }
+            self.lock.unlock()
 
-        guard !alreadyProcessed else { return }
+            guard !alreadyProcessed else { return }
 
-        DispatchQueue.main.async {
-            let handled = BridgeCommandRouter.shared.dispatch(command: pending.command)
-            if !handled {
-                BridgeCommandWatcher.writeResult(
-                    id: pending.id,
-                    status: "error",
-                    message: "No active PDF target"
-                )
+            DispatchQueue.main.async {
+                let handled = BridgeCommandRouter.shared.dispatch(command: pending.command)
+                if !handled {
+                    BridgeCommandWatcher.writeResult(
+                        id: pending.id,
+                        status: "error",
+                        message: "No active PDF target"
+                    )
+                }
             }
         }
     }

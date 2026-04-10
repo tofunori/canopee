@@ -392,6 +392,37 @@ private struct CodexAttachPopoverView: View {
     }
 }
 
+private struct LocalCachedImagePreview: View {
+    let path: String
+    let maxWidth: CGFloat
+    let maxHeight: CGFloat
+
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: maxWidth, maxHeight: maxHeight, alignment: .leading)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            }
+        }
+        .task(id: path) {
+            let url = URL(fileURLWithPath: path)
+            image = await ImageArtifactRepository.shared.loadImage(
+                forKey: "chat-image:\(path)",
+                from: url
+            )
+        }
+    }
+}
+
 // MARK: - AI Chat View (Native headless chat panel)
 
 struct AIChatView<Provider: HeadlessChatProviding>: View {
@@ -412,6 +443,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var isRenamingCurrentSession = false
     @State private var currentSessionNameDraft = ""
     @State private var cachedSelectionModifiedAt: Date?
+    @State private var selectionStateMonitor: DirectoryEventMonitor?
     @State private var modeStatusFlash = false
     @State private var approvalFieldValues: [String: String] = [:]
     @State private var hoveredUserMessageID: UUID?
@@ -445,20 +477,20 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             if !provider.isConnected {
                 provider.start()
             }
+            configureSelectionStateMonitor()
             refreshSelectionCache(force: true)
             syncPendingApprovalFormState()
         }
         .onDisappear {
             fileListTask?.cancel()
             fileListTask = nil
+            selectionStateMonitor?.stop()
+            selectionStateMonitor = nil
             hoveredUserMessageHideTask?.cancel()
             hoveredUserMessageHideTask = nil
         }
         .onChange(of: provider.pendingApprovalRequest?.id) { _, _ in
             syncPendingApprovalFormState()
-        }
-        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
-            refreshSelectionCache()
         }
         // Cmd+N handled via menu item or button — SwiftUI doesn't support view-level Cmd shortcuts well
         .sheet(isPresented: $showSessionPicker) {
@@ -515,6 +547,20 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
         cachedSelectionModifiedAt = modifiedAt
         cachedSelection = readSelectionFromDisk(at: path)
+    }
+
+    private func configureSelectionStateMonitor() {
+        let path = CanopeContextFiles.ideSelectionStatePaths[0]
+        let fileURL = URL(fileURLWithPath: path)
+        let directoryURL = fileURL.deletingLastPathComponent()
+
+        selectionStateMonitor?.stop()
+        selectionStateMonitor = DirectoryEventMonitor(directoryURL: directoryURL) {
+            Task { @MainActor in
+                refreshSelectionCache()
+            }
+        }
+        selectionStateMonitor?.start()
     }
 
     private var chatFileRootURL: URL {
@@ -1139,17 +1185,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     .frame(maxHeight: 120)
                 }
 
-                if let imagePath = imagePreviewPath(for: message),
-                   let nsImage = NSImage(contentsOfFile: imagePath) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: 240, maxHeight: 140, alignment: .leading)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
+                if let imagePath = imagePreviewPath(for: message) {
+                    LocalCachedImagePreview(path: imagePath, maxWidth: 240, maxHeight: 140)
                 }
 
                 if let output = message.toolOutput, !output.isEmpty {

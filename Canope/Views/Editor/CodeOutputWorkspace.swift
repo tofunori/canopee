@@ -551,9 +551,15 @@ private struct ZoomableImageArtifactView: NSViewRepresentable {
         private let controller: ImageArtifactZoomController
         private var lastURL: URL?
         private var lastCommandRevision: Int = -1
+        private var imageLoadTask: Task<Void, Never>?
 
         init(controller: ImageArtifactZoomController) {
             self.controller = controller
+        }
+
+        deinit {
+            imageLoadTask?.cancel()
+            NotificationCenter.default.removeObserver(self)
         }
 
         func attach(scrollView: NSScrollView, documentView: CenteredImageDocumentView, imageView: NSImageView) {
@@ -573,10 +579,22 @@ private struct ZoomableImageArtifactView: NSViewRepresentable {
 
             let didChangeImage = lastURL != url
             if didChangeImage {
-                imageView.image = NSImage(contentsOf: url)
-                imageView.frame = CGRect(origin: .zero, size: imageView.image?.size ?? .zero)
                 lastURL = url
-                fitImage()
+                imageLoadTask?.cancel()
+                imageView.image = nil
+                imageView.frame = .zero
+                documentView?.frame = .zero
+                imageLoadTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let image = await ImageArtifactRepository.shared.loadImage(
+                        forKey: "artifact-image:\(url.path)",
+                        from: url
+                    )
+                    guard !Task.isCancelled, self.lastURL == url else { return }
+                    self.imageView?.image = image
+                    self.imageView?.frame = CGRect(origin: .zero, size: image?.size ?? .zero)
+                    self.fitImage()
+                }
             }
 
             guard lastCommandRevision != commandRevision else { return }

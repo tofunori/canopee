@@ -145,7 +145,9 @@ struct MarkdownLiveEditor: NSViewRepresentable {
                       targetPath == filePath,
                       let rawValue = notification.userInfo?["command"] as? String,
                       let command = Command(rawValue: rawValue) else { return }
-                self.perform(command: command)
+                Task { @MainActor [weak self] in
+                    self?.perform(command: command)
+                }
             }
         }
 
@@ -189,6 +191,7 @@ struct MarkdownLiveEditor: NSViewRepresentable {
             ]
         }
 
+        @MainActor
         private func perform(command: Command) {
             guard let textView else { return }
             let selectedRange = textView.selectedRange()

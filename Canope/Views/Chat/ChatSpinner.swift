@@ -71,8 +71,10 @@ struct SpinnerVerbView: View {
         .transition(.opacity)
         .onAppear {
             timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    verb = spinnerVerbs.randomElement() ?? "Thinking"
+                Task { @MainActor in
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        verb = spinnerVerbs.randomElement() ?? "Thinking"
+                    }
                 }
             }
         }
@@ -98,8 +100,10 @@ struct ThinkingDots: View {
         }
         .onAppear {
             timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    active = (active + 1) % 3
+                Task { @MainActor in
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        active = (active + 1) % 3
+                    }
                 }
             }
         }

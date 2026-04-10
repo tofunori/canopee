@@ -24,6 +24,7 @@ final class EditorDocumentUIState: ObservableObject {
 
     var toolbarStatusClearWorkItem: DispatchWorkItem?
     private(set) var didInitialLoadFromDisk = false
+    private var compiledPDFLoadRequestID = UUID()
 
     var hasUnsavedEditorChanges: Bool {
         text != savedText
@@ -31,6 +32,20 @@ final class EditorDocumentUIState: ObservableObject {
 
     func markInitialLoadFromDisk() {
         didInitialLoadFromDisk = true
+    }
+
+    func beginCompiledPDFLoadRequest() -> UUID {
+        let id = UUID()
+        compiledPDFLoadRequestID = id
+        return id
+    }
+
+    func isCurrentCompiledPDFLoadRequest(_ id: UUID) -> Bool {
+        compiledPDFLoadRequestID == id
+    }
+
+    func invalidateCompiledPDFLoadRequests() {
+        compiledPDFLoadRequestID = UUID()
     }
 
     func resetForPlaceholder() {
@@ -51,6 +66,7 @@ final class EditorDocumentUIState: ObservableObject {
         selectedEditorRange = nil
         pendingAnnotation = nil
         referenceContextWriteID = UUID()
+        compiledPDFLoadRequestID = UUID()
         toolbarStatusClearWorkItem?.cancel()
         toolbarStatusClearWorkItem = nil
         didInitialLoadFromDisk = false

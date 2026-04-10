@@ -20,7 +20,6 @@ private enum EditorThreePaneRole {
 
 struct UnifiedEditorView: View {
     @Environment(\.accessibilityReduceMotion) var reduceMotion
-    @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
 
     // MARK: - Init properties (from both editors)
 
@@ -48,7 +47,9 @@ struct UnifiedEditorView: View {
 
     // MARK: - State: Shared
 
-    @State var pollTimer: Timer?
+    @State var fileWatcher: DirectoryEventMonitor?
+    @State var watchedFileURL: URL?
+    @State var watchedDirectoryURL: URL?
     @State var sidebarResizeStartWidth: CGFloat?
     @State var sidebarDragWidth: CGFloat?
     @State var fileCreationError: String?
@@ -64,6 +65,7 @@ struct UnifiedEditorView: View {
 
     @State private var outputResizeStartWidth: CGFloat?
     @State private var outputDragTranslation: CGFloat?
+    @State var workspacePersistenceWorkItem: DispatchWorkItem?
     @Namespace var contentTabIndicatorNamespace
 
     // MARK: - Computed: Mode
@@ -528,7 +530,7 @@ struct UnifiedEditorView: View {
         }
         .onDisappear {
             stopFileWatcher()
-            if documentMode.isRunnableCode { persistDocumentWorkspaceState() }
+            if documentMode.isRunnableCode { persistDocumentWorkspaceState(immediate: true) }
             if isActive { BibliographyCommandRouter.shared.clearActions() }
         }
         .onChange(of: isActive) {
@@ -540,7 +542,7 @@ struct UnifiedEditorView: View {
                 syncBibliographyCommandRouter()
             } else {
                 stopFileWatcher()
-                if documentMode.isRunnableCode { persistDocumentWorkspaceState() }
+                if documentMode.isRunnableCode { persistDocumentWorkspaceState(immediate: true) }
                 BibliographyCommandRouter.shared.clearActions()
             }
         }
@@ -558,7 +560,7 @@ struct UnifiedEditorView: View {
             if !documentMode.isRunnableCode { refreshSplitGrabAreas() }
         }
         .onChange(of: showSidebar) {
-            if documentMode.isRunnableCode { onPersistWorkspaceState?() }
+            if documentMode.isRunnableCode { persistDocumentWorkspaceState() }
             else { refreshSplitGrabAreas() }
         }
         .onChange(of: showPDFPreview) { if !documentMode.isRunnableCode { refreshSplitGrabAreas() } }
@@ -576,9 +578,9 @@ struct UnifiedEditorView: View {
             .onChange(of: codeDocumentState.selectedRunID) { persistDocumentWorkspaceState() }
             .onChange(of: codeDocumentState.selectedArtifactPath) { persistDocumentWorkspaceState() }
             .onChange(of: codeDocumentState.secondaryArtifactPath) { persistDocumentWorkspaceState() }
-            .onChange(of: workspaceState.sidebarWidth) { onPersistWorkspaceState?() }
-            .onChange(of: workspaceState.editorFontSize) { onPersistWorkspaceState?() }
-            .onChange(of: workspaceState.markdownEditorMode) { onPersistWorkspaceState?() }
+            .onChange(of: workspaceState.sidebarWidth) { persistDocumentWorkspaceState() }
+            .onChange(of: workspaceState.editorFontSize) { persistDocumentWorkspaceState() }
+            .onChange(of: workspaceState.markdownEditorMode) { persistDocumentWorkspaceState() }
     }
 
     // MARK: - Work Area Pane
@@ -638,7 +640,7 @@ struct UnifiedEditorView: View {
         let config = isCode
             ? ThreePaneLayoutConfig.code(arrangement: panelArrangement, contentVisible: showContent)
             : ThreePaneLayoutConfig.latex(arrangement: panelArrangement, contentVisible: showContent)
-        let dragEnd: (() -> Void)? = isCode ? { [self] in persistDocumentWorkspaceState() } : nil
+        let dragEnd: (() -> Void)? = isCode ? { [self] in persistDocumentWorkspaceState(immediate: true) } : nil
         return ThreePaneLayoutView(
             config: config,
             leadingWidth: Binding(get: { threePaneLeftWidth }, set: { threePaneLeftWidth = $0 }),
@@ -760,7 +762,7 @@ struct UnifiedEditorView: View {
                             .onEnded { _ in
                                 outputResizeStartWidth = nil
                                 outputDragTranslation = nil
-                                persistDocumentWorkspaceState()
+                                persistDocumentWorkspaceState(immediate: true)
                             }
                     ),
                     axis: .vertical
@@ -1041,7 +1043,7 @@ struct UnifiedEditorView: View {
             outputStatusLabel: outputStatusLabel,
             revealArtifactDirectoryInFinder: revealArtifactDirectoryInFinder,
             refreshSelectedRun: refreshSelectedRun,
-            persist: persistDocumentWorkspaceState
+            persist: { persistDocumentWorkspaceState() }
         )
     }
 
@@ -1540,7 +1542,7 @@ struct UnifiedEditorView: View {
                 Button(action: addTerminalTab) {
                     Label(AppStrings.newTerminal, systemImage: "plus")
                 }
-                Button(action: terminalAppearanceStore.presentSettings) {
+                Button(action: TerminalAppearanceStore.shared.presentSettings) {
                     Label(AppStrings.settingsTerminal, systemImage: "slider.horizontal.3")
                 }
             } label: {

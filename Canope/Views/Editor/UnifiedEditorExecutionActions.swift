@@ -10,6 +10,7 @@ extension UnifiedEditorView {
             compiledPDF = nil
             documentState.compiledPDFLastKnownPageIndex = 0
             documentState.compiledPDFRequestedRestorePageIndex = nil
+            documentState.invalidateCompiledPDFLoadRequests()
             return
         }
 
@@ -18,12 +19,31 @@ extension UnifiedEditorView {
             return
         }
 
-        replaceCompiledPDF(with: PDFDocument(url: previewPDFURL))
+        loadCompiledPDFDocument(from: previewPDFURL, forceReload: forceReload)
     }
 
     func replaceCompiledPDF(with document: PDFDocument?) {
         documentState.compiledPDFRequestedRestorePageIndex = documentState.compiledPDFLastKnownPageIndex
         compiledPDF = document
+    }
+
+    func loadCompiledPDFDocument(from url: URL, forceReload: Bool = true) {
+        let requestID = documentState.beginCompiledPDFLoadRequest()
+        documentState.compiledPDFRequestedRestorePageIndex = documentState.compiledPDFLastKnownPageIndex
+        let cacheKey = "compiled:\(url.standardizedFileURL.path)"
+
+        Task {
+            let document = await PDFDocumentRepository.shared.loadDocument(
+                forKey: cacheKey,
+                from: url,
+                normalizeAnnotations: false,
+                forceReload: forceReload
+            )
+            await MainActor.run {
+                guard documentState.isCurrentCompiledPDFLoadRequest(requestID) else { return }
+                compiledPDF = document
+            }
+        }
     }
 
     func reloadActiveFileState() {
@@ -248,7 +268,7 @@ extension UnifiedEditorView {
                 compileOutput = result.log
                 showErrors = true
                 if let pdfURL = result.pdfURL {
-                    replaceCompiledPDF(with: PDFDocument(url: pdfURL))
+                    loadCompiledPDFDocument(from: pdfURL, forceReload: true)
                 }
                 isCompiling = false
                 if activeErrorCount > 0 {
@@ -272,9 +292,10 @@ extension UnifiedEditorView {
                 compileOutput = result.log
                 showErrors = !result.success || !result.errors.isEmpty
                 if let pdfURL = result.pdfURL {
-                    replaceCompiledPDF(with: PDFDocument(url: pdfURL))
+                    loadCompiledPDFDocument(from: pdfURL, forceReload: true)
                 } else if !result.success {
                     compiledPDF = nil
+                    documentState.invalidateCompiledPDFLoadRequests()
                 }
                 isCompiling = false
                 if activeErrorCount > 0 {
@@ -324,8 +345,21 @@ extension UnifiedEditorView {
         persistDocumentWorkspaceState()
     }
 
-    func persistDocumentWorkspaceState() {
-        onPersistWorkspaceState?()
+    func persistDocumentWorkspaceState(immediate: Bool = false) {
+        workspacePersistenceWorkItem?.cancel()
+        workspacePersistenceWorkItem = nil
+
+        let performPersist: () -> Void = {
+            onPersistWorkspaceState?()
+        }
+        if immediate {
+            performPersist()
+            return
+        }
+
+        let workItem = DispatchWorkItem(block: performPersist)
+        workspacePersistenceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
     }
 
     private var codeActiveReferencePDFID: UUID? {
@@ -499,24 +533,35 @@ extension UnifiedEditorView {
     }
 
     func startFileWatcher() {
-        guard !hasNoFile, pollTimer == nil else { return }
+        guard !hasNoFile else { return }
         lastModified = modificationDate()
         let watchedURL = fileURL
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
+        let watchedDirectory = watchedURL.deletingLastPathComponent()
+
+        if watchedFileURL == watchedURL, watchedDirectoryURL == watchedDirectory, fileWatcher != nil {
+            return
+        }
+
+        stopFileWatcher()
+        watchedFileURL = watchedURL
+        watchedDirectoryURL = watchedDirectory
+        fileWatcher = DirectoryEventMonitor(directoryURL: watchedDirectory) {
             let currentMod = Self.modificationDate(for: watchedURL)
             Task { @MainActor in
-                guard isActive else { return }
                 if let currentMod, currentMod != lastModified {
                     lastModified = currentMod
                     loadFile(useAsBaseline: false)
                 }
             }
         }
+        fileWatcher?.start()
     }
 
     func stopFileWatcher() {
-        pollTimer?.invalidate()
-        pollTimer = nil
+        fileWatcher?.stop()
+        fileWatcher = nil
+        watchedFileURL = nil
+        watchedDirectoryURL = nil
     }
 
     func modificationDate() -> Date? {

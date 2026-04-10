@@ -184,7 +184,7 @@ struct MainWindow: View {
     }
 
     func openPaperAsReference(id: UUID) {
-        guard let paper = allPapers.first(where: { $0.id == id }) else { return }
+        guard allPapers.contains(where: { $0.id == id }) else { return }
 
         if !latexWorkspaceState.referencePaperIDs.contains(id) {
             latexWorkspaceState.registerReference(id: id)
