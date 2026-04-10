@@ -110,7 +110,6 @@ struct LaTeXEditorContainer: View {
         let referenceIDs = snapshot.referencePaperIDs.filter { seen.insert($0).inserted }
         workspaceState.referencePaperIDs = referenceIDs
         workspaceState.selectedReferencePaperID = snapshot.selectedReferencePaperID
-        workspaceState.referencePDFs = loadReferencePDFs(for: referenceIDs)
         workspaceState.referencePDFUIStates = Dictionary(uniqueKeysWithValues: referenceIDs.map { ($0, ReferencePDFUIState()) })
         if workspaceState.workspaceRoot == nil {
             workspaceState.workspaceRoot = LaTeXWorkspaceUIState.preferredWorkspaceRoot(openPaths: openPaths)
@@ -120,28 +119,11 @@ struct LaTeXEditorContainer: View {
            !referenceIDs.contains(selectedID) {
             workspaceState.selectedReferencePaperID = nil
         }
-    }
-
-    private func loadReferencePDFs(for ids: [UUID]) -> [UUID: PDFDocument] {
-        var documents: [UUID: PDFDocument] = [:]
-        for id in ids {
-            guard let paper = allPapers.first(where: { $0.id == id }),
-                  let pdf = PDFDocument(url: paper.fileURL) else { continue }
-            AnnotationService.normalizeDocumentAnnotations(in: pdf)
-            documents[id] = pdf
-        }
-        return documents
+        workspaceState.trimReferenceWorkingSet()
     }
 
     private func closeReference(_ id: UUID) {
-        workspaceState.referencePaperIDs.removeAll { $0 == id }
-        workspaceState.referencePDFs.removeValue(forKey: id)
-        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
-        workspaceState.referencePDFUIStates.removeValue(forKey: id)
-
-        if workspaceState.selectedReferencePaperID == id {
-            workspaceState.selectedReferencePaperID = workspaceState.referencePaperIDs.first
-        }
+        workspaceState.removeReference(id: id)
     }
 
     @ViewBuilder
@@ -226,6 +208,10 @@ struct LaTeXEditorContainer: View {
                 syncCodeDocumentStates()
             }
         }
+        .task(id: workspaceState.selectedReferencePaperID) {
+            guard let selectedID = workspaceState.selectedReferencePaperID else { return }
+            await ensureReferenceDocumentLoaded(for: selectedID)
+        }
     }
 
     private func editorView(for fileURL: URL) -> some View {
@@ -291,5 +277,21 @@ struct LaTeXEditorContainer: View {
         }
         editorDocumentStateStore.removeMissingStates(keepingPaths: openPaths)
         codeDocumentStateStore.removeMissingStates(keepingPaths: openPaths)
+    }
+
+    private func ensureReferenceDocumentLoaded(for id: UUID) async {
+        guard workspaceState.referencePDFs[id] == nil,
+              !workspaceState.isReferenceLoading(id),
+              let paper = allPapers.first(where: { $0.id == id }) else {
+            workspaceState.noteReferenceAccess(id)
+            return
+        }
+
+        workspaceState.beginReferenceLoad(id: id)
+        let key = "reference:\(paper.fileURL.path)"
+        let document = await PDFDocumentRepository.shared.loadDocument(forKey: key, from: paper.fileURL)
+        workspaceState.finishReferenceLoad(id: id)
+        guard workspaceState.referencePaperIDs.contains(id) else { return }
+        workspaceState.setReferenceDocument(document, for: id)
     }
 }

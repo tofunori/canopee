@@ -479,24 +479,14 @@ extension UnifiedEditorView {
     }
 
     private func codeReloadReferencePDFDocument(id: UUID) {
-        guard let paper = paperFor(id) else { return }
         let state = workspaceState.referencePDFUIStates[id]
         state?.selectedAnnotation = nil
         state?.requestedRestorePageIndex = state?.lastKnownPageIndex
-        guard let data = try? Data(contentsOf: paper.fileURL),
-              let refreshed = PDFDocument(data: data) else {
-            if let loaded = PDFDocument(url: paper.fileURL) {
-                AnnotationService.normalizeDocumentAnnotations(in: loaded)
-                workspaceState.referencePDFs[id] = loaded
-            }
+        Task {
+            _ = await ensureReferencePDFLoaded(id: id, forceReload: true)
             state?.annotationRefreshToken = UUID()
             state?.pdfViewRefreshToken = UUID()
-            return
         }
-        AnnotationService.normalizeDocumentAnnotations(in: refreshed)
-        workspaceState.referencePDFs[id] = refreshed
-        state?.annotationRefreshToken = UUID()
-        state?.pdfViewRefreshToken = UUID()
     }
 
     private func codeSaveReferenceAnnotationNote(for id: UUID) {
@@ -512,7 +502,7 @@ extension UnifiedEditorView {
         guard !hasNoFile, pollTimer == nil else { return }
         lastModified = modificationDate()
         let watchedURL = fileURL
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
             let currentMod = Self.modificationDate(for: watchedURL)
             Task { @MainActor in
                 guard isActive else { return }

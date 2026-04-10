@@ -496,19 +496,11 @@ struct UnifiedEditorView: View {
     }
 
     private var bodyCore: some View {
-        VStack(spacing: 0) {
-            editorToolbar
-                .zIndex(30)
-            AppChromeDivider(role: .shell)
-                .zIndex(20)
-            HSplitView {
-                sidebarPane
-                workAreaPane
-            }
-            .zIndex(0)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        UnifiedEditorChromeShell(
+            toolbar: { editorToolbar },
+            sidebar: { sidebarPane },
+            workArea: { workAreaPane }
+        )
         .sheet(item: pendingAnnotationBinding) { pending in
             LaTeXAnnotationNoteSheet(
                 title: pending.existingAnnotationID == nil ? "Nouvelle annotation" : "Modifier l'annotation",
@@ -932,8 +924,10 @@ struct UnifiedEditorView: View {
     // MARK: - Content Pane (PDF or Output + Reference tabs)
 
     var contentPane: some View {
-        VStack(spacing: 0) {
-            if contentPaneTabs.count > 1 {
+        UnifiedEditorContentPaneShell(
+            tabs: contentPaneTabs,
+            selectedTab: selectedContentTab,
+            tabBar: {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
                         ForEach(contentPaneTabs, id: \.self) { tab in
@@ -943,60 +937,59 @@ struct UnifiedEditorView: View {
                 }
                 .frame(height: AppChromeMetrics.tabBarHeight)
                 .background(AppChromePalette.surfaceSubbar)
-                AppChromeDivider(role: .panel)
-            }
-
-            ZStack {
+            },
+            primaryContent: {
                 primaryContentView
-                    .opacity(selectedContentTab == .compiled ? 1 : 0)
-                    .allowsHitTesting(selectedContentTab == .compiled)
-
-                ForEach(contentPaneTabs.compactMap { tab -> UUID? in
-                    if case .reference(let id) = tab { return id } else { return nil }
-                }, id: \.self) { id in
-                    Group {
-                        if let pdf = workspaceState.referencePDFs[id],
-                           let state = workspaceState.referencePDFUIStates[id],
-                           let paper = paperFor(id) {
-                            ReferencePDFAnnotationPane(
-                                document: pdf,
-                                fileURL: paper.fileURL,
-                                fitToWidthTrigger: selectedContentTab == .reference(id) ? fitToWidthTrigger : false,
-                                isBridgeCommandTargetActive: selectedContentTab == .reference(id),
-                                state: state,
-                                onDocumentChanged: {
-                                    referencePDFDocumentDidChange(id: id)
-                                },
-                                onMarkupAppearanceNeedsRefresh: {
-                                    reloadReferencePDFDocument(id: id)
-                                },
-                                onSaveNote: {
-                                    saveReferenceAnnotationNote(for: id)
-                                },
-                                onCancelNote: {
-                                    cancelReferenceAnnotationNoteEdit(for: id)
-                                },
-                                onAutoSave: {
-                                    saveReferencePDF(id: id)
-                                }
-                            )
-                        } else {
-                            ContentUnavailableView(
-                                AppStrings.pdfNotFound,
-                                systemImage: "exclamationmark.triangle",
-                                description: Text(AppStrings.pdfCouldNotLoad)
-                            )
-                        }
+            },
+            referenceContent: { id in
+                Group {
+                    if let pdf = workspaceState.referencePDFs[id],
+                       let state = workspaceState.referencePDFUIStates[id],
+                       let paper = paperFor(id) {
+                        ReferencePDFAnnotationPane(
+                            document: pdf,
+                            fileURL: paper.fileURL,
+                            fitToWidthTrigger: selectedContentTab == .reference(id) ? fitToWidthTrigger : false,
+                            isBridgeCommandTargetActive: selectedContentTab == .reference(id),
+                            state: state,
+                            onDocumentChanged: {
+                                referencePDFDocumentDidChange(id: id)
+                            },
+                            onMarkupAppearanceNeedsRefresh: {
+                                reloadReferencePDFDocument(id: id)
+                            },
+                            onSaveNote: {
+                                saveReferenceAnnotationNote(for: id)
+                            },
+                            onCancelNote: {
+                                cancelReferenceAnnotationNoteEdit(for: id)
+                            },
+                            onAutoSave: {
+                                saveReferencePDF(id: id)
+                            }
+                        )
+                    } else if workspaceState.isReferenceLoading(id) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ContentUnavailableView(
+                            AppStrings.pdfNotFound,
+                            systemImage: "exclamationmark.triangle",
+                            description: Text(AppStrings.pdfCouldNotLoad)
+                        )
                     }
-                    .opacity(selectedContentTab == .reference(id) ? 1 : 0)
-                    .allowsHitTesting(selectedContentTab == .reference(id))
                 }
             }
-        }
+        )
         .frame(minWidth: documentMode.isRunnableCode ? 240 : 180,
                idealWidth: documentMode.isRunnableCode ? 380 : 320,
                maxWidth: .infinity,
                maxHeight: .infinity)
+        .task(id: selectedContentTab) {
+            guard case .reference(let id) = selectedContentTab else { return }
+            _ = await ensureReferencePDFLoaded(id: id)
+        }
     }
 
     private var contentPaneTabs: [LaTeXEditorPdfPaneTab] {
@@ -1124,6 +1117,10 @@ struct UnifiedEditorView: View {
             workspaceState.selectedReferencePaperID = nil
         case .reference(let id):
             workspaceState.selectedReferencePaperID = id
+            workspaceState.noteReferenceAccess(id)
+            Task {
+                _ = await ensureReferencePDFLoaded(id: id)
+            }
         }
     }
 
@@ -1134,13 +1131,7 @@ struct UnifiedEditorView: View {
         let documentToSave = workspaceState.referencePDFs[id]
         let fileURLToSave = paperFor(id)?.fileURL
 
-        workspaceState.referencePaperIDs.removeAll { $0 == id }
-        workspaceState.referencePDFs.removeValue(forKey: id)
-        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
-        workspaceState.referencePDFUIStates.removeValue(forKey: id)
-        if workspaceState.selectedReferencePaperID == id {
-            workspaceState.selectedReferencePaperID = workspaceState.referencePaperIDs.first
-        }
+        workspaceState.removeReference(id: id)
 
         guard pendingSave, let documentToSave, let fileURLToSave else { return }
         DispatchQueue.main.async {
@@ -1155,17 +1146,18 @@ struct UnifiedEditorView: View {
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
                 workspaceState.selectedReferencePaperID = paper.id
             }
+            workspaceState.noteReferenceAccess(paper.id)
+            Task {
+                _ = await ensureReferencePDFLoaded(id: paper.id)
+            }
             return
         }
-        guard let pdf = PDFDocument(url: paper.fileURL) else { return }
-        AnnotationService.normalizeDocumentAnnotations(in: pdf)
-        workspaceState.referencePDFs[paper.id] = pdf
-        if workspaceState.referencePDFUIStates[paper.id] == nil {
-            workspaceState.referencePDFUIStates[paper.id] = ReferencePDFUIState()
-        }
-        workspaceState.referencePaperIDs.append(paper.id)
+        workspaceState.registerReference(id: paper.id)
         AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
             workspaceState.selectedReferencePaperID = paper.id
+        }
+        Task {
+            _ = await ensureReferencePDFLoaded(id: paper.id)
         }
         if !isOutputVisible {
             AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
@@ -1655,6 +1647,64 @@ struct UnifiedEditorView: View {
         toggleSidebar(section: .annotations)
     }
 
+}
+
+private struct UnifiedEditorChromeShell<Toolbar: View, Sidebar: View, WorkArea: View>: View {
+    @ViewBuilder let toolbar: () -> Toolbar
+    @ViewBuilder let sidebar: () -> Sidebar
+    @ViewBuilder let workArea: () -> WorkArea
+
+    var body: some View {
+        VStack(spacing: 0) {
+            toolbar()
+                .zIndex(30)
+            AppChromeDivider(role: .shell)
+                .zIndex(20)
+            HSplitView {
+                sidebar()
+                workArea()
+            }
+            .zIndex(0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct UnifiedEditorContentPaneShell<TabBar: View, PrimaryContent: View, ReferenceContent: View>: View {
+    let tabs: [LaTeXEditorPdfPaneTab]
+    let selectedTab: LaTeXEditorPdfPaneTab
+    @ViewBuilder let tabBar: () -> TabBar
+    @ViewBuilder let primaryContent: () -> PrimaryContent
+    @ViewBuilder let referenceContent: (UUID) -> ReferenceContent
+
+    private var referenceTabIDs: [UUID] {
+        tabs.compactMap { tab in
+            if case .reference(let id) = tab { return id }
+            return nil
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if tabs.count > 1 {
+                tabBar()
+                AppChromeDivider(role: .panel)
+            }
+
+            ZStack {
+                primaryContent()
+                    .opacity(selectedTab == .compiled ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .compiled)
+
+                ForEach(referenceTabIDs, id: \.self) { id in
+                    referenceContent(id)
+                        .opacity(selectedTab == .reference(id) ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .reference(id))
+                }
+            }
+        }
+    }
 }
 
 private struct MarkdownToolbarModeButton: View {

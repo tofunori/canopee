@@ -9,20 +9,21 @@ extension UnifiedEditorView {
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
                 workspaceState.selectedReferencePaperID = paper.id
             }
+            workspaceState.noteReferenceAccess(paper.id)
             writeReferencePaperContext(for: paper.id)
+            Task {
+                _ = await ensureReferencePDFLoaded(id: paper.id)
+            }
             return
         }
-        guard let pdf = PDFDocument(url: paper.fileURL) else { return }
-        AnnotationService.normalizeDocumentAnnotations(in: pdf)
-        workspaceState.referencePDFs[paper.id] = pdf
-        if workspaceState.referencePDFUIStates[paper.id] == nil {
-            workspaceState.referencePDFUIStates[paper.id] = ReferencePDFUIState()
-        }
-        workspaceState.referencePaperIDs.append(paper.id)
+        workspaceState.registerReference(id: paper.id)
         AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
             workspaceState.selectedReferencePaperID = paper.id
         }
         writeReferencePaperContext(for: paper.id)
+        Task {
+            _ = await ensureReferencePDFLoaded(id: paper.id)
+        }
         if splitLayout == .editorOnly {
             AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
                 layoutBeforeReference = .editorOnly
@@ -44,6 +45,9 @@ extension UnifiedEditorView {
                 workspaceState.selectedReferencePaperID = id
             }
             writeReferencePaperContext(for: id)
+            Task {
+                _ = await ensureReferencePDFLoaded(id: id)
+            }
         }
     }
 
@@ -54,10 +58,7 @@ extension UnifiedEditorView {
         let fileURLToSave = paperFor(id)?.fileURL
         let remainingReferenceIDs = workspaceState.referencePaperIDs.filter { $0 != id }
 
-        workspaceState.referencePaperIDs.removeAll { $0 == id }
-        workspaceState.referencePDFs.removeValue(forKey: id)
-        workspaceState.referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
-        workspaceState.referencePDFUIStates.removeValue(forKey: id)
+        workspaceState.removeReference(id: id)
         if selectedPdfTab == tab || workspaceState.selectedReferencePaperID == id {
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
                 workspaceState.selectedReferencePaperID = remainingReferenceIDs.first
@@ -141,28 +142,16 @@ extension UnifiedEditorView {
     }
 
     func reloadReferencePDFDocument(id: UUID) {
-        guard let paper = paperFor(id) else { return }
         let state = workspaceState.referencePDFUIStates[id]
         state?.selectedAnnotation = nil
         state?.requestedRestorePageIndex = state?.lastKnownPageIndex
-
-        guard let data = try? Data(contentsOf: paper.fileURL),
-              let refreshedDocument = PDFDocument(data: data) else {
-            if let loadedDocument = PDFDocument(url: paper.fileURL) {
-                AnnotationService.normalizeDocumentAnnotations(in: loadedDocument)
-                workspaceState.referencePDFs[id] = loadedDocument
-            }
+        Task {
+            _ = await ensureReferencePDFLoaded(id: id, forceReload: true)
             state?.annotationRefreshToken = UUID()
             state?.pdfViewRefreshToken = UUID()
-            return
-        }
-
-        AnnotationService.normalizeDocumentAnnotations(in: refreshedDocument)
-        workspaceState.referencePDFs[id] = refreshedDocument
-        state?.annotationRefreshToken = UUID()
-        state?.pdfViewRefreshToken = UUID()
-        if activeReferencePDFID == id {
-            writeReferencePaperContext(for: id)
+            if activeReferencePDFID == id {
+                writeReferencePaperContext(for: id)
+            }
         }
     }
 

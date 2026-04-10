@@ -213,17 +213,19 @@ struct PDFReaderView: View {
 
     private func loadDocument() {
         guard let paper else { return }
-        if let loadedDocument = PDFDocument(url: paper.fileURL) {
-            AnnotationService.normalizeDocumentAnnotations(in: loadedDocument)
-            document = loadedDocument
-        } else {
-            document = nil
-        }
         selectedAnnotation = nil
         if !paper.isRead { paper.isRead = true }
-
-        if isActive {
-            writePaperContext()
+        let fileURL = paper.fileURL
+        Task {
+            let loadedDocument = await PDFDocumentRepository.shared.loadDocument(
+                forKey: "paper:\(fileURL.path)",
+                from: fileURL
+            )
+            guard self.paper?.fileURL == fileURL else { return }
+            document = loadedDocument
+            if isActive {
+                writePaperContext()
+            }
         }
     }
 
@@ -368,22 +370,18 @@ struct PDFReaderView: View {
         guard let paper else { return }
         selectedAnnotation = nil
         requestedRestorePageIndex = lastKnownPageIndex
-        guard let data = try? Data(contentsOf: paper.fileURL),
-              let refreshedDocument = PDFDocument(data: data) else {
-            if let loadedDocument = PDFDocument(url: paper.fileURL) {
-                AnnotationService.normalizeDocumentAnnotations(in: loadedDocument)
-                document = loadedDocument
-            } else {
-                document = nil
-            }
+        let fileURL = paper.fileURL
+        Task {
+            let refreshedDocument = await PDFDocumentRepository.shared.loadDocument(
+                forKey: "paper:\(fileURL.path)",
+                from: fileURL,
+                forceReload: true
+            )
+            guard self.paper?.fileURL == fileURL else { return }
+            document = refreshedDocument
             annotationRefreshToken = UUID()
             pdfViewRefreshToken = UUID()
-            return
         }
-        AnnotationService.normalizeDocumentAnnotations(in: refreshedDocument)
-        document = refreshedDocument
-        annotationRefreshToken = UUID()
-        pdfViewRefreshToken = UUID()
     }
 
     private func autoSave() {

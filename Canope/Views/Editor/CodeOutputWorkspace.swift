@@ -382,11 +382,7 @@ private struct ArtifactPrimaryPreviewPane: View {
             if let artifact {
                 switch artifact.kind {
                 case .pdf:
-                    if let document = PDFDocument(url: artifact.url) {
-                        PDFPreviewView(document: document, allowsInverseSync: false)
-                    } else {
-                        unavailableView(title: AppStrings.pdfNotFound, systemImage: "doc.richtext", description: AppStrings.pdfCouldNotLoad)
-                    }
+                    ArtifactPDFPreviewPane(url: artifact.url)
                 case .image:
                     ZStack(alignment: .topTrailing) {
                         ZoomableImageArtifactView(url: artifact.url, controller: imageZoomController)
@@ -433,6 +429,43 @@ private struct ArtifactPrimaryPreviewPane: View {
         } else {
             Color.clear
         }
+    }
+}
+
+private struct ArtifactPDFPreviewPane: View {
+    let url: URL
+    @State private var document: PDFDocument?
+    @State private var isLoading = false
+
+    var body: some View {
+        Group {
+            if let document {
+                PDFPreviewView(document: document, allowsInverseSync: false)
+            } else if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView(
+                    AppStrings.pdfNotFound,
+                    systemImage: "doc.richtext",
+                    description: Text(AppStrings.pdfCouldNotLoad)
+                )
+            }
+        }
+        .task(id: url) {
+            await loadDocument()
+        }
+    }
+
+    private func loadDocument() async {
+        isLoading = true
+        document = await PDFDocumentRepository.shared.loadDocument(
+            forKey: "artifact:\(url.path)",
+            from: url,
+            normalizeAnnotations: false
+        )
+        isLoading = false
     }
 }
 

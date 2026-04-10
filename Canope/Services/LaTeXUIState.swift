@@ -136,6 +136,10 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var layoutBeforeReference: LaTeXEditorSplitLayout?
     @Published var referencePDFs: [UUID: PDFDocument] = [:]
     @Published var referencePDFUIStates: [UUID: ReferencePDFUIState] = [:]
+    @Published var loadingReferencePDFIDs: Set<UUID> = []
+
+    private var referenceAccessOrder: [UUID] = []
+    private let retainedReferencePDFLimit = 3
 
     nonisolated static func preferredWorkspaceRoot(
         openPaths: [String],
@@ -172,5 +176,81 @@ final class LaTeXWorkspaceUIState: ObservableObject {
             return FileManager.default.homeDirectoryForCurrentUser
         }
         return Self.preferredWorkspaceRoot(openPaths: openPaths)
+    }
+
+    func ensureReferenceUIState(for id: UUID) {
+        if referencePDFUIStates[id] == nil {
+            referencePDFUIStates[id] = ReferencePDFUIState()
+        }
+    }
+
+    func registerReference(id: UUID) {
+        if !referencePaperIDs.contains(id) {
+            referencePaperIDs.append(id)
+        }
+        ensureReferenceUIState(for: id)
+        noteReferenceAccess(id)
+    }
+
+    func noteReferenceAccess(_ id: UUID) {
+        referenceAccessOrder.removeAll { $0 == id }
+        referenceAccessOrder.append(id)
+        trimReferenceWorkingSet()
+    }
+
+    func setReferenceDocument(_ document: PDFDocument?, for id: UUID) {
+        if let document {
+            referencePDFs[id] = document
+            noteReferenceAccess(id)
+        } else {
+            referencePDFs.removeValue(forKey: id)
+        }
+        trimReferenceWorkingSet()
+    }
+
+    func removeReference(id: UUID) {
+        referencePaperIDs.removeAll { $0 == id }
+        referencePDFs.removeValue(forKey: id)
+        loadingReferencePDFIDs.remove(id)
+        referencePDFUIStates[id]?.pendingSaveWorkItem?.cancel()
+        referencePDFUIStates.removeValue(forKey: id)
+        referenceAccessOrder.removeAll { $0 == id }
+
+        if selectedReferencePaperID == id {
+            selectedReferencePaperID = referencePaperIDs.first
+        }
+    }
+
+    func beginReferenceLoad(id: UUID) {
+        loadingReferencePDFIDs.insert(id)
+    }
+
+    func finishReferenceLoad(id: UUID) {
+        loadingReferencePDFIDs.remove(id)
+    }
+
+    func isReferenceLoading(_ id: UUID) -> Bool {
+        loadingReferencePDFIDs.contains(id)
+    }
+
+    func trimReferenceWorkingSet() {
+        var retainedIDs: [UUID] = []
+        if let selectedReferencePaperID, referencePaperIDs.contains(selectedReferencePaperID) {
+            retainedIDs.append(selectedReferencePaperID)
+        }
+
+        for id in referenceAccessOrder.reversed() {
+            guard referencePaperIDs.contains(id), !retainedIDs.contains(id) else { continue }
+            retainedIDs.append(id)
+            if retainedIDs.count >= retainedReferencePDFLimit {
+                break
+            }
+        }
+
+        let retainedSet = Set(retainedIDs)
+        for id in referencePDFs.keys where !retainedSet.contains(id) {
+            referencePDFs.removeValue(forKey: id)
+        }
+        referenceAccessOrder.removeAll { !referencePaperIDs.contains($0) }
     }
 }

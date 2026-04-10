@@ -394,26 +394,82 @@ struct TerminalTab: Identifiable {
     var kind: TerminalTabKind = .terminal
 }
 
+enum TerminalSessionPane {
+    case top
+    case bottom
+}
+
+@MainActor
+final class TerminalSessionStore {
+    private var topTerminalViews: [UUID: FocusAwareLocalProcessTerminalView] = [:]
+    private var bottomTerminalViews: [UUID: FocusAwareLocalProcessTerminalView] = [:]
+
+    func terminalView(for tabID: UUID, in pane: TerminalSessionPane) -> FocusAwareLocalProcessTerminalView? {
+        storage(for: pane)[tabID]
+    }
+
+    func register(_ terminalView: FocusAwareLocalProcessTerminalView, for tabID: UUID, in pane: TerminalSessionPane) {
+        var views = storage(for: pane)
+        views[tabID] = terminalView
+        setStorage(views, for: pane)
+    }
+
+    func removeTerminalView(for tabID: UUID, in pane: TerminalSessionPane) -> FocusAwareLocalProcessTerminalView? {
+        var views = storage(for: pane)
+        let removed = views.removeValue(forKey: tabID)
+        setStorage(views, for: pane)
+        return removed
+    }
+
+    func terminalViews(in pane: TerminalSessionPane) -> [FocusAwareLocalProcessTerminalView] {
+        Array(storage(for: pane).values)
+    }
+
+    func clearTerminalViews(in pane: TerminalSessionPane) {
+        setStorage([:], for: pane)
+    }
+
+    func promoteBottomSessionsToTop() {
+        topTerminalViews = bottomTerminalViews
+        bottomTerminalViews = [:]
+    }
+
+    private func storage(for pane: TerminalSessionPane) -> [UUID: FocusAwareLocalProcessTerminalView] {
+        switch pane {
+        case .top:
+            return topTerminalViews
+        case .bottom:
+            return bottomTerminalViews
+        }
+    }
+
+    private func setStorage(_ storage: [UUID: FocusAwareLocalProcessTerminalView], for pane: TerminalSessionPane) {
+        switch pane {
+        case .top:
+            topTerminalViews = storage
+        case .bottom:
+            bottomTerminalViews = storage
+        }
+    }
+}
+
 @MainActor
 final class TerminalWorkspaceState: ObservableObject {
     @Published var tabs: [TerminalTab]
     @Published var selectedTabID: UUID?
-    @Published var terminalViews: [UUID: LocalProcessTerminalView]
     @Published var isSplit: Bool
-    @Published var splitTerminalViews: [UUID: LocalProcessTerminalView]
     @Published var splitTabs: [TerminalTab]
     @Published var focusedPane: TerminalPanel.PaneID
     @Published var splitFraction: CGFloat
     @Published var claudeChatProviders: [UUID: ClaudeHeadlessProvider] = [:]
     @Published var codexChatProviders: [UUID: CodexAppServerProvider] = [:]
+    private let terminalSessions = TerminalSessionStore()
 
     init() {
         let initialTab = TerminalTab()
         self.tabs = [initialTab]
         self.selectedTabID = initialTab.id
-        self.terminalViews = [:]
         self.isSplit = false
-        self.splitTerminalViews = [:]
         self.splitTabs = [TerminalTab()]
         self.focusedPane = .top
         self.splitFraction = 0.5
@@ -456,6 +512,30 @@ final class TerminalWorkspaceState: ObservableObject {
         if selectedTabID == id {
             selectedTabID = tabs.last?.id
         }
+    }
+
+    func terminalView(for tabID: UUID, in pane: TerminalSessionPane) -> FocusAwareLocalProcessTerminalView? {
+        terminalSessions.terminalView(for: tabID, in: pane)
+    }
+
+    func registerTerminalView(_ terminalView: FocusAwareLocalProcessTerminalView, for tabID: UUID, in pane: TerminalSessionPane) {
+        terminalSessions.register(terminalView, for: tabID, in: pane)
+    }
+
+    func removeTerminalView(for tabID: UUID, in pane: TerminalSessionPane) -> FocusAwareLocalProcessTerminalView? {
+        terminalSessions.removeTerminalView(for: tabID, in: pane)
+    }
+
+    func terminalViews(in pane: TerminalSessionPane) -> [FocusAwareLocalProcessTerminalView] {
+        terminalSessions.terminalViews(in: pane)
+    }
+
+    func clearTerminalViews(in pane: TerminalSessionPane) {
+        terminalSessions.clearTerminalViews(in: pane)
+    }
+
+    func promoteSplitTerminalViewsToTop() {
+        terminalSessions.promoteBottomSessionsToTop()
     }
 }
 
@@ -770,37 +850,33 @@ struct TerminalPanel: View {
 
     @ViewBuilder
     private var topTerminalPane: some View {
-        ZStack {
-            ForEach(workspaceState.tabs) { tab in
-                TerminalViewWrapper(
-                    tabID: tab.id,
-                    terminalViews: $workspaceState.terminalViews,
-                    isActive: tab.id == currentTabID,
-                    optionAsMetaKey: tab.optionAsMetaKey,
-                    appearance: appearance,
-                    colorScheme: colorScheme,
-                    startupWorkingDirectory: startupWorkingDirectory
-                )
-                .opacity(tab.id == currentTabID ? 1 : 0)
-                .allowsHitTesting(tab.id == currentTabID)
-            }
+        if let activeTab = workspaceState.tabs.first(where: { $0.id == currentTabID }) {
+            TerminalViewWrapper(
+                tabID: activeTab.id,
+                workspaceState: workspaceState,
+                pane: .top,
+                isActive: true,
+                optionAsMetaKey: activeTab.optionAsMetaKey,
+                appearance: appearance,
+                colorScheme: colorScheme,
+                startupWorkingDirectory: startupWorkingDirectory
+            )
         }
     }
 
     @ViewBuilder
     private var bottomTerminalPane: some View {
-        ZStack {
-            ForEach(workspaceState.splitTabs) { tab in
-                TerminalViewWrapper(
-                    tabID: tab.id,
-                    terminalViews: $workspaceState.splitTerminalViews,
-                    isActive: workspaceState.isSplit,
-                    optionAsMetaKey: tab.optionAsMetaKey,
-                    appearance: appearance,
-                    colorScheme: colorScheme,
-                    startupWorkingDirectory: startupWorkingDirectory
-                )
-            }
+        if let activeTab = workspaceState.splitTabs.first {
+            TerminalViewWrapper(
+                tabID: activeTab.id,
+                workspaceState: workspaceState,
+                pane: .bottom,
+                isActive: workspaceState.isSplit,
+                optionAsMetaKey: activeTab.optionAsMetaKey,
+                appearance: appearance,
+                colorScheme: colorScheme,
+                startupWorkingDirectory: startupWorkingDirectory
+            )
         }
     }
 
@@ -876,27 +952,22 @@ struct TerminalPanel: View {
 
     private func closePane(_ pane: PaneID) {
         if pane == .bottom {
-            for terminal in workspaceState.splitTerminalViews.values {
-                if let terminal = terminal as? FocusAwareLocalProcessTerminalView {
-                    ChildProcessRegistry.shared.untrack(terminalView: terminal)
-                    terminal.prepareForRemoval()
-                }
+            for terminal in workspaceState.terminalViews(in: .bottom) {
+                ChildProcessRegistry.shared.untrack(terminalView: terminal)
+                terminal.prepareForRemoval()
             }
-            workspaceState.splitTerminalViews = [:]
+            workspaceState.clearTerminalViews(in: .bottom)
             workspaceState.splitTabs = [TerminalTab()]
             workspaceState.isSplit = false
         } else if pane == .top && workspaceState.isSplit {
             // Close top: move bottom to top
-            for terminal in workspaceState.terminalViews.values {
-                if let terminal = terminal as? FocusAwareLocalProcessTerminalView {
-                    ChildProcessRegistry.shared.untrack(terminalView: terminal)
-                    terminal.prepareForRemoval()
-                }
+            for terminal in workspaceState.terminalViews(in: .top) {
+                ChildProcessRegistry.shared.untrack(terminalView: terminal)
+                terminal.prepareForRemoval()
             }
             workspaceState.tabs = workspaceState.splitTabs
-            workspaceState.terminalViews = workspaceState.splitTerminalViews
+            workspaceState.promoteSplitTerminalViewsToTop()
             workspaceState.splitTabs = [TerminalTab()]
-            workspaceState.splitTerminalViews = [:]
             workspaceState.selectedTabID = workspaceState.tabs.first?.id
             workspaceState.isSplit = false
         }
@@ -999,11 +1070,9 @@ struct TerminalPanel: View {
             workspaceState.codexChatProviders.removeValue(forKey: tab.id)
 
             workspaceState.tabs.remove(at: index)
-            if let terminal = workspaceState.terminalViews.removeValue(forKey: tab.id) {
-                if let terminal = terminal as? FocusAwareLocalProcessTerminalView {
-                    ChildProcessRegistry.shared.untrack(terminalView: terminal)
-                    terminal.prepareForRemoval()
-                }
+            if let terminal = workspaceState.removeTerminalView(for: tab.id, in: .top) {
+                ChildProcessRegistry.shared.untrack(terminalView: terminal)
+                terminal.prepareForRemoval()
             }
             if workspaceState.selectedTabID == tab.id {
                 workspaceState.selectedTabID = workspaceState.tabs[max(0, index - 1)].id
@@ -1015,12 +1084,12 @@ struct TerminalPanel: View {
         if workspaceState.focusedPane == .bottom,
            workspaceState.isSplit,
            let bottomTabID = workspaceState.splitTabs.first?.id,
-           let bottomTerminal = workspaceState.splitTerminalViews[bottomTabID] as? FocusAwareLocalProcessTerminalView {
+           let bottomTerminal = workspaceState.terminalView(for: bottomTabID, in: .bottom) {
             bottomTerminal.activateInputFocus()
             return
         }
 
-        if let topTerminal = workspaceState.terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
+        if let topTerminal = workspaceState.terminalView(for: currentTabID, in: .top) {
             topTerminal.activateInputFocus()
         }
     }
@@ -1031,13 +1100,13 @@ struct TerminalPanel: View {
         if workspaceState.focusedPane == .bottom,
            workspaceState.isSplit,
            let bottomTabID = workspaceState.splitTabs.first?.id,
-           let bottomTerminal = workspaceState.splitTerminalViews[bottomTabID] as? FocusAwareLocalProcessTerminalView {
+           let bottomTerminal = workspaceState.terminalView(for: bottomTabID, in: .bottom) {
             bottomTerminal.activateInputFocus()
             bottomTerminal.send(txt: payload)
             return
         }
 
-        if let topTerminal = workspaceState.terminalViews[currentTabID] as? FocusAwareLocalProcessTerminalView {
+        if let topTerminal = workspaceState.terminalView(for: currentTabID, in: .top) {
             topTerminal.activateInputFocus()
             topTerminal.send(txt: payload)
         }
@@ -1048,7 +1117,8 @@ struct TerminalPanel: View {
 
 struct TerminalViewWrapper: NSViewRepresentable {
     let tabID: UUID
-    @Binding var terminalViews: [UUID: LocalProcessTerminalView]
+    let workspaceState: TerminalWorkspaceState
+    let pane: TerminalSessionPane
     let isActive: Bool
     let optionAsMetaKey: Bool
     let appearance: TerminalAppearanceState
@@ -1056,7 +1126,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
     let startupWorkingDirectory: URL?
 
     func makeNSView(context: Context) -> FocusAwareLocalProcessTerminalView {
-        if let existing = terminalViews[tabID] as? FocusAwareLocalProcessTerminalView {
+        if let existing = workspaceState.terminalView(for: tabID, in: pane) {
             existing.shouldCaptureFocusFromClicks = isActive
             existing.optionAsMetaKey = optionAsMetaKey
             existing.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1092,7 +1162,7 @@ struct TerminalViewWrapper: NSViewRepresentable {
         enableMetalWhenReady(for: tv)
 
         DispatchQueue.main.async {
-            self.terminalViews[tabID] = tv
+            workspaceState.registerTerminalView(tv, for: tabID, in: pane)
         }
 
         return tv

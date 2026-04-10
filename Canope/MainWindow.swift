@@ -187,16 +187,11 @@ struct MainWindow: View {
         guard let paper = allPapers.first(where: { $0.id == id }) else { return }
 
         if !latexWorkspaceState.referencePaperIDs.contains(id) {
-            guard let pdf = PDFDocument(url: paper.fileURL) else { return }
-            AnnotationService.normalizeDocumentAnnotations(in: pdf)
-            latexWorkspaceState.referencePaperIDs.append(id)
-            latexWorkspaceState.referencePDFs[id] = pdf
-            if latexWorkspaceState.referencePDFUIStates[id] == nil {
-                latexWorkspaceState.referencePDFUIStates[id] = ReferencePDFUIState()
-            }
+            latexWorkspaceState.registerReference(id: id)
         }
 
         latexWorkspaceState.selectedReferencePaperID = id
+        latexWorkspaceState.noteReferenceAccess(id)
 
         AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
             if let activeEditor = tabController.openTabs.first(where: { if case .editor = $0 { return true } else { return false } }) {

@@ -2,6 +2,34 @@ import SwiftUI
 import PDFKit
 
 extension UnifiedEditorView {
+    private func referenceCacheKey(for paper: Paper) -> String {
+        "reference:\(paper.fileURL.path)"
+    }
+
+    @discardableResult
+    func ensureReferencePDFLoaded(id: UUID, forceReload: Bool = false) async -> PDFDocument? {
+        if !forceReload, let document = workspaceState.referencePDFs[id] {
+            workspaceState.noteReferenceAccess(id)
+            return document
+        }
+
+        guard let paper = paperFor(id) else { return nil }
+        if workspaceState.isReferenceLoading(id) {
+            return workspaceState.referencePDFs[id]
+        }
+
+        workspaceState.beginReferenceLoad(id: id)
+        let document = await PDFDocumentRepository.shared.loadDocument(
+            forKey: referenceCacheKey(for: paper),
+            from: paper.fileURL,
+            forceReload: forceReload
+        )
+        workspaceState.finishReferenceLoad(id: id)
+        guard workspaceState.referencePaperIDs.contains(id) else { return nil }
+        workspaceState.setReferenceDocument(document, for: id)
+        return document
+    }
+
     /// The PDF document for the currently selected pane tab
     var displayedPDF: PDFDocument? {
         switch selectedPdfTab {
@@ -119,11 +147,17 @@ extension UnifiedEditorView {
                                 }
                             )
                         } else {
-                            ContentUnavailableView(
-                                AppStrings.pdfNotFound,
-                                systemImage: "exclamationmark.triangle",
-                                description: Text(AppStrings.pdfCouldNotLoad)
-                            )
+                            if workspaceState.isReferenceLoading(id) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            } else {
+                                ContentUnavailableView(
+                                    AppStrings.pdfNotFound,
+                                    systemImage: "exclamationmark.triangle",
+                                    description: Text(AppStrings.pdfCouldNotLoad)
+                                )
+                            }
                         }
                     }
                     .opacity(selectedPdfTab == .reference(id) ? 1 : 0)
@@ -132,6 +166,10 @@ extension UnifiedEditorView {
             }
         }
         .frame(minWidth: 180, idealWidth: 320, maxWidth: .infinity)
+        .task(id: selectedPdfTab) {
+            guard case .reference(let id) = selectedPdfTab else { return }
+            _ = await ensureReferencePDFLoaded(id: id)
+        }
     }
 
     @ViewBuilder

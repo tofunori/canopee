@@ -233,75 +233,26 @@ struct FileBrowserView: View {
 
     @ViewBuilder
     private func renderItem(_ item: FileItem, depth: Int, index: Int) -> some View {
-        let isExpanded = expandedDirs.contains(item.url)
-        let isSelected = selectedIndex == index
-        let isHovered = hoveredItemURL == item.url
-        let indent = CGFloat(depth) * 14
-
-        Button(action: {
-            if selectedIndex == index {
-                // Second click — open
-                if item.isDirectory {
+        FileBrowserTreeRowView(
+            item: item,
+            depth: depth,
+            index: index,
+            selectedIndex: $selectedIndex,
+            hoveredItemURL: $hoveredItemURL,
+            expandedDirs: $expandedDirs,
+            reduceMotion: reduceMotion,
+            childItems: { childItems(for: $0) },
+            flatIndex: { flatIndex(for: $0) },
+            openItem: { selectedItem in
+                if selectedItem.isDirectory {
                     expandedDirs.removeAll()
-                    currentDir = item.url
+                    currentDir = selectedItem.url
                 } else {
-                    onOpenFile(item.url)
+                    onOpenFile(selectedItem.url)
                 }
-            } else {
-                // First click — select only
-                selectedIndex = index
-                if item.isDirectory {
-                    AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
-                        if isExpanded { expandedDirs.remove(item.url) }
-                        else {
-                            loadChildrenIfNeeded(for: item.url)
-                            expandedDirs.insert(item.url)
-                        }
-                    }
-                }
-            }
-        }) {
-            HStack(spacing: 0) {
-                Spacer().frame(width: 4 + indent)
-
-                if item.isDirectory {
-                    Text(isExpanded ? "▾" : "▸")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 10, alignment: .center)
-                } else {
-                    Spacer().frame(width: 10)
-                }
-
-                Text("\(item.isDirectory ? " " : "\(item.displayIcon) ")\(item.name)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(item.color)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer()
-            }
-            .frame(height: 19)
-            .frame(maxWidth: .infinity)
-            .background(
-                isSelected ? AppChromePalette.selectedAccentFill
-                : isHovered ? AppChromePalette.hoverFill
-                : Color.clear
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            hoveredItemURL = hovering ? item.url : nil
-        }
-        .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: hoveredItemURL)
-        .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
-
-        if item.isDirectory && isExpanded, let children = childItems(for: item.url) {
-            ForEach(children) { child in
-                AnyView(renderItem(child, depth: depth + 1, index: flatIndex(for: child)))
-            }
-        }
+            },
+            loadChildrenIfNeeded: loadChildrenIfNeeded(for:)
+        )
     }
 
     private func flatIndex(for item: FileItem) -> Int {
@@ -477,5 +428,102 @@ struct FileBrowserView: View {
                     children: nil
                 )
             }
+    }
+}
+
+private struct FileBrowserTreeRowView: View {
+    let item: FileItem
+    let depth: Int
+    let index: Int
+    @Binding var selectedIndex: Int
+    @Binding var hoveredItemURL: URL?
+    @Binding var expandedDirs: Set<URL>
+    let reduceMotion: Bool
+    let childItems: (URL) -> [FileItem]?
+    let flatIndex: (FileItem) -> Int
+    let openItem: (FileItem) -> Void
+    let loadChildrenIfNeeded: (URL) -> Void
+
+    private var isExpanded: Bool { expandedDirs.contains(item.url) }
+    private var isSelected: Bool { selectedIndex == index }
+    private var isHovered: Bool { hoveredItemURL == item.url }
+    private var indent: CGFloat { CGFloat(depth) * 14 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: handleTap) {
+                HStack(spacing: 0) {
+                    Spacer().frame(width: 4 + indent)
+
+                    if item.isDirectory {
+                        Text(isExpanded ? "▾" : "▸")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 10, alignment: .center)
+                    } else {
+                        Spacer().frame(width: 10)
+                    }
+
+                    Text("\(item.isDirectory ? " " : "\(item.displayIcon) ")\(item.name)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(item.color)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Spacer()
+                }
+                .frame(height: 19)
+                .frame(maxWidth: .infinity)
+                .background(
+                    isSelected ? AppChromePalette.selectedAccentFill
+                    : isHovered ? AppChromePalette.hoverFill
+                    : Color.clear
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                hoveredItemURL = hovering ? item.url : nil
+            }
+            .animation(AppChromeMotion.hover(reduceMotion: reduceMotion), value: hoveredItemURL)
+            .animation(AppChromeMotion.selection(reduceMotion: reduceMotion), value: isSelected)
+
+            if item.isDirectory && isExpanded, let children = childItems(item.url) {
+                ForEach(children) { child in
+                    FileBrowserTreeRowView(
+                        item: child,
+                        depth: depth + 1,
+                        index: flatIndex(child),
+                        selectedIndex: $selectedIndex,
+                        hoveredItemURL: $hoveredItemURL,
+                        expandedDirs: $expandedDirs,
+                        reduceMotion: reduceMotion,
+                        childItems: childItems,
+                        flatIndex: flatIndex,
+                        openItem: openItem,
+                        loadChildrenIfNeeded: loadChildrenIfNeeded
+                    )
+                }
+            }
+        }
+    }
+
+    private func handleTap() {
+        if selectedIndex == index {
+            openItem(item)
+            return
+        }
+
+        selectedIndex = index
+        guard item.isDirectory else { return }
+
+        AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
+            if isExpanded {
+                expandedDirs.remove(item.url)
+            } else {
+                loadChildrenIfNeeded(item.url)
+                expandedDirs.insert(item.url)
+            }
+        }
     }
 }

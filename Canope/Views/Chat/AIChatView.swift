@@ -71,14 +71,330 @@ extension AttachedFile {
     }
 }
 
+private enum CodexAttachSubmenu: Equatable {
+    case speed
+    case plugins
+}
+
+private struct ChatTranscriptView<RowContent: View, ThinkingContent: View>: View {
+    let messages: [ChatMessage]
+    let isProcessing: Bool
+    let usesCodexVisualStyle: Bool
+    let resetID: UUID
+    let rowContent: (ChatMessage) -> RowContent
+    let thinkingContent: () -> ThinkingContent
+
+    @State private var shouldAutoScroll = false
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: usesCodexVisualStyle ? 8 : 4) {
+                    ForEach(messages) { message in
+                        rowContent(message)
+                    }
+
+                    if isProcessing,
+                       messages.last?.role == .user || messages.last?.isStreaming == false
+                    {
+                        thinkingContent()
+                            .id("thinking")
+                    }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bottom_anchor")
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, usesCodexVisualStyle ? 16 : 12)
+            }
+            .id(resetID)
+            .onAppear {
+                scrollToBottom(using: proxy, animated: false)
+            }
+            .onChange(of: messages.count) { _, _ in
+                if shouldAutoScroll {
+                    scrollToBottom(using: proxy, animated: true)
+                }
+            }
+            .onChange(of: isProcessing) { _, newValue in
+                if newValue { shouldAutoScroll = true }
+            }
+            .onChange(of: resetID) { _, _ in
+                scrollToBottom(using: proxy, animated: false)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if animated {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo("bottom_anchor", anchor: .bottom)
+            }
+        }
+    }
+}
+
+private struct CodexAttachPopoverView: View {
+    let supportsIDEContextToggle: Bool
+    let supportsPlanMode: Bool
+    let includeIDEContextBinding: Binding<Bool>
+    let planModeBinding: Binding<Bool>
+    let codexInstalledPlugins: [String]
+    @Binding var selectedSubmenu: CodexAttachSubmenu?
+    @Binding var selectedPlugins: Set<String>
+    let openAttachmentPicker: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            primaryPanel
+
+            if let submenu = selectedSubmenu {
+                secondaryPanel(for: submenu)
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
+        }
+        .padding(6)
+        .background(AppChromePalette.codexCanvas)
+        .onDisappear {
+            selectedSubmenu = nil
+        }
+    }
+
+    private var primaryPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            actionRow(
+                title: AppStrings.addPhotosAndFiles,
+                systemName: "paperclip",
+                isSelected: false,
+                showsChevron: false
+            ) {
+                selectedSubmenu = nil
+                openAttachmentPicker()
+            }
+
+            divider
+
+            if supportsIDEContextToggle {
+                toggleRow(
+                    title: AppStrings.includeIDEContext,
+                    systemName: "sparkles",
+                    isOn: includeIDEContextBinding
+                )
+            }
+
+            if supportsPlanMode {
+                toggleRow(
+                    title: AppStrings.planMode,
+                    systemName: "checklist",
+                    isOn: planModeBinding
+                )
+            }
+
+            divider
+
+            actionRow(
+                title: "Speed",
+                systemName: "bolt.fill",
+                isSelected: selectedSubmenu == .speed,
+                showsChevron: true
+            ) {
+                selectedSubmenu = .speed
+            }
+
+            divider
+
+            actionRow(
+                title: "Plugins",
+                systemName: "circle.grid.2x2",
+                isSelected: selectedSubmenu == .plugins,
+                showsChevron: true
+            ) {
+                selectedSubmenu = .plugins
+            }
+        }
+        .padding(5)
+        .frame(width: 196, alignment: .leading)
+        .background(panelBackground)
+    }
+
+    @ViewBuilder
+    private func secondaryPanel(for submenu: CodexAttachSubmenu) -> some View {
+        switch submenu {
+        case .speed:
+            VStack(alignment: .leading, spacing: 0) {
+                sectionTitle("Speed")
+
+                choiceRow(title: "Standard", isSelected: true, isEnabled: true) {}
+                choiceRow(title: "Fast", isSelected: false, isEnabled: false) {}
+
+                Text(AppStrings.fastModeUnavailable)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(AppChromePalette.codexMutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
+            }
+            .padding(.vertical, 6)
+            .frame(width: 156, alignment: .leading)
+            .background(panelBackground)
+
+        case .plugins:
+            VStack(alignment: .leading, spacing: 0) {
+                sectionTitle("\(codexInstalledPlugins.count) installed plugins")
+
+                ForEach(codexInstalledPlugins, id: \.self) { plugin in
+                    choiceRow(
+                        title: plugin,
+                        isSelected: selectedPlugins.contains(plugin),
+                        isEnabled: true
+                    ) {
+                        togglePlugin(plugin)
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 156, alignment: .leading)
+            .background(panelBackground)
+        }
+    }
+
+    private var panelBackground: some View {
+        RoundedRectangle(cornerRadius: 13, style: .continuous)
+            .fill(AppChromePalette.codexPromptShell)
+            .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(AppChromePalette.codexPromptStroke, lineWidth: 1)
+            )
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(AppChromePalette.codexPromptDivider.opacity(0.75))
+            .frame(height: 1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 9)
+            .padding(.bottom, 3)
+    }
+
+    private func actionRow(
+        title: String,
+        systemName: String,
+        isSelected: Bool,
+        showsChevron: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppChromePalette.codexMutedText)
+                    .frame(width: 16)
+
+                Text(title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 0)
+
+                if showsChevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AppChromePalette.codexMutedText)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.88) : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggleRow(
+        title: String,
+        systemName: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppChromePalette.codexMutedText)
+                .frame(width: 16)
+
+            Text(title)
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 0)
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+    }
+
+    private func choiceRow(
+        title: String,
+        isSelected: Bool,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "checkmark" : "circle")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isSelected ? .primary : Color.clear)
+                    .frame(width: 12)
+
+                Text(title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(isEnabled ? .primary : AppChromePalette.codexMutedText)
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+    }
+
+    private func togglePlugin(_ plugin: String) {
+        if selectedPlugins.contains(plugin) {
+            selectedPlugins.remove(plugin)
+        } else {
+            selectedPlugins.insert(plugin)
+        }
+    }
+}
+
 // MARK: - AI Chat View (Native headless chat panel)
 
 struct AIChatView<Provider: HeadlessChatProviding>: View {
-    private enum CodexAttachSubmenu: Equatable {
-        case speed
-        case plugins
-    }
-
     @ObservedObject var provider: Provider
     let fileRootURL: URL?
     @State private var inputText = ""
@@ -138,10 +454,10 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             hoveredUserMessageHideTask?.cancel()
             hoveredUserMessageHideTask = nil
         }
-        .onChange(of: provider.pendingApprovalRequest?.id) { _ in
+        .onChange(of: provider.pendingApprovalRequest?.id) { _, _ in
             syncPendingApprovalFormState()
         }
-        .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
             refreshSelectionCache()
         }
         // Cmd+N handled via menu item or button — SwiftUI doesn't support view-level Cmd shortcuts well
@@ -349,46 +665,18 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     // MARK: - Message List
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                // `LazyVStack` re-estimates off-screen row heights for rich markdown,
-                // which makes the scrollbar thumb resize and causes visible jumps.
-                VStack(alignment: .leading, spacing: usesCodexVisualStyle ? 8 : 4) {
-                    ForEach(visibleMessages) { message in
-                        messageRow(message)
-                    }
-
-                    if provider.isProcessing,
-                       visibleMessages.last?.role == .user || visibleMessages.last?.isStreaming == false
-                    {
-                        thinkingIndicator
-                            .id("thinking")
-                    }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id("bottom_anchor")
-                }
-                .padding(.vertical, 8)
-                .padding(.horizontal, usesCodexVisualStyle ? 16 : 12)
+        ChatTranscriptView(
+            messages: visibleMessages,
+            isProcessing: provider.isProcessing,
+            usesCodexVisualStyle: usesCodexVisualStyle,
+            resetID: listResetID,
+            rowContent: { message in
+                messageRow(message)
+            },
+            thinkingContent: {
+                thinkingIndicator
             }
-            .id(listResetID)
-            .onAppear {
-                scrollToBottom(using: proxy, animated: false)
-            }
-            .onChange(of: provider.messages.count) {
-                if shouldAutoScroll {
-                    scrollToBottom(using: proxy, animated: true)
-                }
-            }
-            .onChange(of: provider.isProcessing) {
-                if provider.isProcessing { shouldAutoScroll = true }
-            }
-            .onChange(of: listResetID) {
-                scrollToBottom(using: proxy, animated: false)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        )
     }
 
     // MARK: - Message Rows
@@ -1631,244 +1919,17 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     private var codexAttachPopover: some View {
-        HStack(alignment: .top, spacing: 14) {
-            codexAttachPrimaryPanel
-
-            if let submenu = codexAttachSubmenu {
-                codexAttachSecondaryPanel(for: submenu)
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
-            }
-        }
-        .padding(6)
-        .background(AppChromePalette.codexCanvas)
-        .onDisappear {
-            codexAttachSubmenu = nil
-        }
-    }
-
-    private var codexAttachPrimaryPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            codexAttachActionRow(
-                title: AppStrings.addPhotosAndFiles,
-                systemName: "paperclip",
-                isSelected: false,
-                showsChevron: false
-            ) {
-                showCodexAttachPopover = false
-                codexAttachSubmenu = nil
-                openAttachmentPicker()
-            }
-
-            codexAttachDivider
-
-            if provider.chatSupportsIDEContextToggle {
-                codexAttachToggleRow(
-                    title: AppStrings.includeIDEContext,
-                    systemName: "sparkles",
-                    isOn: includeIDEContextBinding
-                )
-            }
-
-            if provider.chatSupportsPlanMode {
-                codexAttachToggleRow(
-                    title: AppStrings.planMode,
-                    systemName: "checklist",
-                    isOn: planModeBinding
-                )
-            }
-
-            codexAttachDivider
-
-            codexAttachActionRow(
-                title: "Speed",
-                systemName: "bolt.fill",
-                isSelected: codexAttachSubmenu == .speed,
-                showsChevron: true
-            ) {
-                codexAttachSubmenu = .speed
-            }
-
-            codexAttachDivider
-
-            codexAttachActionRow(
-                title: "Plugins",
-                systemName: "circle.grid.2x2",
-                isSelected: codexAttachSubmenu == .plugins,
-                showsChevron: true
-            ) {
-                codexAttachSubmenu = .plugins
-            }
-        }
-        .padding(5)
-        .frame(width: 196, alignment: .leading)
-        .background(codexAttachPanelBackground)
-    }
-
-    @ViewBuilder
-    private func codexAttachSecondaryPanel(for submenu: CodexAttachSubmenu) -> some View {
-        switch submenu {
-        case .speed:
-            VStack(alignment: .leading, spacing: 0) {
-                codexAttachSectionTitle("Speed")
-
-                codexAttachChoiceRow(title: "Standard", isSelected: true, isEnabled: true) {}
-                codexAttachChoiceRow(title: "Fast", isSelected: false, isEnabled: false) {}
-
-                Text(AppStrings.fastModeUnavailable)
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(AppChromePalette.codexMutedText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 4)
-                    .padding(.bottom, 2)
-            }
-            .padding(.vertical, 6)
-            .frame(width: 156, alignment: .leading)
-            .background(codexAttachPanelBackground)
-
-        case .plugins:
-            VStack(alignment: .leading, spacing: 0) {
-                codexAttachSectionTitle("\(codexInstalledPlugins.count) installed plugins")
-
-                ForEach(codexInstalledPlugins, id: \.self) { plugin in
-                    codexAttachChoiceRow(
-                        title: plugin,
-                        isSelected: selectedCodexPlugins.contains(plugin),
-                        isEnabled: true
-                    ) {
-                        toggleCodexPlugin(plugin)
-                    }
-                }
-            }
-            .padding(.vertical, 6)
-            .frame(width: 156, alignment: .leading)
-            .background(codexAttachPanelBackground)
-        }
-    }
-
-    private var codexAttachPanelBackground: some View {
-        RoundedRectangle(cornerRadius: 13, style: .continuous)
-            .fill(AppChromePalette.codexPromptShell)
-            .overlay(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .strokeBorder(AppChromePalette.codexPromptStroke, lineWidth: 1)
-            )
-    }
-
-    private var codexAttachDivider: some View {
-        Rectangle()
-            .fill(AppChromePalette.codexPromptDivider.opacity(0.75))
-            .frame(height: 1)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-    }
-
-    private func codexAttachSectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 9)
-            .padding(.bottom, 3)
-    }
-
-    private func codexAttachActionRow(
-        title: String,
-        systemName: String,
-        isSelected: Bool,
-        showsChevron: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: systemName)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(AppChromePalette.codexMutedText)
-                    .frame(width: 16)
-
-                Text(title)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(.primary)
-
-                Spacer(minLength: 0)
-
-                if showsChevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(AppChromePalette.codexMutedText)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.88) : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func codexAttachToggleRow(
-        title: String,
-        systemName: String,
-        isOn: Binding<Bool>
-    ) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemName)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(AppChromePalette.codexMutedText)
-                .frame(width: 16)
-
-            Text(title)
-                .font(.system(size: 13.5, weight: .medium))
-                .foregroundStyle(.primary)
-
-            Spacer(minLength: 0)
-
-            Toggle("", isOn: isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-    }
-
-    private func codexAttachChoiceRow(
-        title: String,
-        isSelected: Bool,
-        isEnabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: isSelected ? "checkmark" : "circle")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(isSelected ? .primary : Color.clear)
-                    .frame(width: 12)
-
-                Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(isEnabled ? .primary : AppChromePalette.codexMutedText)
-
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-    }
-
-    private func toggleCodexPlugin(_ plugin: String) {
-        if selectedCodexPlugins.contains(plugin) {
-            selectedCodexPlugins.remove(plugin)
-        } else {
-            selectedCodexPlugins.insert(plugin)
+        CodexAttachPopoverView(
+            supportsIDEContextToggle: provider.chatSupportsIDEContextToggle,
+            supportsPlanMode: provider.chatSupportsPlanMode,
+            includeIDEContextBinding: includeIDEContextBinding,
+            planModeBinding: planModeBinding,
+            codexInstalledPlugins: codexInstalledPlugins,
+            selectedSubmenu: $codexAttachSubmenu,
+            selectedPlugins: $selectedCodexPlugins
+        ) {
+            showCodexAttachPopover = false
+            openAttachmentPicker()
         }
     }
 
@@ -2564,7 +2625,6 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     // MARK: - Helpers
 
-    @State private var shouldAutoScroll = false
     @State private var listResetID = UUID()
 
     private var chatInputPlaceholder: String {
@@ -2892,18 +2952,6 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     private var canSend: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedFiles.isEmpty
-    }
-
-    private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            if animated {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
-                }
-            } else {
-                proxy.scrollTo("bottom_anchor", anchor: .bottom)
-            }
-        }
     }
 
     private func send() {
