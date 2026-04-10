@@ -21,16 +21,16 @@ struct MarkdownPreviewRenderer {
         guard let pandocPath = ExecutableLocator.find("pandoc", preferredPaths: pandocPreferredPaths) else {
             return failedResult(
                 file: file,
-                log: "pandoc introuvable.",
-                message: "pandoc est introuvable. Installez-le avant de rendre un fichier Markdown."
+                log: "pandoc not found.",
+                message: "pandoc was not found. Install it before rendering a Markdown file."
             )
         }
 
         guard let xelatexPath = ExecutableLocator.find("xelatex", preferredPaths: xelatexPreferredPaths) else {
             return failedResult(
                 file: file,
-                log: "xelatex introuvable.",
-                message: "xelatex est introuvable. Installez MacTeX pour rendre un Markdown en PDF."
+                log: "xelatex not found.",
+                message: "xelatex was not found. Install MacTeX to render Markdown to PDF."
             )
         }
 
@@ -67,7 +67,7 @@ struct MarkdownPreviewRenderer {
             return failedResult(
                 file: file,
                 log: error.localizedDescription,
-                message: "Erreur Pandoc: \(error.localizedDescription)"
+                message: "\(AppStrings.renderError): \(error.localizedDescription)"
             )
         }
 
@@ -76,7 +76,7 @@ struct MarkdownPreviewRenderer {
             return failedResult(
                 file: file,
                 log: log,
-                message: "Le rendu Markdown a dépassé le délai permis."
+                message: "Markdown rendering exceeded the allowed time limit."
             )
         }
 
@@ -91,7 +91,7 @@ struct MarkdownPreviewRenderer {
         }
 
         let trimmedLog = log.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackMessage = trimmedLog.isEmpty ? "Pandoc n’a pas pu générer le PDF." : trimmedLog
+        let fallbackMessage = trimmedLog.isEmpty ? "Pandoc could not generate the PDF." : trimmedLog
         return failedResult(file: file, log: log, message: fallbackMessage)
     }
 

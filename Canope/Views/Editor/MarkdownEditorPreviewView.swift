@@ -12,7 +12,7 @@ struct MarkdownEditorPreviewView: View {
         ScrollView {
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView(
-                    "Aperçu Markdown",
+                    AppStrings.markdownPreview,
                     systemImage: "doc.richtext",
                     description: Text("Écris du Markdown pour voir le rendu.")
                 )

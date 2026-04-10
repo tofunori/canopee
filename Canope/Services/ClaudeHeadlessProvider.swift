@@ -133,7 +133,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             await MainActor.run { [weak self] in
                 self?.resumeWorkingDirectory = cwd
                 self?.messages = Array(preview)
-                self?.appendSystem("Session reprise : \(id.prefix(12))…")
+                self?.appendSystem("Session resumed: \(id.prefix(12))…")
                 self?.enqueueMarkdownPreRenderForLastAssistantIfNeeded()
             }
         }
@@ -308,7 +308,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
         let directory = matchingDirectory ?? workingDirectory
         guard let latest = Self.listSessions(limit: 1, matchingDirectory: directory).first else {
-            appendSystem("Aucune session trouvée pour ce dossier")
+            appendSystem("No session found for this folder")
             return
         }
         resumeSession(id: latest.id)
@@ -708,7 +708,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
                 try proc.run()
             } catch {
                 await MainActor.run { [weak self] in
-                    self?.appendSystem("Erreur : \(error.localizedDescription)")
+                    self?.appendSystem("\(AppStrings.errorPrefix) \(error.localizedDescription)")
                     self?.isProcessing = false
                 }
                 return
@@ -926,9 +926,9 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         // Show errors
         if json["is_error"] as? Bool == true {
             if let errors = json["errors"] as? [String], !errors.isEmpty {
-                appendSystem("Erreur : \(errors.joined(separator: ", "))")
+                appendSystem("\(AppStrings.errorPrefix) \(errors.joined(separator: ", "))")
             } else {
-                appendSystem("Erreur inconnue")
+                appendSystem(AppStrings.unknownError)
             }
             return
         }
@@ -1101,11 +1101,11 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     nonisolated static func blockedToolMessage(toolName: String, mode: ChatInteractionMode) -> String {
         switch mode {
         case .agent:
-            return "L’action \(toolName) a ete bloquee."
+            return "The action \(toolName) was blocked."
         case .acceptEdits:
-            return "Mode accept edits: l’action \(toolName) a ete bloquee en attendant ton approbation. L’approbation interactive n’est pas encore branchee."
+            return "Accept edits mode: the action \(toolName) was blocked while waiting for your approval. Interactive approval is not wired yet."
         case .plan:
-            return "Mode plan: l’action mutante \(toolName) a ete bloquee."
+            return "\(AppStrings.mutatingActionBlockedPrefix) \(toolName) \(AppStrings.mutatingActionBlockedSuffix)"
         }
     }
 

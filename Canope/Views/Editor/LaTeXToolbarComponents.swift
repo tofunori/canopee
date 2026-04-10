@@ -97,7 +97,7 @@ struct PDFSearchToolbarCluster: View {
                 ToolbarIconButton(
                     systemName: "xmark",
                     foregroundStyle: .secondary,
-                    helpText: "Fermer la recherche (Esc)"
+                    helpText: "Close search (Esc)"
                 ) {
                     searchState.dismiss()
                 }
@@ -268,10 +268,10 @@ struct ActiveReferenceToolbarSections: View {
 
     var body: some View {
         Group {
-            ReferencePDFToolCluster(title: "Outils", state: referenceState)
+            ReferencePDFToolCluster(title: AppStrings.tools, state: referenceState)
 
             ReferencePDFActionsCluster(
-                title: "Actions",
+                title: AppStrings.actions,
                 state: referenceState,
                 annotationCount: annotationCount,
                 isAnnotationSidebarVisible: isAnnotationSidebarVisible,

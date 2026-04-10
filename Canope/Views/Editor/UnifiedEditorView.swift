@@ -273,11 +273,11 @@ struct UnifiedEditorView: View {
     private var documentOutputLogHelpText: String {
         switch documentMode {
         case .latex:
-            return "Console de compilation"
+            return "Compilation console"
         case .markdown:
-            return "Journal de l'export Markdown"
+            return "Markdown export log"
         case .python, .r:
-            return "Journal d'exécution"
+            return "Execution log"
         }
     }
 
@@ -289,7 +289,9 @@ struct UnifiedEditorView: View {
         if errors.isEmpty {
             return documentMode.outputSuccessTitle
         }
-        return "\(errors.filter { !$0.isWarning }.count) erreur(s), \(errors.filter { $0.isWarning }.count) avertissement(s)"
+        let errorCount = errors.filter { !$0.isWarning }.count
+        let warningCount = errors.filter { $0.isWarning }.count
+        return "\(errorCount) error\(errorCount == 1 ? "" : "s"), \(warningCount) warning\(warningCount == 1 ? "" : "s")"
     }
 
     var sidebarAnnotations: [ResolvedLaTeXAnnotation] {
@@ -338,14 +340,14 @@ struct UnifiedEditorView: View {
 
     var outputStatusLabel: String {
         if codeDocumentState.manualPreviewArtifact != nil {
-            return "Preview manuelle"
+            return AppStrings.manualPreviewStatus
         }
         guard let selectedRun = codeDocumentState.selectedRun,
               let index = codeDocumentState.runHistory.firstIndex(where: { $0.runID == selectedRun.runID }) else {
-            return "Aucun run"
+            return AppStrings.noRuns
         }
         let time = selectedRun.executedAt.formatted(date: .omitted, time: .standard)
-        return "Run \(index + 1)/\(codeDocumentState.runHistory.count) · \(time) · \(selectedRun.artifacts.count) artefact\(selectedRun.artifacts.count > 1 ? "s" : "")"
+        return AppStrings.runStatus(index: index + 1, total: codeDocumentState.runHistory.count, time: time, artifactCount: selectedRun.artifacts.count)
     }
 
     // MARK: - Shared layout state (workspace-backed)
@@ -867,7 +869,7 @@ struct UnifiedEditorView: View {
             HStack {
                 Image(systemName: codeDocumentState.isRunning ? "hourglass" : "terminal")
                     .foregroundStyle(codeDocumentState.isRunning ? AppChromePalette.info : .secondary)
-                Text(codeDocumentState.lastCommandDescription.isEmpty ? "Journal d'exécution" : codeDocumentState.lastCommandDescription)
+                Text(codeDocumentState.lastCommandDescription.isEmpty ? "Execution log" : codeDocumentState.lastCommandDescription)
                     .font(.caption)
                     .fontWeight(.semibold)
                     .lineLimit(1)
@@ -883,7 +885,7 @@ struct UnifiedEditorView: View {
             .background(AppChromePalette.surfaceSubbar)
 
             ScrollView {
-                Text(codeDocumentState.outputLog.isEmpty ? "Aucune sortie" : codeDocumentState.outputLog)
+                Text(codeDocumentState.outputLog.isEmpty ? AppStrings.noOutput : codeDocumentState.outputLog)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -915,7 +917,7 @@ struct UnifiedEditorView: View {
             .background(AppChromePalette.surfaceSubbar)
 
             ScrollView {
-                Text(compileOutput.isEmpty ? "Aucune sortie" : compileOutput)
+                Text(compileOutput.isEmpty ? AppStrings.noOutput : compileOutput)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -980,9 +982,9 @@ struct UnifiedEditorView: View {
                             )
                         } else {
                             ContentUnavailableView(
-                                "PDF introuvable",
+                                AppStrings.pdfNotFound,
                                 systemImage: "exclamationmark.triangle",
-                                description: Text("Le fichier PDF n'a pas pu être chargé")
+                                description: Text(AppStrings.pdfCouldNotLoad)
                             )
                         }
                     }
@@ -1231,7 +1233,7 @@ struct UnifiedEditorView: View {
             }
             .buttonStyle(.plain)
             .disabled(codeDocumentState.isRunning)
-            .appChromeQuickHelp("Exécuter (⌘B)")
+            .appChromeQuickHelp("Run (⌘B)")
             .keyboardShortcut("b", modifiers: .command)
 
             Button(action: saveFile) {
@@ -1239,14 +1241,14 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Enregistrer")
+            .appChromeQuickHelp(AppStrings.save)
 
             Button(action: { codeDocumentState.showLogs.toggle() }) {
                 Image(systemName: codeDocumentState.showLogs ? "list.bullet.rectangle.fill" : "list.bullet.rectangle")
                     .foregroundStyle(codeDocumentState.showLogs ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Journal d'exécution")
+            .appChromeQuickHelp("Execution log")
         }
     }
 
@@ -1259,7 +1261,7 @@ struct UnifiedEditorView: View {
                 ToolbarIconButton(
                     systemName: "textformat.size.larger",
                     foregroundStyle: .secondary,
-                    helpText: "Basculer le titre Markdown"
+                    helpText: "Toggle Markdown heading"
                 ) {
                     sendMarkdownCommand(.heading)
                 }
@@ -1267,7 +1269,7 @@ struct UnifiedEditorView: View {
                 ToolbarIconButton(
                     systemName: "list.bullet",
                     foregroundStyle: .secondary,
-                    helpText: "Basculer la liste"
+                    helpText: "Toggle list"
                 ) {
                     sendMarkdownCommand(.list)
                 }
@@ -1275,7 +1277,7 @@ struct UnifiedEditorView: View {
                 ToolbarIconButton(
                     systemName: "text.quote",
                     foregroundStyle: .secondary,
-                    helpText: "Basculer la citation"
+                    helpText: "Toggle block quote"
                 ) {
                     sendMarkdownCommand(.blockquote)
                 }
@@ -1283,7 +1285,7 @@ struct UnifiedEditorView: View {
                 ToolbarIconButton(
                     systemName: "curlybraces.square",
                     foregroundStyle: .secondary,
-                    helpText: "Insérer un bloc de code"
+                    helpText: "Insert code block"
                 ) {
                     sendMarkdownCommand(.codeBlock)
                 }
@@ -1319,7 +1321,7 @@ struct UnifiedEditorView: View {
 
     /// 4 pane toggles: Files, Editor, Terminal, Content
     private var panneauxCluster: some View {
-        toolbarCluster(zone: .trailing, title: "Panneaux") {
+        toolbarCluster(zone: .trailing, title: "Panels") {
             Button(action: {
                 AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
                     showSidebar.toggle()
@@ -1329,7 +1331,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(showSidebar ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Fichiers")
+            .appChromeQuickHelp(AppStrings.files)
 
             Button(action: {
                 AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
@@ -1340,7 +1342,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(showEditorPane ? AppChromePalette.info : .secondary)
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Éditeur")
+            .appChromeQuickHelp(AppStrings.editor)
             .disabled(showEditorPane && !showTerminal && !isContentPaneVisible)
 
             Button(action: {
@@ -1377,7 +1379,7 @@ struct UnifiedEditorView: View {
     private var dispositionCluster: some View {
         toolbarCluster(zone: .trailing) {
             Menu {
-                Section("Ordre des panneaux") {
+                Section(AppStrings.panelOrder) {
                     ForEach(PanelArrangement.allCases, id: \.self) { arrangement in
                         Button {
                             AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
@@ -1397,18 +1399,18 @@ struct UnifiedEditorView: View {
                 Image(systemName: "rectangle.3.group")
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Disposition des panneaux")
+            .appChromeQuickHelp(AppStrings.panelLayout)
         }
     }
 
     private var fileToolbarClusterView: some View {
-        toolbarCluster(zone: .leading, title: "Dossier") {
+        toolbarCluster(zone: .leading, title: AppStrings.folder) {
             Button(action: openFolderPicker) {
                 Image(systemName: "folder.badge.plus")
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Ouvrir un dossier (⇧⌘O)")
+            .appChromeQuickHelp("Open folder (⇧⌘O)")
 
             if !hasNoFile {
                 AppChromeStatusCapsule(status: toolbarStatus)
@@ -1422,7 +1424,7 @@ struct UnifiedEditorView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .appChromeQuickHelp("Créer un nouveau fichier éditable")
+                .appChromeQuickHelp(AppStrings.createEditableFile)
             }
         }
     }
@@ -1453,11 +1455,11 @@ struct UnifiedEditorView: View {
     }
 
     private var referencePickerToolbarClusterView: some View {
-        toolbarCluster(zone: .primary, title: "Réf.") {
+        toolbarCluster(zone: .primary, title: AppStrings.references) {
             Menu {
                 let openPapers = availableReferencePapers
                 if openPapers.isEmpty {
-                    Text("Aucun article disponible")
+                    Text(AppStrings.noPaperAvailable)
                 } else {
                     ForEach(openPapers) { paper in
                         Button {
@@ -1473,7 +1475,7 @@ struct UnifiedEditorView: View {
                     .foregroundStyle(pdfPaneTabs.count > 1 ? .blue : .secondary)
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Ouvrir un article de référence")
+            .appChromeQuickHelp(AppStrings.openReferencePaper)
         }
     }
 
@@ -1518,7 +1520,7 @@ struct UnifiedEditorView: View {
                 Image(systemName: "textformat.size")
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Taille police")
+            .appChromeQuickHelp("Font size")
 
             Menu {
                 ForEach(0..<Self.editorThemes.count, id: \.self) { i in
@@ -1535,7 +1537,7 @@ struct UnifiedEditorView: View {
                 Image(systemName: "paintpalette")
             }
             .buttonStyle(.plain)
-            .appChromeQuickHelp("Thème éditeur")
+            .appChromeQuickHelp("Editor theme")
         }
     }
 
@@ -1544,10 +1546,10 @@ struct UnifiedEditorView: View {
         if showTerminal {
             Menu {
                 Button(action: addTerminalTab) {
-                    Label("Nouveau terminal", systemImage: "plus")
+                    Label(AppStrings.newTerminal, systemImage: "plus")
                 }
                 Button(action: terminalAppearanceStore.presentSettings) {
-                    Label("Réglages du terminal", systemImage: "slider.horizontal.3")
+                    Label(AppStrings.settingsTerminal, systemImage: "slider.horizontal.3")
                 }
             } label: {
                 Image(systemName: "terminal")
@@ -1599,25 +1601,25 @@ struct UnifiedEditorView: View {
         Button {
             createNewEditorFile(.latex)
         } label: {
-            Label("Nouveau fichier LaTeX", systemImage: "doc.badge.plus")
+            Label(AppStrings.newLatexFile, systemImage: "doc.badge.plus")
         }
 
         Button {
             createNewEditorFile(.markdown)
         } label: {
-            Label("Nouveau fichier Markdown", systemImage: "text.badge.plus")
+            Label(AppStrings.newMarkdownFile, systemImage: "text.badge.plus")
         }
 
         Button {
             createNewEditorFile(.python)
         } label: {
-            Label("Nouveau script Python", systemImage: "play.rectangle")
+            Label(AppStrings.newPythonScript, systemImage: "play.rectangle")
         }
 
         Button {
             createNewEditorFile(.r)
         } label: {
-            Label("Nouveau script R", systemImage: "chart.line.uptrend.xyaxis")
+            Label(AppStrings.newRScript, systemImage: "chart.line.uptrend.xyaxis")
         }
     }
 
@@ -1710,19 +1712,19 @@ private extension View {
         annotationExportError: Binding<String?>
     ) -> some View {
         self
-            .alert("Impossible de créer le fichier", isPresented: Binding(
+            .alert(AppStrings.couldNotCreateFile, isPresented: Binding(
                 get: { fileCreationError.wrappedValue != nil },
                 set: { if !$0 { fileCreationError.wrappedValue = nil } }
             )) {
-                Button("OK", role: .cancel) {}
+                Button(AppStrings.ok, role: .cancel) {}
             } message: {
                 Text(fileCreationError.wrappedValue ?? "")
             }
-            .alert("Impossible d'exporter les annotations", isPresented: Binding(
+            .alert(AppStrings.couldNotExportAnnotations, isPresented: Binding(
                 get: { annotationExportError.wrappedValue != nil },
                 set: { if !$0 { annotationExportError.wrappedValue = nil } }
             )) {
-                Button("OK", role: .cancel) {}
+                Button(AppStrings.ok, role: .cancel) {}
             } message: {
                 Text(annotationExportError.wrappedValue ?? "")
             }

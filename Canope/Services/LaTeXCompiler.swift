@@ -98,7 +98,7 @@ struct LaTeXCompiler {
             return CompilationResult(
                 success: false,
                 pdfURL: nil,
-                errors: [CompilationError(line: 0, message: "latexmk et pdflatex introuvables. Installez MacTeX.", file: file.lastPathComponent, isWarning: false)],
+                errors: [CompilationError(line: 0, message: "latexmk and pdflatex were not found. Install MacTeX.", file: file.lastPathComponent, isWarning: false)],
                 log: "No LaTeX compiler found"
             )
         }
@@ -122,7 +122,7 @@ struct LaTeXCompiler {
             return CompilationResult(
                 success: false,
                 pdfURL: nil,
-                errors: [CompilationError(line: 0, message: "Erreur: \(error.localizedDescription)", file: file.lastPathComponent, isWarning: false)],
+                errors: [CompilationError(line: 0, message: "\(AppStrings.buildError): \(error.localizedDescription)", file: file.lastPathComponent, isWarning: false)],
                 log: error.localizedDescription
             )
         }
@@ -131,7 +131,7 @@ struct LaTeXCompiler {
         let timedOutErrors = execution.timedOut ? [
             CompilationError(
                 line: 0,
-                message: "La compilation a dépassé le délai permis.",
+                message: "Compilation exceeded the allowed time limit.",
                 file: file.lastPathComponent,
                 isWarning: false
             )

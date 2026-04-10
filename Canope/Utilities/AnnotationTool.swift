@@ -16,16 +16,16 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .pointer: return "Sélection"
-        case .highlight: return "Surligner"
-        case .underline: return "Souligner"
-        case .strikethrough: return "Barrer"
-        case .note: return "Note"
-        case .textBox: return "Zone de texte"
-        case .ink: return "Dessin"
-        case .rectangle: return "Rectangle"
-        case .oval: return "Ovale"
-        case .arrow: return "Flèche"
+        case .pointer: return AppStrings.selection
+        case .highlight: return "Highlight"
+        case .underline: return "Underline"
+        case .strikethrough: return "Strike through"
+        case .note: return AppStrings.note
+        case .textBox: return "Text box"
+        case .ink: return AppStrings.drawing
+        case .rectangle: return AppStrings.rectangle
+        case .oval: return AppStrings.oval
+        case .arrow: return AppStrings.arrow
         }
     }
 

@@ -39,14 +39,14 @@ struct PaperListView: View {
                 PaperRowView(paper: paper)
                     .tag(paper.persistentModelID)
                     .contextMenu {
-                        Button(paper.isFavorite ? "Retirer des favoris" : "Ajouter aux favoris") {
+                        Button(paper.isFavorite ? "Remove from favorites" : "Add to favorites") {
                             paper.isFavorite.toggle()
                         }
-                        Button(paper.isRead ? "Marquer non lu" : "Marquer lu") {
+                        Button(paper.isRead ? "Mark unread" : "Mark read") {
                             paper.isRead.toggle()
                         }
                         Divider()
-                        Button("Supprimer", role: .destructive) {
+                        Button(AppStrings.delete, role: .destructive) {
                             deletePaper(paper)
                         }
                     }
@@ -58,7 +58,7 @@ struct PaperListView: View {
                 Button(action: { isImporting = true }) {
                     Image(systemName: "plus")
                 }
-                .help("Importer un PDF")
+                .help(AppStrings.importPDF)
             }
         }
         .fileImporter(
@@ -79,9 +79,9 @@ struct PaperListView: View {
         .overlay {
             if filteredPapers.isEmpty {
                 ContentUnavailableView {
-                    Label("Aucun article", systemImage: "doc.text")
+                    Label(AppStrings.noPapers, systemImage: "doc.text")
                 } description: {
-                    Text("Importez un PDF avec le bouton + ou glissez-le ici")
+                    Text(AppStrings.importPDFHint)
                 }
             }
         }
@@ -89,11 +89,11 @@ struct PaperListView: View {
 
     private var navigationTitle: String {
         switch sidebarSelection {
-        case .allPapers: return "Tous les articles"
-        case .favorites: return "Favoris"
-        case .unread: return "À lire"
-        case .recent: return "Récents"
-        case .collection: return "Collection"
+        case .allPapers: return AppStrings.allPapers
+        case .favorites: return AppStrings.favorites
+        case .unread: return AppStrings.unread
+        case .recent: return AppStrings.recent
+        case .collection: return AppStrings.collection
         }
     }
 

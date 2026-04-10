@@ -66,14 +66,14 @@ struct LaTeXAnnotationNoteSheet: View {
             }
 
             HStack {
-                Button("Annuler", action: onCancel)
+                Button(AppStrings.cancel, action: onCancel)
                 Spacer()
-                Button(initialNote.isEmpty ? "Ajouter et envoyer" : "Enregistrer et envoyer") {
+                Button(initialNote.isEmpty ? "Add and send" : "Save and send") {
                     onSaveAndSend(trimmedNote)
                 }
                 .disabled(trimmedNote.isEmpty)
 
-                Button(initialNote.isEmpty ? "Ajouter" : "Enregistrer") {
+                Button(initialNote.isEmpty ? "Add" : AppStrings.save) {
                     onSave(trimmedNote)
                 }
                 .keyboardShortcut(.defaultAction)

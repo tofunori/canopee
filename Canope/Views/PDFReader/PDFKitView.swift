@@ -1487,14 +1487,14 @@ struct PDFKitView: NSViewRepresentable {
                     }
                     alignMenu.addItem(item)
                 }
-                let alignItem = NSMenuItem(title: "Alignement", action: nil, keyEquivalent: "")
+                let alignItem = NSMenuItem(title: "Alignment", action: nil, keyEquivalent: "")
                 alignItem.submenu = alignMenu
                 menu.addItem(alignItem)
             }
 
             menu.addItem(NSMenuItem.separator())
 
-            let deleteItem = NSMenuItem(title: "Supprimer", action: #selector(deleteSelectedAnnotation(_:)), keyEquivalent: "")
+            let deleteItem = NSMenuItem(title: AppStrings.delete, action: #selector(deleteSelectedAnnotation(_:)), keyEquivalent: "")
             deleteItem.target = self
             deleteItem.representedObject = annotation
             menu.addItem(deleteItem)

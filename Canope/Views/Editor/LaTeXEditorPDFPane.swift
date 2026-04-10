@@ -120,9 +120,9 @@ extension UnifiedEditorView {
                             )
                         } else {
                             ContentUnavailableView(
-                                "PDF introuvable",
+                                AppStrings.pdfNotFound,
                                 systemImage: "exclamationmark.triangle",
-                                description: Text("Le fichier PDF n'a pas pu être chargé")
+                                description: Text(AppStrings.pdfCouldNotLoad)
                             )
                         }
                     }

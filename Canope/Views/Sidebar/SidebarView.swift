@@ -16,18 +16,18 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $selection) {
-            Section("Bibliothèque") {
-                Label("Tous les articles", systemImage: "doc.on.doc")
+            Section(AppStrings.library) {
+                Label(AppStrings.allPapers, systemImage: "doc.on.doc")
                     .tag(SidebarSelection.allPapers)
-                Label("Favoris", systemImage: "star.fill")
+                Label(AppStrings.favorites, systemImage: "star.fill")
                     .tag(SidebarSelection.favorites)
-                Label("À lire", systemImage: "book.closed")
+                Label(AppStrings.unread, systemImage: "book.closed")
                     .tag(SidebarSelection.unread)
-                Label("Récents", systemImage: "clock")
+                Label(AppStrings.recent, systemImage: "clock")
                     .tag(SidebarSelection.recent)
             }
 
-            Section("Collections") {
+            Section(AppStrings.collections) {
                 ForEach(rootCollections) { collection in
                     collectionRow(collection, depth: 0)
                 }
@@ -36,7 +36,7 @@ struct SidebarView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "folder")
                             .foregroundStyle(.secondary)
-                        TextField("Nouvelle collection", text: $newCollectionName)
+                        TextField("New collection", text: $newCollectionName)
                             .onSubmit { addCollection() }
                             .onExitCommand {
                                 isAddingCollection = false
@@ -87,16 +87,16 @@ struct SidebarView: View {
         }
         .tag(SidebarSelection.collection(collection.persistentModelID))
         .contextMenu {
-            Button("Nouvelle sous-collection…") {
+            Button("New subcollection…") {
                 addingToParent = collection
                 isAddingCollection = true
                 newCollectionName = ""
             }
-            Button("Renommer…") {
+            Button(AppStrings.renameEllipsis) {
                 // TODO: inline rename
             }
             Divider()
-            Button("Supprimer", role: .destructive) {
+            Button(AppStrings.delete, role: .destructive) {
                 modelContext.delete(collection)
             }
         }

@@ -123,14 +123,14 @@ struct PDFReaderView: View {
                 }
             } else {
                 ContentUnavailableView(
-                    "Impossible d'ouvrir le PDF",
+                    AppStrings.couldNotOpenPDF,
                     systemImage: "exclamationmark.triangle"
                 )
             }
         }
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showAnnotationSidebar)
         .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
-        .navigationTitle(paper?.title ?? "Article")
+        .navigationTitle(paper?.title ?? "Paper")
         .onAppear {
             loadDocument()
             if isSplitMode { showAnnotationSidebar = false }
@@ -166,11 +166,11 @@ struct PDFReaderView: View {
                 onCancel: { isEditingNote = false }
             )
         }
-        .alert("Impossible d’exporter les annotations", isPresented: Binding(
+        .alert(AppStrings.couldNotExportAnnotations, isPresented: Binding(
             get: { annotationExportError != nil },
             set: { if !$0 { annotationExportError = nil } }
         )) {
-            Button("OK", role: .cancel) {}
+            Button(AppStrings.ok, role: .cancel) {}
         } message: {
             Text(annotationExportError ?? "")
         }
@@ -474,7 +474,7 @@ struct NoteEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Modifier la note")
+            Text("Edit note")
                 .font(.headline)
             TextEditor(text: $text)
                 .frame(minWidth: 300, minHeight: 150)
@@ -484,10 +484,10 @@ struct NoteEditorSheet: View {
                 .background(.background.secondary)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             HStack {
-                Button("Annuler", action: onCancel)
+                Button(AppStrings.cancel, action: onCancel)
                     .keyboardShortcut(.escape, modifiers: [])
                 Spacer()
-                Button("Enregistrer", action: onSave)
+                Button(AppStrings.save, action: onSave)
                     .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent)
             }

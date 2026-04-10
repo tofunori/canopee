@@ -169,7 +169,7 @@ enum PDFAnnotationMarkdownExporter {
         ]
 
         if entries.isEmpty {
-            lines.append("_Aucune annotation pour l’instant._")
+            lines.append("_No annotations yet._")
         } else {
             for (index, entry) in entries.enumerated() {
                 lines.append("### Annotation \(index + 1)")
@@ -271,26 +271,26 @@ enum PDFAnnotationMarkdownExporter {
     }
 
     private static func displayType(for annotation: PDFAnnotation) -> String {
-        if annotation.isTextBoxAnnotation { return "Zone de texte" }
-        if annotation.isCanopeHighlightBlock || annotation.type == "Highlight" { return "Surlignage" }
+        if annotation.isTextBoxAnnotation { return "Text box" }
+        if annotation.isCanopeHighlightBlock || annotation.type == "Highlight" { return "Highlight" }
 
         switch annotation.type {
         case "Underline":
-            return "Soulignement"
+            return "Underline"
         case "StrikeOut":
-            return "Barré"
+            return "Strikethrough"
         case "Text":
-            return "Note"
+            return AppStrings.note
         case "Ink":
-            return "Dessin"
+            return AppStrings.drawing
         case "Square":
-            return "Rectangle"
+            return AppStrings.rectangle
         case "Circle":
-            return "Ovale"
+            return AppStrings.oval
         case "Line":
-            return annotation.endLineStyle == .openArrow ? "Flèche" : "Ligne"
+            return annotation.endLineStyle == .openArrow ? AppStrings.arrow : "Line"
         default:
-            return annotation.type ?? "Annotation"
+            return annotation.type ?? AppStrings.annotation
         }
     }
 

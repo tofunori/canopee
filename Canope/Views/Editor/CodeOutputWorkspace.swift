@@ -117,7 +117,7 @@ struct CodeOutputWorkspace: View {
             }
             .buttonStyle(.plain)
             .disabled(!documentState.outputLayout.secondaryPaneVisible)
-            .help("Changer l’orientation du split interne")
+            .help(AppStrings.changeSplitOrientation)
 
             Button(action: revealArtifactDirectoryInFinder) {
                 Image(systemName: "folder")
@@ -125,7 +125,7 @@ struct CodeOutputWorkspace: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Afficher le dossier d’artefacts")
+            .help(AppStrings.showArtifactsFolder)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -245,7 +245,7 @@ struct CodeOutputWorkspace: View {
 
     private var primaryPreviewPane: some View {
         ArtifactOutputPane(
-            title: documentState.manualPreviewArtifact == nil ? "Aperçu principal" : "Aperçu manuel",
+            title: documentState.manualPreviewArtifact == nil ? AppStrings.primaryPreview : AppStrings.manualPreview,
             artifact: documentState.activeArtifact,
             imageZoomController: primaryZoomController,
             accessory: nil
@@ -336,7 +336,7 @@ struct CodeOutputWorkspace: View {
 private struct ArtifactOutputPane: View {
     let title: String
     let artifact: ArtifactDescriptor?
-    var emptyDescription: String? = "Aucun artefact à afficher dans ce panneau."
+    var emptyDescription: String? = "No artifact to display in this pane."
     @ObservedObject var imageZoomController: ImageArtifactZoomController
     var accessory: AnyView?
 
@@ -374,7 +374,7 @@ private struct ArtifactOutputPane: View {
 
 private struct ArtifactPrimaryPreviewPane: View {
     let artifact: ArtifactDescriptor?
-    var emptyDescription: String? = "Aucun artefact à afficher dans ce panneau."
+    var emptyDescription: String? = "No artifact to display in this pane."
     @ObservedObject var imageZoomController: ImageArtifactZoomController
 
     var body: some View {
@@ -385,7 +385,7 @@ private struct ArtifactPrimaryPreviewPane: View {
                     if let document = PDFDocument(url: artifact.url) {
                         PDFPreviewView(document: document, allowsInverseSync: false)
                     } else {
-                        unavailableView(title: "PDF introuvable", systemImage: "doc.richtext", description: "Le PDF n’a pas pu être chargé.")
+                        unavailableView(title: AppStrings.pdfNotFound, systemImage: "doc.richtext", description: AppStrings.pdfCouldNotLoad)
                     }
                 case .image:
                     ZStack(alignment: .topTrailing) {
@@ -397,7 +397,7 @@ private struct ArtifactPrimaryPreviewPane: View {
                     WebArtifactView(url: artifact.url)
                 }
             } else {
-                unavailableView(title: "Aucune sortie", systemImage: "chart.xyaxis.line", description: emptyDescription)
+                unavailableView(title: AppStrings.noOutput, systemImage: "chart.xyaxis.line", description: emptyDescription)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -405,10 +405,10 @@ private struct ArtifactPrimaryPreviewPane: View {
 
     private var imageZoomControls: some View {
         HStack(spacing: 4) {
-            zoomButton(systemName: "arrow.up.left.and.down.right.magnifyingglass", help: "Ajuster", action: imageZoomController.fit)
-            zoomButton(systemName: "1.magnifyingglass", help: "100 %", action: imageZoomController.actualSize)
-            zoomButton(systemName: "minus.magnifyingglass", help: "Zoom arrière", action: imageZoomController.zoomOut)
-            zoomButton(systemName: "plus.magnifyingglass", help: "Zoom avant", action: imageZoomController.zoomIn)
+            zoomButton(systemName: "arrow.up.left.and.down.right.magnifyingglass", help: AppStrings.fit, action: imageZoomController.fit)
+            zoomButton(systemName: "1.magnifyingglass", help: AppStrings.zoom100, action: imageZoomController.actualSize)
+            zoomButton(systemName: "minus.magnifyingglass", help: AppStrings.zoomOut, action: imageZoomController.zoomOut)
+            zoomButton(systemName: "plus.magnifyingglass", help: AppStrings.zoomIn, action: imageZoomController.zoomIn)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 5)

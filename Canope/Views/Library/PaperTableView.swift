@@ -67,9 +67,9 @@ struct PaperTableView: View {
                 .overlay {
                     if filteredPapers.isEmpty {
                         ContentUnavailableView {
-                            Label("Aucun article", systemImage: "doc.text")
+                            Label(AppStrings.noPapers, systemImage: "doc.text")
                         } description: {
-                            Text("Importez un PDF avec le bouton + ou glissez-le ici")
+                            Text(AppStrings.importPDFHint)
                         }
                     }
                 }
@@ -95,16 +95,16 @@ struct PaperTableView: View {
             Spacer(minLength: 8)
 
             Button(action: { isImporting = true }) {
-                Label("Importer un PDF", systemImage: "plus")
+                Label(AppStrings.importPDF, systemImage: "plus")
                     .labelStyle(.iconOnly)
             }
             .buttonStyle(.plain)
-            .help("Importer un PDF")
+            .help(AppStrings.importPDF)
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("Rechercher titre, auteurs, DOI…", text: $searchText)
+                TextField("Search title, authors, DOI…", text: $searchText)
                     .textFieldStyle(.plain)
             }
             .padding(.horizontal, 10)
@@ -149,14 +149,14 @@ struct PaperTableView: View {
             .width(42)
 
             // Authors (short: last names)
-            TableColumn("Auteurs", sortUsing: KeyPathComparator(\Paper.authors)) { paper in
+            TableColumn(AppStrings.authors, sortUsing: KeyPathComparator(\Paper.authors)) { paper in
                 Text(paper.authorsShort)
                     .lineLimit(1)
             }
             .width(min: 100, ideal: 150, max: 200)
 
             // Last Author
-            TableColumn("Dernier auteur") { paper in
+            TableColumn("Last author") { paper in
                 Text(paper.lastAuthor)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -164,13 +164,13 @@ struct PaperTableView: View {
             .width(min: 80, ideal: 120, max: 160)
 
             // Title
-            TableColumn("Titre", sortUsing: KeyPathComparator(\Paper.title)) { paper in
+            TableColumn(AppStrings.title, sortUsing: KeyPathComparator(\Paper.title)) { paper in
                 Text(paper.title)
                     .lineLimit(1)
             }
 
             // Journal
-            TableColumn("Journal") { paper in
+            TableColumn(AppStrings.journal) { paper in
                 Text(paper.journal ?? "")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -178,14 +178,14 @@ struct PaperTableView: View {
             .width(min: 80, ideal: 160, max: 250)
 
             // Year
-            TableColumn("Année", sortUsing: KeyPathComparator(\Paper.dateAdded)) { paper in
+            TableColumn(AppStrings.year, sortUsing: KeyPathComparator(\Paper.dateAdded)) { paper in
                 Text(paper.year.map(String.init) ?? "")
                     .monospacedDigit()
             }
             .width(50)
 
             // Rating (5 stars)
-            TableColumn("Note") { paper in
+            TableColumn("Rating") { paper in
                 RatingView(rating: Binding(
                     get: { paper.rating },
                     set: { paper.rating = $0 }
@@ -201,7 +201,7 @@ struct PaperTableView: View {
     private func contextMenuContent(_ items: Set<UUID>) -> some View {
         Group {
             if !items.isEmpty {
-                Button("Ouvrir") {
+                Button(AppStrings.open) {
                     for id in items {
                         if let paper = allPapers.first(where: { $0.id == id }) {
                             onOpenPaper(paper)
@@ -209,13 +209,13 @@ struct PaperTableView: View {
                     }
                 }
                 Divider()
-                Button("Favori") { toggleFavorite(items) }
-                Button("Marquer lu/non-lu") { toggleRead(items) }
-                Button(items.compactMap({ id in allPapers.first { $0.id == id } }).allSatisfy(\.isFlagged) ? "Retirer le drapeau" : "Signaler") {
+                Button(AppStrings.favorite) { toggleFavorite(items) }
+                Button("Toggle read") { toggleRead(items) }
+                Button(items.compactMap({ id in allPapers.first { $0.id == id } }).allSatisfy(\.isFlagged) ? AppStrings.removeFlag : AppStrings.flag) {
                     toggleFlag(items)
                 }
                 Divider()
-                Menu("Couleur") {
+                Menu(AppStrings.color) {
                     ForEach(Paper.labelColors, id: \.key) { label in
                         Button {
                             setLabel(items, color: label.key)
@@ -225,9 +225,9 @@ struct PaperTableView: View {
                         }
                     }
                     Divider()
-                    Button("Aucune") { setLabel(items, color: nil) }
+                    Button(AppStrings.none) { setLabel(items, color: nil) }
                 }
-                Menu("Forme") {
+                Menu(AppStrings.shape) {
                     ForEach(Paper.labelShapes, id: \.key) { shape in
                         Button {
                             setShape(items, shape: shape.key)
@@ -237,7 +237,7 @@ struct PaperTableView: View {
                     }
                 }
                 Divider()
-                Menu("Ajouter à…") {
+                Menu(AppStrings.addTo) {
                     ForEach(allCollections) { collection in
                         Button {
                             addToCollection(items, collection: collection)
@@ -246,7 +246,7 @@ struct PaperTableView: View {
                         }
                     }
                 }
-                Menu("Retirer de…") {
+                Menu(AppStrings.removeFrom) {
                     ForEach(collectionsForPapers(items)) { collection in
                         Button {
                             removeFromCollection(items, collection: collection)
@@ -256,18 +256,18 @@ struct PaperTableView: View {
                     }
                 }
                 Divider()
-                Button("Supprimer", role: .destructive) { deletePapers(items) }
+                Button(AppStrings.delete, role: .destructive) { deletePapers(items) }
             }
         }
     }
 
     private var navigationTitle: String {
         switch sidebarSelection {
-        case .allPapers: return "Tous les articles"
-        case .favorites: return "Favoris"
-        case .unread: return "À lire"
-        case .recent: return "Récents"
-        case .collection: return "Collection"
+        case .allPapers: return AppStrings.allPapers
+        case .favorites: return AppStrings.favorites
+        case .unread: return AppStrings.unread
+        case .recent: return AppStrings.recent
+        case .collection: return AppStrings.collection
         }
     }
 

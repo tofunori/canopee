@@ -57,6 +57,7 @@
 		6E893E157652FF2DAAB5111D /* BibliographyCommandRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82008C95D05B12E56942D883 /* BibliographyCommandRouter.swift */; };
 		6E95467401766C2F88815BCD /* LaTeXEditorReferenceActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6618946B15E66FCAD408426A /* LaTeXEditorReferenceActions.swift */; };
 		70C75ABE02D9FD0C5D3AF412 /* HeadlessChatProviding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DA16CAB845F1F4C1A1223DD /* HeadlessChatProviding.swift */; };
+		739882E43B9635963527D1DA /* AppStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8916363DC1E3690D34899077 /* AppStrings.swift */; };
 		777E23C22D1D291C6EF3A714 /* UnifiedEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F170D57B17CC00EA3EC557CD /* UnifiedEditorView.swift */; };
 		7C8E8AF16DD8ABF9EF0C6FAE /* DiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888AB1D2ECB6F588E3C27898 /* DiffEngine.swift */; };
 		83AB14EC9BBFAD46A828C0E0 /* SessionPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123E29AEB8DFB9A9FE4DFD2D /* SessionPickerView.swift */; };
@@ -192,6 +193,7 @@
 		86E472B4EC8C837F4FB0A749 /* ShapeAnnotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShapeAnnotations.swift; sourceTree = "<group>"; };
 		87C72B0AB2DE4CB5ADFBD4F4 /* RatingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RatingView.swift; sourceTree = "<group>"; };
 		888AB1D2ECB6F588E3C27898 /* DiffEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffEngine.swift; sourceTree = "<group>"; };
+		8916363DC1E3690D34899077 /* AppStrings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStrings.swift; sourceTree = "<group>"; };
 		8A821013C94B5DDD27B1BDB9 /* Paper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Paper.swift; sourceTree = "<group>"; };
 		8BB1A62E7F2F664FEE636B9C /* AnnotationSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationSidebarView.swift; sourceTree = "<group>"; };
 		8C7D3AE3E860936DB5CB1AE6 /* CompilationErrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompilationErrorView.swift; sourceTree = "<group>"; };
@@ -351,6 +353,7 @@
 			isa = PBXGroup;
 			children = (
 				C97A471E5ABAA4E7B828E80D /* AppChrome.swift */,
+				8916363DC1E3690D34899077 /* AppStrings.swift */,
 				AC183AA81BFC67D388569EAC /* BibliographyCommands.swift */,
 				0124D8B26DAB0457F43AB2B1 /* MainWindowTitleBarBehavior.swift */,
 				68AF170C9C8810841C98EC66 /* SplitViewGrabHelper.swift */,
@@ -631,6 +634,7 @@
 				08C11D9AD3D55B9EEECCD694 /* AnnotationTool.swift in Sources */,
 				2CC9CDCA03E977B2FAB69601 /* AnnotationToolbar.swift in Sources */,
 				EC76229730BAB292488280B9 /* AppChrome.swift in Sources */,
+				739882E43B9635963527D1DA /* AppStrings.swift in Sources */,
 				1FA7680F94F064DD280D7C61 /* ArtifactSupport.swift in Sources */,
 				D7B195A5A096BA88266FA781 /* BibTeXSerializer.swift in Sources */,
 				03809DE46068B1249B9E3FB6 /* BibliographicRecord.swift in Sources */,

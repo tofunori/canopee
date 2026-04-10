@@ -171,7 +171,7 @@ extension UnifiedEditorView {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
-        .help(section == .files ? "Fichiers" : "Annotations")
+        .help(section == .files ? AppStrings.files : AppStrings.annotations)
     }
 
     func annotationRow(_ resolved: ResolvedLaTeXAnnotation) -> some View {
@@ -182,7 +182,7 @@ extension UnifiedEditorView {
                 Circle()
                     .fill(resolved.isDetached ? Color.orange : Color.yellow)
                     .frame(width: 7, height: 7)
-                Text(resolved.isDetached ? "À recoller" : "Ancrée")
+                Text(resolved.isDetached ? AppStrings.needsRelink : AppStrings.attached)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -194,7 +194,7 @@ extension UnifiedEditorView {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help("Supprimer l'annotation")
+                .help(AppStrings.deleteAnnotation)
             }
 
             Button {

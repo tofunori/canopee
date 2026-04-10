@@ -7,9 +7,9 @@ enum MarkdownEditorDisplayMode: String, Codable, CaseIterable, Equatable {
     var title: String {
         switch self {
         case .source:
-            return "Source"
+            return AppStrings.source
         case .livePreview:
-            return "Apercu"
+            return AppStrings.preview
         }
     }
 }

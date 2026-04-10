@@ -36,9 +36,9 @@ struct LibraryView: View {
                 PaperInfoPanel(paper: paper)
             } else {
                 ContentUnavailableView(
-                    "Aucun article sélectionné",
+                    AppStrings.noSelectedPaper,
                     systemImage: "info.circle",
-                    description: Text("Sélectionnez un article pour voir ses infos")
+                    description: Text(AppStrings.selectPaperForInfo)
                 )
             }
         }

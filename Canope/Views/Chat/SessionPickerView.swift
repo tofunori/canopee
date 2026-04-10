@@ -26,10 +26,10 @@ struct SessionPickerView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Reprendre une session")
+                Text("Resume a session")
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Button("Annuler") { onCancel() }
+                Button(AppStrings.cancel) { onCancel() }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .font(.system(size: 12))
@@ -38,7 +38,7 @@ struct SessionPickerView: View {
             .padding(.vertical, 10)
 
             // Search
-            TextField("Rechercher…", text: $search)
+            TextField("Search…", text: $search)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .padding(.horizontal, 16)
@@ -52,7 +52,7 @@ struct SessionPickerView: View {
                     VStack(spacing: 10) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Chargement des sessions…")
+                        Text("Loading sessions…")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     }
@@ -99,7 +99,7 @@ struct SessionPickerView: View {
                                 .buttonStyle(.plain)
                                 .background(Color.clear)
                                 .contextMenu {
-                                    Button("Renommer…") {
+                                    Button(AppStrings.renameEllipsis) {
                                         renameText = entry.name
                                         renamingSession = entry
                                     }
@@ -119,19 +119,19 @@ struct SessionPickerView: View {
         }
         .sheet(item: $renamingSession) { entry in
             VStack(spacing: 12) {
-                Text("Renommer la session")
+                Text(AppStrings.renameSession)
                     .font(.system(size: 13, weight: .semibold))
 
-                TextField("Nom", text: $renameText)
+                TextField(AppStrings.name, text: $renameText)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
 
                 HStack {
-                    Button("Annuler") { renamingSession = nil }
+                    Button(AppStrings.cancel) { renamingSession = nil }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Renommer") {
+                    Button(AppStrings.rename) {
                         renameSession(entry.id, renameText)
                         Task {
                             await reloadSessions()

@@ -153,10 +153,10 @@ extension UnifiedEditorView {
                     Image(systemName: "highlighter")
                         .font(.system(size: 18))
                         .foregroundStyle(.secondary)
-                    Text("Aucune annotation")
+                    Text(AppStrings.noAnnotations)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("Sélectionne un passage puis clique sur le surligneur dans la barre du haut.")
+                    Text("Select a passage, then click the highlighter in the top bar.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
@@ -250,7 +250,7 @@ extension UnifiedEditorView {
 
             if !diffGroups.isEmpty {
                 HStack(spacing: 6) {
-                    Text(isCompactDiffSidebar ? "Global" : "Toutes les modifications")
+                    Text(isCompactDiffSidebar ? "All" : AppStrings.allChanges)
                         .font(.caption2)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
@@ -258,7 +258,7 @@ extension UnifiedEditorView {
                     Spacer(minLength: 6)
                     HStack(spacing: 6) {
                         diffBatchActionButton(
-                            title: "Tout rejeter",
+                            title: AppStrings.rejectAll,
                             systemImage: "xmark",
                             tint: .red,
                             compact: isCompactDiffSidebar,
@@ -266,7 +266,7 @@ extension UnifiedEditorView {
                         )
 
                         diffBatchActionButton(
-                            title: "Tout accepter",
+                            title: AppStrings.acceptAll,
                             systemImage: "checkmark",
                             tint: .green,
                             compact: isCompactDiffSidebar,
@@ -285,10 +285,10 @@ extension UnifiedEditorView {
                     Image(systemName: "checkmark.circle")
                         .font(.system(size: 18))
                         .foregroundStyle(.secondary)
-                    Text("Aucun changement")
+                    Text(AppStrings.noChanges)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("Les modifications non sauvegardées du fichier apparaîtront ici.")
+                    Text(AppStrings.unsavedChangesHint)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)

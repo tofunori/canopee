@@ -39,11 +39,11 @@ struct ChatCustomInstructions: Equatable {
         case (true, true):
             return "Global + session"
         case (true, false):
-            return "Global actif"
+            return AppStrings.globalActive
         case (false, true):
-            return "Session active"
+            return AppStrings.sessionActive
         case (false, false):
-            return "Aucune instruction"
+            return AppStrings.noInstructions
         }
     }
 }

@@ -108,26 +108,26 @@ enum NewEditorFileKind {
     var title: String {
         switch self {
         case .latex:
-            return "Nouveau fichier LaTeX"
+            return AppStrings.newLatexFile
         case .markdown:
-            return "Nouveau fichier Markdown"
+            return AppStrings.newMarkdownFile
         case .python:
-            return "Nouveau script Python"
+            return AppStrings.newPythonScript
         case .r:
-            return "Nouveau script R"
+            return AppStrings.newRScript
         }
     }
 
     var message: String {
         switch self {
         case .latex:
-            return "Crée un nouveau fichier .tex dans le dossier courant"
+            return AppStrings.createTexInCurrentFolder
         case .markdown:
-            return "Crée un nouveau fichier .md dans le dossier courant"
+            return AppStrings.createMarkdownInCurrentFolder
         case .python:
-            return "Crée un nouveau script .py dans le dossier courant"
+            return AppStrings.createPythonInCurrentFolder
         case .r:
-            return "Crée un nouveau script .R dans le dossier courant"
+            return AppStrings.createRInCurrentFolder
         }
     }
 
@@ -151,7 +151,7 @@ enum NewEditorFileKind {
             artifact_dir = Path(os.environ.get("CANOPE_ARTIFACT_DIR", "."))
             artifact_dir.mkdir(parents=True, exist_ok=True)
 
-            # Écris tes sorties dans artifact_dir, par ex. artifact_dir / "plot.png"
+            # \(AppStrings.writeOutputsHint)
             print(f"Artifacts: {artifact_dir}")
             """
         case .r:
@@ -159,7 +159,7 @@ enum NewEditorFileKind {
             artifact_dir <- Sys.getenv("CANOPE_ARTIFACT_DIR", ".")
             dir.create(artifact_dir, recursive = TRUE, showWarnings = FALSE)
 
-            # Écris tes sorties dans artifact_dir, par ex. file.path(artifact_dir, "plot.png")
+            # \(AppStrings.writeROutputsHint)
             cat("Artifacts:", artifact_dir, "\\n")
             """
         }
@@ -214,22 +214,22 @@ enum EditorDocumentMode {
     var compiledTabTitle: String {
         switch self {
         case .latex:
-            return "PDF compilé"
+            return AppStrings.compiledPDF
         case .markdown:
-            return "PDF exporté"
+            return AppStrings.exportedPDF
         case .python, .r:
-            return "Sortie"
+            return AppStrings.output
         }
     }
 
     var emptyPreviewTitle: String {
         switch self {
         case .latex:
-            return "Pas encore compilé"
+            return AppStrings.notYetCompiled
         case .markdown:
-            return "Pas encore exporté"
+            return AppStrings.notYetExported
         case .python, .r:
-            return "Aucun artefact"
+            return AppStrings.noArtifact
         }
     }
 
@@ -269,11 +269,11 @@ enum EditorDocumentMode {
     var outputSuccessTitle: String {
         switch self {
         case .latex:
-            return "Compilation réussie"
+            return AppStrings.compileSucceeded
         case .markdown:
-            return "Export PDF prêt"
+            return AppStrings.pdfExportReady
         case .python, .r:
-            return "Sortie prête"
+            return AppStrings.outputReady
         }
     }
 

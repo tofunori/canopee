@@ -717,7 +717,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             let errorPayload = params["error"] as? [String: Any]
             let message = (errorPayload?["message"] as? String)
                 ?? (params["message"] as? String)
-                ?? "Erreur Codex"
+                ?? AppStrings.codexError
             let details = errorPayload?["additionalDetails"] as? String
             let rendered = [message, details]
                 .compactMap { value in
@@ -1379,34 +1379,34 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         if let command, !command.isEmpty {
             return command
         }
-        return "Commande en cours"
+        return "Command in progress"
     }
 
     private static func fileChangeSummary(_ item: [String: Any]) -> String {
         if let changes = item["changes"] as? [[String: Any]], !changes.isEmpty {
             let firstPath = (changes.first?["path"] as? String) ?? (changes.first?["newPath"] as? String)
             if let firstPath, !firstPath.isEmpty {
-                return "Modification proposee · \((firstPath as NSString).lastPathComponent)"
+                return "Proposed change · \((firstPath as NSString).lastPathComponent)"
             }
-            return "Modification proposee · \(changes.count) fichier(s)"
+            return "Proposed change · \(changes.count) file(s)"
         }
-        return "Modification proposee"
+        return "Proposed change"
     }
 
     private static func completedCommandExecutionSummary(_ item: [String: Any], bufferedOutput: String?) -> String? {
         let status = (item["status"] as? String) ?? "completed"
-        let command = (item["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Commande"
+        let command = (item["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Command"
         let exitCode = jsonInt(item["exitCode"])
         let output = ((item["aggregatedOutput"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
             ?? (bufferedOutput?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
         let statusLabel: String
         switch status {
         case "declined":
-            statusLabel = "Commande refusee"
+            statusLabel = AppStrings.commandDeclined
         case "failed":
-            statusLabel = "Commande echouee"
+            statusLabel = AppStrings.commandFailed
         default:
-            statusLabel = "Commande terminee"
+            statusLabel = AppStrings.commandCompleted
         }
         let suffix = exitCode.map { " (code \($0))" } ?? ""
         if let output {
@@ -1421,17 +1421,17 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         let output = (bufferedOutput?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
         switch status {
         case "declined":
-            return "\(base) refusee"
+            return "\(base) \(AppStrings.changeDeclined)"
         case "failed":
             if let output, !output.isEmpty {
-                return "\(base) non appliquee"
+                return "\(base) \(AppStrings.changeNotApplied)"
             }
-            return "\(base) non appliquee"
+            return "\(base) \(AppStrings.changeNotApplied)"
         default:
             if let output {
-                return "\(base) appliquee\n\(output)"
+                return "\(base) \(AppStrings.changeApplied)\n\(output)"
             }
-            return "\(base) appliquee"
+            return "\(base) \(AppStrings.changeApplied)"
         }
     }
 
@@ -1440,9 +1440,9 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         let text = extractText(fromContentItems: item["contentItems"] as? [[String: Any]])
         switch status {
         case "failed":
-            return text ?? "Appel d’outil echoue"
+            return text ?? AppStrings.toolCallFailed
         default:
-            return text ?? "Appel d’outil termine"
+            return text ?? AppStrings.toolCallCompleted
         }
     }
 
@@ -1453,11 +1453,11 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 preferredKeys: ["path", "filePath", "query", "url", "cwd", "pattern"],
                 maxLines: 1
             ) {
-                return "Appel dynamique · \(tool) · \(argsPreview.replacingOccurrences(of: "\n", with: " · "))"
+                return "Dynamic call · \(tool) · \(argsPreview.replacingOccurrences(of: "\n", with: " · "))"
             }
-            return "Appel dynamique · \(tool)"
+            return "Dynamic call · \(tool)"
         }
-        return "Appel d’outil dynamique"
+        return "Dynamic tool call"
     }
 
     private static func dynamicToolCallInputPreview(_ item: [String: Any]) -> String? {
@@ -2412,11 +2412,11 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         case "item/permissions/requestApproval":
             switch mode {
             case .plan:
-                return "Mode plan: la demande de permissions supplementaires a ete bloquee."
+                return AppStrings.permissionRequestBlocked
             case .acceptEdits:
-                return "Mode accept edits: la demande de permissions supplementaires a ete bloquee en attendant ton approbation."
+                return "Accept edits mode: the additional permission request was blocked while waiting for your approval."
             case .agent:
-                return "Demande de permissions supplementaires."
+                return "Additional permission request."
             }
         default:
             return unsupportedServerRequestMessage(for: method)
@@ -2785,7 +2785,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     var chatVisualStyle: ChatVisualStyle { .codex }
     var chatUsesBottomPromptControls: Bool { true }
     var chatPromptEnvironmentLabel: String? { "Local" }
-    var chatPromptConfigurationLabel: String? { "Personnalise" }
+    var chatPromptConfigurationLabel: String? { AppStrings.customize }
     var chatSupportsCustomInstructions: Bool { true }
     var chatCustomInstructions: ChatCustomInstructions {
         ChatCustomInstructions(
@@ -2806,7 +2806,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             badges.append(
                 ChatStatusBadge(
                     kind: initialized ? .connected : .connecting,
-                    text: initialized ? "Connecte" : "Connexion…"
+                    text: initialized ? AppStrings.connected : AppStrings.connecting
                 )
             )
         }
@@ -3170,9 +3170,9 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             currentThreadId = id
             session.id = id
             sessionCustomInstructionsText = Self.loadSessionCustomInstructions(threadId: id)
-            appendSystem("Session reprise : \(id.prefix(12))…")
+            appendSystem("Session resumed: \(id.prefix(12))…")
         } catch {
-            appendSystem("Reprise impossible : \(error.localizedDescription)")
+            appendSystem("Could not resume session: \(error.localizedDescription)")
         }
     }
 
@@ -3209,12 +3209,12 @@ extension CodexAppServerProvider: HeadlessChatProviding {
                 if session.name == nil {
                     session.name = first["name"] as? String
                 }
-                appendSystem("Session reprise")
+                appendSystem("Session resumed")
             } else {
-                appendSystem("Aucune session trouvée pour ce dossier")
+                appendSystem("No session found for this folder")
             }
         } catch {
-            appendSystem("Erreur : \(error.localizedDescription)")
+            appendSystem("\(AppStrings.errorPrefix) \(error.localizedDescription)")
         }
     }
 

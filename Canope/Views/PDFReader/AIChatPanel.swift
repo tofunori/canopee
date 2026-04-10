@@ -47,11 +47,11 @@ enum TerminalCursorShape: String, Codable, CaseIterable, Equatable, Identifiable
     var title: String {
         switch self {
         case .bar:
-            return "Barre"
+            return "Bar"
         case .block:
-            return "Bloc"
+            return "Block"
         case .underline:
-            return "Souligné"
+            return "Underline"
         }
     }
 }
@@ -69,11 +69,11 @@ enum TerminalCursorStyleOption: String, Codable, CaseIterable, Equatable, Identi
     var title: String {
         switch self.shape {
         case .bar:
-            return isBlinking ? "Barre clignotante" : "Barre fixe"
+            return isBlinking ? "Blinking bar" : "Steady bar"
         case .block:
-            return isBlinking ? "Bloc clignotant" : "Bloc fixe"
+            return isBlinking ? "Blinking block" : "Steady block"
         case .underline:
-            return isBlinking ? "Souligné clignotant" : "Souligné fixe"
+            return isBlinking ? "Blinking underline" : "Steady underline"
         }
     }
 
@@ -540,8 +540,8 @@ struct TerminalPanel: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .help("Nouveau chat Claude")
-                    .accessibilityLabel("Nouveau chat Claude")
+                    .help(AppStrings.newClaudeChat)
+                    .accessibilityLabel(AppStrings.newClaudeChat)
 
                     Button(action: { addNativeChatTab(.codex) }) {
                         HStack(spacing: 3) {
@@ -559,8 +559,8 @@ struct TerminalPanel: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .help("Nouveau chat Codex")
-                    .accessibilityLabel("Nouveau chat Codex")
+                    .help(AppStrings.newCodexChat)
+                    .accessibilityLabel(AppStrings.newCodexChat)
 
                 if showsInlineControls {
                     Button(action: toggleOptionAsMetaForFocusedPane) {
@@ -574,7 +574,7 @@ struct TerminalPanel: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help("Utiliser Option comme Meta pour cet onglet de terminal")
+                    .help(AppStrings.useOptionAsMeta)
 
                     Button(action: addTab) {
                         Image(systemName: "plus")
@@ -582,7 +582,7 @@ struct TerminalPanel: View {
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
-                    .help("Nouveau terminal")
+                    .help(AppStrings.newTerminal)
 
                     Button(action: appearanceStore.presentSettings) {
                         Image(systemName: "slider.horizontal.3")
@@ -590,7 +590,7 @@ struct TerminalPanel: View {
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
-                    .help("Réglages du terminal")
+                    .help(AppStrings.settingsTerminal)
                 }
                 }
                 .fixedSize(horizontal: true, vertical: false)
@@ -741,7 +741,7 @@ struct TerminalPanel: View {
             Circle()
                 .fill(workspaceState.focusedPane == pane ? AppChromePalette.tabIndicator(for: .terminal) : Color.gray.opacity(0.3))
                 .frame(width: 6, height: 6)
-            Text(pane == .top ? "Haut" : "Bas")
+            Text(pane == .top ? "Top" : "Bottom")
                 .font(.system(size: 9))
                 .foregroundStyle(.secondary)
             Spacer()
@@ -751,7 +751,7 @@ struct TerminalPanel: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Fermer ce split")
+            .help("Close this split")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
@@ -1505,17 +1505,17 @@ struct TerminalAppearanceSheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Réglages du terminal")
+                    Text(AppStrings.settingsTerminal)
                         .font(.system(size: 14, weight: .semibold))
-                    Text("Preset Ghostty, séparation plus lisible et apparence commune pour tous les terminaux.")
+                    Text("Ghostty preset, clearer dividers, and a shared appearance for every terminal.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Réinitialiser") {
+                Button("Reset") {
                     store.appearance = TerminalAppearanceState()
                 }
-                Button("Fermer") {
+                Button("Close") {
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -1532,14 +1532,14 @@ struct TerminalAppearanceSheet: View {
 
                     GroupBox("Typography") {
                         VStack(alignment: .leading, spacing: 12) {
-                            LabeledContent("Famille") {
+                            LabeledContent("Family") {
                                 TextField("SF Mono", text: store.binding(for: \.fontFamily))
                                     .textFieldStyle(.roundedBorder)
                                     .frame(width: 200)
                             }
 
                             VStack(alignment: .leading, spacing: 6) {
-                                LabeledContent("Taille") {
+                                LabeledContent("Size") {
                                     Text("\(Int(store.appearance.fontSize)) pt")
                                         .monospacedDigit()
                                         .foregroundStyle(.secondary)
@@ -1555,14 +1555,14 @@ struct TerminalAppearanceSheet: View {
 
                     GroupBox("Cursor") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Picker("Forme", selection: cursorShapeBinding) {
+                            Picker("Shape", selection: cursorShapeBinding) {
                                 ForEach(TerminalCursorShape.allCases) { shape in
                                     Text(shape.title).tag(shape)
                                 }
                             }
                             .pickerStyle(.segmented)
 
-                            Toggle("Curseur clignotant", isOn: cursorBlinkBinding)
+                            Toggle("Blinking cursor", isOn: cursorBlinkBinding)
 
                             Text(store.appearance.cursorStyle.title)
                                 .font(.system(size: 11))
@@ -1573,28 +1573,28 @@ struct TerminalAppearanceSheet: View {
                     GroupBox("Pane Styling") {
                         VStack(alignment: .leading, spacing: 12) {
                             sliderRow(
-                                title: "Opacité panneau inactif",
+                                title: "Inactive pane opacity",
                                 value: store.binding(for: \.inactivePaneOpacity),
                                 range: 0.35...1,
                                 step: 0.05,
                                 suffix: String(format: "%.2f", store.appearance.inactivePaneOpacity)
                             )
                             sliderRow(
-                                title: "Opacité panneau actif",
+                                title: "Active pane opacity",
                                 value: store.binding(for: \.activePaneOpacity),
                                 range: 0.75...1,
                                 step: 0.05,
                                 suffix: String(format: "%.2f", store.appearance.activePaneOpacity)
                             )
                             sliderRow(
-                                title: "Épaisseur du séparateur",
+                                title: "Divider thickness",
                                 value: store.binding(for: \.dividerThickness),
                                 range: 1...8,
                                 step: 1,
                                 suffix: "\(Int(store.appearance.dividerThickness)) px"
                             )
                             sliderRow(
-                                title: "Padding terminal",
+                                title: "Terminal padding",
                                 value: store.binding(for: \.terminalPadding),
                                 range: 0...12,
                                 step: 1,
@@ -1605,16 +1605,16 @@ struct TerminalAppearanceSheet: View {
 
                     GroupBox("Themes") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Picker("Thème sombre", selection: store.binding(for: \.darkThemePresetID)) {
+                            Picker("Dark theme", selection: store.binding(for: \.darkThemePresetID)) {
                                 ForEach(TerminalThemePreset.all) { preset in
                                     Text(preset.name).tag(preset.id)
                                 }
                             }
                             .pickerStyle(.menu)
 
-                            Toggle("Utiliser un thème séparé en clair", isOn: store.binding(for: \.useSeparateLightTheme))
+                            Toggle("Use a separate light theme", isOn: store.binding(for: \.useSeparateLightTheme))
 
-                            Picker("Thème clair", selection: store.binding(for: \.lightThemePresetID)) {
+                            Picker("Light theme", selection: store.binding(for: \.lightThemePresetID)) {
                                 ForEach(TerminalThemePreset.all) { preset in
                                     Text(preset.name).tag(preset.id)
                                 }
@@ -1624,14 +1624,14 @@ struct TerminalAppearanceSheet: View {
 
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text("Divider sombre")
+                                    Text("Dark divider")
                                         .font(.system(size: 11, weight: .medium))
                                     TextField("#3f3f46", text: store.binding(for: \.dividerColorDark))
                                         .textFieldStyle(.roundedBorder)
                                 }
 
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text("Divider clair")
+                                    Text("Light divider")
                                         .font(.system(size: 11, weight: .medium))
                                     TextField("#d4d4d8", text: store.binding(for: \.dividerColorLight))
                                         .textFieldStyle(.roundedBorder)
@@ -1642,13 +1642,13 @@ struct TerminalAppearanceSheet: View {
 
                     GroupBox("Advanced") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Utiliser les bright colors ANSI", isOn: store.binding(for: \.useBrightColors))
+                            Toggle("Use ANSI bright colors", isOn: store.binding(for: \.useBrightColors))
 
                             HStack {
                                 Text("Scrollback")
                                 Spacer()
                                 Stepper(
-                                    "\(store.appearance.scrollbackLines) lignes",
+                                    "\(store.appearance.scrollbackLines) lines",
                                     value: store.binding(for: \.scrollbackLines),
                                     in: 1000...50000,
                                     step: 1000

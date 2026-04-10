@@ -20,7 +20,7 @@ struct CompilationErrorView: View {
             Divider()
 
             if errors.isEmpty {
-                ContentUnavailableView("Aucune erreur", systemImage: "checkmark.circle", description: Text("La compilation a réussi"))
+                ContentUnavailableView(AppStrings.noErrors, systemImage: "checkmark.circle", description: Text(AppStrings.compileSucceeded))
                     .frame(maxHeight: .infinity)
             } else {
                 List(errors) { error in
@@ -59,9 +59,9 @@ struct CompilationErrorView: View {
     }
 
     private var statusText: String {
-        if errors.isEmpty { return "Compilation réussie" }
+        if errors.isEmpty { return AppStrings.compileSucceeded }
         var parts: [String] = []
-        if errorCount > 0 { parts.append("\(errorCount) erreur\(errorCount > 1 ? "s" : "")") }
+        if errorCount > 0 { parts.append(AppStrings.errorCount(errorCount)) }
         if warningCount > 0 { parts.append("\(warningCount) warning\(warningCount > 1 ? "s" : "")") }
         return parts.joined(separator: ", ")
     }

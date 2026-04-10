@@ -44,14 +44,14 @@ struct TabBar: View {
         HStack(spacing: 2) {
             SectionTab(
                 icon: "books.vertical",
-                label: "Bibliothèque",
+                label: AppStrings.library,
                 isSelected: selectedTab == .library,
                 indicatorNamespace: sectionTabIndicatorNamespace
             ) { selectedTab = .library }
 
             SectionTab(
                 icon: "chevron.left.forwardslash.chevron.right",
-                label: editorTabs.count > 1 ? "Éditeur" : (editorTab.map { title(for: $0) } ?? "Éditeur"),
+                label: editorTabs.count > 1 ? AppStrings.editor : (editorTab.map { title(for: $0) } ?? AppStrings.editor),
                 isSelected: isEditorSelected,
                 indicatorNamespace: sectionTabIndicatorNamespace
             ) {
@@ -68,11 +68,11 @@ struct TabBar: View {
 
     private func title(for tab: TabItem) -> String {
         switch tab {
-        case .library: return "Bibliothèque"
+        case .library: return AppStrings.library
         case .paper(let id):
-            return allPapers.first(where: { $0.id == id })?.title ?? "Article"
+            return allPapers.first(where: { $0.id == id })?.title ?? "Paper"
         case .editorWorkspace:
-            return "Éditeur"
+            return AppStrings.editor
         case .editor(let path):
             return URL(fileURLWithPath: path).lastPathComponent
         case .pdfFile(let path):
@@ -89,7 +89,7 @@ struct TabBar: View {
     }
 }
 
-// MARK: - Section Tab (top row — Bibliothèque / LaTeX)
+// MARK: - Section Tab (top row)
 
 struct SectionTab: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

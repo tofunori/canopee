@@ -277,21 +277,21 @@ enum ToolbarStatusState: Equatable {
         case .idle:
             return ""
         case .compiling:
-            return "Compilation…"
+            return AppStrings.compiling
         case .rendering:
-            return "Rendu…"
+            return AppStrings.rendered
         case .running:
-            return "Exécution…"
+            return AppStrings.running
         case .saved:
-            return "Enregistré"
+            return AppStrings.saved
         case .completed:
-            return "Exécuté"
+            return AppStrings.completed
         case .exported:
-            return "Annotations exportées"
+            return AppStrings.exportedAnnotations
         case .previewReady:
-            return "PDF prêt"
+            return AppStrings.previewReady
         case .errors(let count):
-            return "\(count) erreur\(count > 1 ? "s" : "")"
+            return AppStrings.errorCount(count)
         }
     }
 
@@ -577,18 +577,18 @@ func AppChromeAnnotationExportMenuItems(
 ) -> some View {
     if let activeMarkdownFileName, let onExportToActiveMarkdown {
         Button(action: onExportToActiveMarkdown) {
-            Label("Markdown actif (\(activeMarkdownFileName))", systemImage: "text.document")
+            Label("\(AppStrings.activeMarkdown) (\(activeMarkdownFileName))", systemImage: "text.document")
         }
     }
 
     Button(action: onExportToCompanion) {
-        Label("Fichier compagnon (\(companionFileName))", systemImage: "doc.plaintext")
+        Label("\(AppStrings.companionFile) (\(companionFileName))", systemImage: "doc.plaintext")
     }
 
     Divider()
 
     Button(action: onChooseDestination) {
-        Label("Choisir un fichier Markdown…", systemImage: "folder")
+        Label(AppStrings.chooseMarkdownFile, systemImage: "folder")
     }
 }
 

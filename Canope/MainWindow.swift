@@ -136,9 +136,9 @@ struct MainWindow: View {
 
     private func tabTitle(_ tab: TabItem) -> String {
         switch tab {
-        case .library: return "Bibliothèque"
-        case .paper(let id): return allPapers.first(where: { $0.id == id })?.title ?? "Article"
-        case .editorWorkspace: return "Éditeur"
+        case .library: return AppStrings.library
+        case .paper(let id): return allPapers.first(where: { $0.id == id })?.title ?? "Paper"
+        case .editorWorkspace: return AppStrings.editor
         case .editor(let path): return URL(fileURLWithPath: path).lastPathComponent
         case .pdfFile(let path): return URL(fileURLWithPath: path).lastPathComponent
         }
@@ -160,7 +160,7 @@ struct MainWindow: View {
         if case .paper(let currentPaperID) = tab {
             baseButton.contextMenu {
                 if tabController.splitPaperID != nil {
-                    Button("Fermer le split") {
+                    Button(AppStrings.closeSplit) {
                         tabController.splitPaperID = nil
                     }
 
@@ -171,7 +171,7 @@ struct MainWindow: View {
 
                 ForEach(openPaperIDs.filter { $0 != currentPaperID }, id: \.self) { otherPaperID in
                     if let paper = allPapers.first(where: { $0.id == otherPaperID }) {
-                        Button("Comparer avec \(paper.title)") {
+                        Button("\(AppStrings.compare) with \(paper.title)") {
                             tabController.splitPaperID = otherPaperID
                             tabController.selectedTab = .paper(currentPaperID)
                         }

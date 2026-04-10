@@ -164,19 +164,19 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
         .sheet(isPresented: $isRenamingCurrentSession) {
             VStack(spacing: 12) {
-                Text("Renommer la conversation")
+                Text(AppStrings.renameConversation)
                     .font(.system(size: 13, weight: .semibold))
 
-                TextField("Nom", text: $currentSessionNameDraft)
+                TextField(AppStrings.name, text: $currentSessionNameDraft)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
 
                 HStack {
-                    Button("Annuler") { isRenamingCurrentSession = false }
+                    Button(AppStrings.cancel) { isRenamingCurrentSession = false }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Renommer") {
+                    Button(AppStrings.rename) {
                         provider.renameCurrentChatSession(to: currentSessionNameDraft)
                         isRenamingCurrentSession = false
                     }
@@ -256,7 +256,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Renommer la conversation")
+                .help(AppStrings.renameConversation)
             }
 
             if !provider.chatUsesBottomPromptControls {
@@ -311,7 +311,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     Text("·")
                         .foregroundStyle((usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary).opacity(0.5))
                 }
-                Text("\(provider.session.turns) échanges")
+                Text("\(provider.session.turns) turns")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
             }
@@ -430,14 +430,14 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                             )
                         HStack(spacing: 8) {
                             if usesCodexVisualStyle {
-                                Button("Annuler") {
+                                Button(AppStrings.cancel) {
                                     editingMessageID = nil
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.regular)
                                 .font(.system(size: 11, weight: .medium))
                             } else {
-                                Button("Annuler") {
+                                Button(AppStrings.cancel) {
                                     editingMessageID = nil
                                 }
                                 .buttonStyle(.plain)
@@ -761,7 +761,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     Text("Plan")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.blue)
-                    Text("Aucune action appliquee")
+                    Text(AppStrings.noActionsApplied)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
                 }
@@ -1242,7 +1242,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                             )
                         }
                         .buttonStyle(.plain)
-                        .help("Instructions personnalisées · \(provider.chatCustomInstructions.summaryLabel)")
+                        .help("\(AppStrings.customInstructions) · \(provider.chatCustomInstructions.summaryLabel)")
                     } else {
                         codexSecondaryMenuLabel(title: configurationLabel, iconName: "gearshape") {
                             Button {} label: {
@@ -1256,12 +1256,12 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                             Divider()
 
                             Button {} label: {
-                                Text("Modele: \(provider.chatSelectedModel.uppercased())")
+                                Text("\(AppStrings.modelLabel): \(provider.chatSelectedModel.uppercased())")
                             }
                             .disabled(true)
 
                             Button {} label: {
-                                Text("Raisonnement: \(effortDisplayLabel(provider.chatSelectedEffort))")
+                                Text("\(AppStrings.reasoningLabel): \(effortDisplayLabel(provider.chatSelectedEffort))")
                             }
                             .disabled(true)
                         }
@@ -1480,7 +1480,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     .frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
-            .help("Ajouter ou configurer le message")
+            .help(AppStrings.addOrConfigureMessage)
             .popover(isPresented: $showCodexAttachPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
                 codexAttachPopover
             }
@@ -1494,7 +1494,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
-            .help("Joindre un fichier")
+            .help(AppStrings.attachFile)
         }
     }
 
@@ -1584,7 +1584,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             }
         }
         .menuStyle(.borderlessButton)
-        .help("Mode courant · Shift+Tab pour cycler")
+        .help(AppStrings.currentMode)
     }
 
     @ViewBuilder
@@ -1649,7 +1649,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     private var codexAttachPrimaryPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
             codexAttachActionRow(
-                title: "Ajouter photos et fichiers",
+                title: AppStrings.addPhotosAndFiles,
                 systemName: "paperclip",
                 isSelected: false,
                 showsChevron: false
@@ -1663,7 +1663,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
             if provider.chatSupportsIDEContextToggle {
                 codexAttachToggleRow(
-                    title: "Inclure le contexte IDE",
+                    title: AppStrings.includeIDEContext,
                     systemName: "sparkles",
                     isOn: includeIDEContextBinding
                 )
@@ -1671,7 +1671,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
             if provider.chatSupportsPlanMode {
                 codexAttachToggleRow(
-                    title: "Mode plan",
+                    title: AppStrings.planMode,
                     systemName: "checklist",
                     isOn: planModeBinding
                 )
@@ -1680,7 +1680,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             codexAttachDivider
 
             codexAttachActionRow(
-                title: "Vitesse",
+                title: "Speed",
                 systemName: "bolt.fill",
                 isSelected: codexAttachSubmenu == .speed,
                 showsChevron: true
@@ -1709,12 +1709,12 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         switch submenu {
         case .speed:
             VStack(alignment: .leading, spacing: 0) {
-                codexAttachSectionTitle("Vitesse")
+                codexAttachSectionTitle("Speed")
 
                 codexAttachChoiceRow(title: "Standard", isSelected: true, isEnabled: true) {}
-                codexAttachChoiceRow(title: "Rapide", isSelected: false, isEnabled: false) {}
+                codexAttachChoiceRow(title: "Fast", isSelected: false, isEnabled: false) {}
 
-                Text("Le mode rapide n'est pas encore branche au backend Codex de Canope.")
+                Text(AppStrings.fastModeUnavailable)
                     .font(.system(size: 9.5))
                     .foregroundStyle(AppChromePalette.codexMutedText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1728,7 +1728,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
         case .plugins:
             VStack(alignment: .leading, spacing: 0) {
-                codexAttachSectionTitle("\(codexInstalledPlugins.count) plugins installes")
+                codexAttachSectionTitle("\(codexInstalledPlugins.count) installed plugins")
 
                 ForEach(codexInstalledPlugins, id: \.self) { plugin in
                     codexAttachChoiceRow(
@@ -1945,7 +1945,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 }
 
                 HStack(spacing: 8) {
-                    Button("Annuler") {
+                    Button(AppStrings.cancel) {
                         provider.dismissPendingApprovalRequest()
                     }
                     .buttonStyle(.plain)
@@ -1954,7 +1954,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
                     Spacer()
 
-                    Button("Envoyer") {
+                    Button("Send") {
                         provider.submitPendingApprovalRequest(fieldValues: approvalFieldValues)
                     }
                     .buttonStyle(.borderedProminent)
@@ -2279,7 +2279,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         // Attach the file
         let filePath = workDir.appendingPathComponent(item)
         let name = (item as NSString).lastPathComponent
-        let content = (try? String(contentsOf: filePath, encoding: .utf8)) ?? "[Impossible de lire]"
+        let content = (try? String(contentsOf: filePath, encoding: .utf8)) ?? AppStrings.couldNotRead
         attachedFiles.append(AttachedFile(name: name, path: filePath.path, content: content))
 
         // Remove @query from input
@@ -2491,8 +2491,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         panel.resolvesAliases = true
-        panel.title = "Joindre des fichiers au chat"
-        panel.prompt = "Joindre"
+        panel.title = "Attach files to chat"
+        panel.prompt = "Attach"
 
         guard panel.runModal() == .OK else { return }
         attachPickedFiles(panel.urls)
@@ -2540,7 +2540,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             provider.messages.append(
                 ChatMessage(
                     role: .system,
-                    content: "Pièces jointes ignorées: \(suffix). Seules les images et les fichiers texte sont pris en charge pour l’instant.",
+                    content: "Skipped attachments: \(suffix). Only images and text files are supported for now.",
                     timestamp: Date(),
                     isStreaming: false,
                     isCollapsed: false
@@ -2568,11 +2568,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var listResetID = UUID()
 
     private var chatInputPlaceholder: String {
-        "\(provider.chatInteractionMode.inputPlaceholderSuffix) à \(provider.providerName)…"
+        "\(provider.chatInteractionMode.inputPlaceholderSuffix) to \(provider.providerName)…"
     }
 
     private var sendButtonHelp: String {
-        provider.chatInteractionMode == .plan ? "Envoyer une demande de plan" : "Envoyer"
+        provider.chatInteractionMode == .plan ? "Send planning request" : "Send"
     }
 
     private var modelPromptMenu: some View {
@@ -2598,7 +2598,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             )
         }
         .menuStyle(.borderlessButton)
-        .help("Modèle Codex")
+        .help("\(AppStrings.modelLabel) Codex")
     }
 
     private var effortPromptMenu: some View {
@@ -2623,7 +2623,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             )
         }
         .menuStyle(.borderlessButton)
-        .help("Niveau de raisonnement")
+        .help(AppStrings.codexReasoningHelp)
     }
 
     private func promptFooterChip(
@@ -2670,7 +2670,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             .disabled(true)
 
             Button {} label: {
-                Text("Réseau actif")
+                Text(AppStrings.networkActive)
             }
             .disabled(true)
 
@@ -2687,7 +2687,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             )
         }
         .menuStyle(.borderlessButton)
-        .help("Contexte d’exécution Codex")
+        .help(AppStrings.codexExecutionContextHelp)
     }
 
     private func configurationPromptMenu(_ title: String) -> some View {
@@ -2703,17 +2703,17 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             Divider()
 
             Button {} label: {
-                Text("Modèle: \(provider.chatSelectedModel.uppercased())")
+                Text("\(AppStrings.modelLabel): \(provider.chatSelectedModel.uppercased())")
             }
             .disabled(true)
 
             Button {} label: {
-                Text("Raisonnement: \(effortDisplayLabel(provider.chatSelectedEffort))")
+                Text("\(AppStrings.reasoningLabel): \(effortDisplayLabel(provider.chatSelectedEffort))")
             }
             .disabled(true)
 
             Button {} label: {
-                Text("Mode: \(provider.chatInteractionMode.badgeLabel)")
+                Text("\(AppStrings.modeLabel): \(provider.chatInteractionMode.badgeLabel)")
             }
             .disabled(true)
         } label: {
@@ -2724,7 +2724,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             )
         }
         .menuStyle(.borderlessButton)
-        .help("Preset actif du chat Codex")
+        .help(AppStrings.presetHelp)
     }
 
     private var customInstructionsEditorSheet: some View {
@@ -2733,9 +2733,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .center, spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Instructions")
+                            Text(AppStrings.instructions)
                                 .font(.system(size: 15, weight: .semibold))
-                            Text("Ces consignes orientent uniquement le chat Codex.")
+                            Text(AppStrings.codexPromptOnly)
                                 .font(.system(size: 11))
                                 .foregroundStyle(AppChromePalette.codexMutedText)
                         }
@@ -2754,27 +2754,27 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     }
 
                     customInstructionsEditorSection(
-                        title: "Instructions globales",
-                        subtitle: "Toujours actives pour tous les chats Codex.",
+                        title: AppStrings.globalInstructions,
+                        subtitle: AppStrings.globalInstructionsSubtitle,
                         text: $globalCustomInstructionsDraft,
-                        placeholder: "Ex.: Reponds en francais quebecois simple et direct."
+                        placeholder: "E.g. Respond in simple, direct English."
                     )
 
                     customInstructionsEditorSection(
-                        title: "Instructions de cette session",
-                        subtitle: "Actives seulement pour la conversation courante.",
+                        title: AppStrings.sessionInstructions,
+                        subtitle: AppStrings.sessionInstructionsSubtitle,
                         text: $sessionCustomInstructionsDraft,
-                        placeholder: "Ex.: Dans cette conversation, sois tres concis et cite toujours les fichiers."
+                        placeholder: "E.g. In this conversation, be concise and always cite files."
                     )
 
                     HStack(spacing: 10) {
-                        Button("Reinitialiser le global") {
+                        Button("Reset global") {
                             globalCustomInstructionsDraft = ""
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
 
-                        Button("Reinitialiser la session") {
+                        Button("Reset session") {
                             sessionCustomInstructionsDraft = ""
                         }
                         .buttonStyle(.plain)
@@ -2790,13 +2790,13 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
 
-                Button("Annuler") {
+                Button(AppStrings.cancel) {
                     showCustomInstructionsEditor = false
                 }
                 .buttonStyle(.bordered)
                 .keyboardShortcut(.cancelAction)
 
-                Button("Enregistrer") {
+                Button(AppStrings.save) {
                     provider.updateChatCustomInstructions(
                         global: globalCustomInstructionsDraft,
                         session: sessionCustomInstructionsDraft

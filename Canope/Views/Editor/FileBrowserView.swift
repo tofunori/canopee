@@ -97,25 +97,25 @@ struct FileBrowserView: View {
                         Button {
                             createFile(.latex)
                         } label: {
-                            Label("Nouveau fichier LaTeX", systemImage: "doc.badge.plus")
+                            Label(AppStrings.newLatexFile, systemImage: "doc.badge.plus")
                         }
 
                         Button {
                             createFile(.markdown)
                         } label: {
-                            Label("Nouveau fichier Markdown", systemImage: "text.badge.plus")
+                            Label(AppStrings.newMarkdownFile, systemImage: "text.badge.plus")
                         }
 
                         Button {
                             createFile(.python)
                         } label: {
-                            Label("Nouveau script Python", systemImage: "play.rectangle")
+                            Label(AppStrings.newPythonScript, systemImage: "play.rectangle")
                         }
 
                         Button {
                             createFile(.r)
                         } label: {
-                            Label("Nouveau script R", systemImage: "chart.line.uptrend.xyaxis")
+                            Label(AppStrings.newRScript, systemImage: "chart.line.uptrend.xyaxis")
                         }
                     } label: {
                         Image(systemName: "plus")
@@ -126,7 +126,7 @@ struct FileBrowserView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .help("Créer un nouveau fichier éditable")
+                    .help(AppStrings.createEditableFile)
                 }
 
                 Button(action: refresh) {
@@ -214,11 +214,11 @@ struct FileBrowserView: View {
             refresh()
             selectedIndex = 0
         }
-        .alert("Impossible de créer le fichier", isPresented: Binding(
+        .alert(AppStrings.couldNotCreateFile, isPresented: Binding(
             get: { fileCreationError != nil },
             set: { if !$0 { fileCreationError = nil } }
         )) {
-            Button("OK", role: .cancel) {}
+            Button(AppStrings.ok, role: .cancel) {}
         } message: {
             Text(fileCreationError ?? "")
         }

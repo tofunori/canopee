@@ -27,13 +27,13 @@ struct AnnotationToolbar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            AppChromeToolbarCluster(zone: .primary, title: "Outils") {
+            AppChromeToolbarCluster(zone: .primary, title: AppStrings.tools) {
                 ForEach(Array(AnnotationTool.allCases), id: \.id) { tool in
                     toolButton(tool)
                 }
             }
 
-            AppChromeToolbarCluster(zone: .primary, title: "Couleurs") {
+            AppChromeToolbarCluster(zone: .primary, title: AppStrings.colors) {
                 ForEach(0..<5, id: \.self) { index in
                     ColorSlotButton(
                         color: favoriteColors[index],
@@ -54,7 +54,7 @@ struct AnnotationToolbar: View {
 
                 ToolbarIconButton(
                     systemName: "plus.circle",
-                    helpText: "Couleur personnalisée",
+                    helpText: AppStrings.customColor,
                     action: {
                         editingSlotIndex = nil
                         customColor = Color(nsColor: currentColor)
@@ -64,15 +64,15 @@ struct AnnotationToolbar: View {
             }
 
             if selectedAnnotation != nil {
-                AppChromeToolbarCluster(zone: .primary, title: "Sélection") {
+                AppChromeToolbarCluster(zone: .primary, title: AppStrings.selection) {
                     ToolbarIconButton(
                         systemName: "trash",
                         foregroundStyle: AppChromePalette.danger,
-                        helpText: "Supprimer l'annotation (⌫)",
+                        helpText: "\(AppStrings.deleteAnnotation) (⌫)",
                         action: onDeleteSelected
                     )
 
-                    Text("Sélectionné")
+                    Text(AppStrings.selected)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -82,27 +82,27 @@ struct AnnotationToolbar: View {
 
             Spacer()
 
-            AppChromeToolbarCluster(zone: .trailing, title: "Actions") {
+            AppChromeToolbarCluster(zone: .trailing, title: AppStrings.actions) {
                 ToolbarIconButton(
                     systemName: "trash.slash",
                     foregroundStyle: AppChromePalette.danger,
-                    helpText: "Effacer toutes les annotations",
+                    helpText: AppStrings.deleteAllAnnotations,
                     action: { showDeleteAllConfirm = true }
                 )
                 .confirmationDialog(
-                    "Effacer toutes les annotations?",
+                    AppStrings.deleteAllAnnotationsQuestion,
                     isPresented: $showDeleteAllConfirm,
                     titleVisibility: .visible
                 ) {
-                    Button("Tout effacer", role: .destructive, action: onDeleteAll)
-                    Button("Annuler", role: .cancel) {}
+                    Button(AppStrings.deleteAll, role: .destructive, action: onDeleteAll)
+                    Button(AppStrings.cancel, role: .cancel) {}
                 }
 
                 AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
 
                 ToolbarIconButton(
                     systemName: "square.and.arrow.down",
-                    helpText: "Enregistrer (⌘S)",
+                    helpText: "\(AppStrings.save) (⌘S)",
                     action: onSave
                 )
                 .keyboardShortcut("s", modifiers: .command)
@@ -118,20 +118,20 @@ struct AnnotationToolbar: View {
                 } label: {
                     ToolbarIconLabel(
                         systemName: "square.and.arrow.up.on.square",
-                        helpText: "Exporter les annotations en Markdown"
+                        helpText: AppStrings.exportAnnotationsMarkdown
                     )
                 }
                 .buttonStyle(.plain)
-                .help("Exporter les annotations en Markdown")
+                .help(AppStrings.exportAnnotationsMarkdown)
             }
 
-            AppChromeToolbarCluster(zone: .trailing, title: "Vue") {
+            AppChromeToolbarCluster(zone: .trailing, title: AppStrings.view) {
                 ToolbarIconButton(
                     systemName: showTerminal ? "terminal.fill" : "terminal",
                     isSelected: showTerminal,
                     foregroundStyle: showTerminal ? AppChromePalette.success : .secondary,
                     selectedFillTint: AppChromePalette.success,
-                    helpText: "Terminal",
+                    helpText: AppStrings.terminal,
                     action: {
                         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
                             showTerminal.toggle()
@@ -145,7 +145,7 @@ struct AnnotationToolbar: View {
                     isSelected: showAnnotations,
                     foregroundStyle: showAnnotations ? AppChromePalette.info : .secondary,
                     selectedFillTint: AppChromePalette.info,
-                    helpText: "Annotations",
+                    helpText: AppStrings.annotations,
                     action: {
                         AppChromeMotion.performPanel(reduceMotion: reduceMotion) {
                             showAnnotations.toggle()
@@ -242,7 +242,7 @@ struct ColorSlotButton: View {
             isHovered = hovering
         }
         .contextMenu {
-            Button("Changer cette couleur…") {
+            Button("Change this color…") {
                 onCustomize()
             }
         }
@@ -343,7 +343,7 @@ struct ColorPickerPopover: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(slotIndex != nil ? "Changer la couleur du slot \(slotIndex! + 1)" : "Couleur personnalisée")
+            Text(slotIndex != nil ? "Change slot \(slotIndex! + 1) color" : AppStrings.customColor)
                 .font(.headline)
 
             Circle()
@@ -353,7 +353,7 @@ struct ColorPickerPopover: View {
                     Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
                 }
 
-            ColorPicker("Couleur", selection: $selectedColor, supportsOpacity: true)
+            ColorPicker(AppStrings.color, selection: $selectedColor, supportsOpacity: true)
                 .frame(width: 220)
 
             // Quick presets
@@ -369,10 +369,10 @@ struct ColorPickerPopover: View {
             }
 
             HStack {
-                Button("Annuler", action: onCancel)
+                Button(AppStrings.cancel, action: onCancel)
                     .keyboardShortcut(.escape, modifiers: [])
                 Spacer()
-                Button("Appliquer") {
+                Button("Apply") {
                     onApply(selectedColor)
                 }
                 .keyboardShortcut(.return, modifiers: .command)

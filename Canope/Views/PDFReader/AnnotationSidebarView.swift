@@ -43,7 +43,7 @@ struct AnnotationSidebarView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Annotations")
+                Text(AppStrings.annotations)
                     .font(.headline)
                 Spacer()
                 Text("\(totalCount)")
@@ -62,9 +62,9 @@ struct AnnotationSidebarView: View {
             List {
                 if annotations.isEmpty {
                     ContentUnavailableView(
-                        "Aucune annotation",
+                        AppStrings.noAnnotations,
                         systemImage: "pencil.slash",
-                        description: Text("Surlignez du texte ou placez des notes")
+                        description: Text(AppStrings.highlightOrNoteHint)
                     )
                 } else {
                     ForEach(annotations) { pageGroup in
@@ -79,11 +79,11 @@ struct AnnotationSidebarView: View {
                                     onNavigate(annotation)
                                 }
                                 .contextMenu {
-                                    Button("Modifier la note…") {
+                                    Button(AppStrings.editNoteEllipsis) {
                                         onEditNote(annotation)
                                     }
 
-                                    Menu("Couleur") {
+                                    Menu(AppStrings.color) {
                                         ForEach(AnnotationColor.all, id: \.name) { item in
                                             Button(item.name) {
                                                 onChangeColor(annotation, item.color)
@@ -93,7 +93,7 @@ struct AnnotationSidebarView: View {
 
                                     Divider()
 
-                                    Button("Supprimer", role: .destructive) {
+                                    Button(AppStrings.delete, role: .destructive) {
                                         onDelete(annotation)
                                     }
                                 }
@@ -148,18 +148,18 @@ struct AnnotationRowView: View {
     }
 
     private var annotationTypeName: String {
-        if annotation.isCanopeHighlightBlock { return "Surligné" }
-        if annotation.isTextBoxAnnotation { return "Texte" }
+        if annotation.isCanopeHighlightBlock { return AppStrings.highlight }
+        if annotation.isTextBoxAnnotation { return "Text box" }
         switch annotation.type {
-        case "Highlight": return "Surligné"
-        case "Underline": return "Souligné"
-        case "StrikeOut": return "Barré"
-        case "Text": return "Note"
-        case "Ink": return "Dessin"
-        case "Square": return "Rectangle"
-        case "Circle": return "Ovale"
-        case "Line": return "Flèche"
-        default: return annotation.type ?? "Annotation"
+        case "Highlight": return AppStrings.highlight
+        case "Underline": return AppStrings.underline
+        case "StrikeOut": return AppStrings.strikeThrough
+        case "Text": return AppStrings.note
+        case "Ink": return AppStrings.drawing
+        case "Square": return AppStrings.rectangle
+        case "Circle": return AppStrings.oval
+        case "Line": return AppStrings.arrow
+        default: return annotation.type ?? AppStrings.annotation
         }
     }
 

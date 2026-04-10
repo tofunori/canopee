@@ -43,16 +43,16 @@ struct LaTeXLandingView: View {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
                             .font(.system(size: 48))
                             .foregroundStyle(.tertiary)
-                        Text("Éditeur")
+                        Text(AppStrings.editor)
                             .font(.title2)
                             .foregroundStyle(.secondary)
-                        Text("Ouvrez un fichier .tex, .md, .py ou .R depuis l'arborescence\nou utilisez le menu + en haut à droite")
+                        Text("Open a .tex, .md, .py, or .R file from the file browser\nor use the + menu in the top-right corner")
                         .multilineTextAlignment(.center)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     if let onOpenFolder {
                         Button(action: onOpenFolder) {
-                            Label("Ouvrir un dossier", systemImage: "folder.badge.plus")
+                            Label(AppStrings.openFolder, systemImage: "folder.badge.plus")
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -62,7 +62,7 @@ struct LaTeXLandingView: View {
                         let recents = RecentTeXFilesStore.recentTeXFiles
                         if !recents.isEmpty {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Récents")
+                                Text(AppStrings.recents)
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                                     .padding(.leading, 4)
@@ -100,10 +100,10 @@ struct LaTeXLandingView: View {
                             Image(systemName: "doc.text")
                                 .font(.system(size: 42))
                                 .foregroundStyle(.tertiary)
-                            Text("Aucun fichier ouvert")
+                            Text(AppStrings.noFileOpen)
                                 .font(.title3)
                                 .foregroundStyle(.secondary)
-                            Text("Le panneau éditeur reste vide.\nTu peux quand même consulter les PDFs de référence.")
+                            Text(AppStrings.editorPanelEmpty)
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                                 .multilineTextAlignment(.center)
@@ -120,10 +120,10 @@ struct LaTeXLandingView: View {
                                                 Button {
                                                     selectReference(id)
                                                 } label: {
-                                                    HStack(spacing: 4) {
-                                                        Image(systemName: "book")
-                                                            .font(.system(size: 9))
-                                                        Text(paper(for: id)?.authorsShort ?? "Article")
+                                                        HStack(spacing: 4) {
+                                                            Image(systemName: "book")
+                                                                .font(.system(size: 9))
+                                                        Text(paper(for: id)?.authorsShort ?? "Paper")
                                                             .font(.system(size: 11))
                                                             .lineLimit(1)
                                                     }
@@ -158,9 +158,9 @@ struct LaTeXLandingView: View {
                                     PDFPreviewView(document: document)
                                 } else {
                                     ContentUnavailableView(
-                                        "PDF introuvable",
+                                        AppStrings.pdfNotFound,
                                         systemImage: "doc.text",
-                                        description: Text("Le PDF de référence n'a pas pu être chargé")
+                                        description: Text(AppStrings.referencePDFCouldNotLoad)
                                     )
                                 }
                             }

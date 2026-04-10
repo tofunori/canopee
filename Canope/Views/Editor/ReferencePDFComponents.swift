@@ -203,14 +203,14 @@ struct ReferencePDFActionsCluster: View {
                 ReferencePDFToolbarIconButton(
                     systemName: "arrow.clockwise",
                     isActive: false,
-                    help: "Actualiser le PDF de référence",
+                    help: "Refresh reference PDF",
                     action: onRefresh
                 )
 
                 ReferencePDFToolbarIconButton(
                     systemName: "square.and.arrow.down",
                     isActive: state.hasUnsavedChanges,
-                    help: "Enregistrer les annotations du PDF",
+                    help: "Save PDF annotations",
                     action: onSave
                 )
 
@@ -226,11 +226,11 @@ struct ReferencePDFActionsCluster: View {
                     ReferencePDFToolbarIconLabel(
                         systemName: "square.and.arrow.up.on.square",
                         isActive: false,
-                        helpText: "Exporter les annotations en Markdown"
+                        helpText: AppStrings.exportAnnotationsMarkdown
                     )
                 }
                 .buttonStyle(.plain)
-                .help("Exporter les annotations en Markdown")
+                .help(AppStrings.exportAnnotationsMarkdown)
 
                 AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
 
@@ -239,7 +239,7 @@ struct ReferencePDFActionsCluster: View {
                         systemName: "trash",
                         isActive: true,
                         activeTint: AppChromePalette.danger,
-                        help: "Supprimer l'annotation sélectionnée",
+                        help: "Delete selected annotation",
                         action: onDeleteSelected
                     )
                 }
@@ -247,16 +247,16 @@ struct ReferencePDFActionsCluster: View {
                 ReferencePDFToolbarIconButton(
                     systemName: "trash.slash",
                     isActive: false,
-                    help: "Effacer toutes les annotations du PDF",
+                    help: "Delete all PDF annotations",
                     action: { showDeleteAllConfirm = true }
                 )
                 .confirmationDialog(
-                    "Effacer toutes les annotations du PDF?",
+                    "Delete all PDF annotations?",
                     isPresented: $showDeleteAllConfirm,
                     titleVisibility: .visible
                 ) {
-                    Button("Tout effacer", role: .destructive, action: onDeleteAll)
-                    Button("Annuler", role: .cancel) {}
+                    Button(AppStrings.deleteAll, role: .destructive, action: onDeleteAll)
+                    Button(AppStrings.cancel, role: .cancel) {}
                 }
                 .disabled(annotationCount == 0)
 
@@ -267,7 +267,7 @@ struct ReferencePDFActionsCluster: View {
                     symbolVariant: isAnnotationSidebarVisible ? .none : .slash,
                     isActive: isAnnotationSidebarVisible,
                     activeTint: AppChromePalette.info,
-                    help: "Afficher les annotations PDF",
+                    help: "Show PDF annotations",
                     action: onToggleAnnotations
                 )
             }
