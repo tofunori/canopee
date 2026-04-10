@@ -1101,10 +1101,33 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
 
         let filePath = json["filePath"] as? String ?? ""
         let fileName = (filePath as NSString).lastPathComponent
+        let trimmedLineText = (json["lineText"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let lineText = trimmedLineText.isEmpty ? nil : trimmedLineText
+        let trimmedSelectionLineContext = (json["selectionLineContext"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let selectionLineContext = trimmedSelectionLineContext.isEmpty ? nil : trimmedSelectionLineContext
+        let contextSuffix: String
+        if let selectionLineContext {
+            contextSuffix = """
+
+            [Selected line context]
+            \(selectionLineContext)
+            [/Selected line context]
+            """
+        } else if let lineText {
+            contextSuffix = """
+
+            [Current line]
+            \(lineText)
+            [/Current line]
+            """
+        } else {
+            contextSuffix = ""
+        }
 
         let context = """
         [Canope IDE Context — current selection in "\(fileName)"]
         \(text)
+        \(contextSuffix)
         [/Canope IDE Context]
 
         \(userMessage)
@@ -1125,7 +1148,9 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             - N'utilise pas Bash ni aucune commande shell.
             - N'utilise aucune action de terminal, d'execution ou avec effets de bord.
             - Propose les changements de facon concrete et ciblee.
-            - Si un outil d'edition serait necessaire, attends l'approbation au lieu d'agir.
+            - Si une edition est appropriee et que la demande est claire, tente directement l'outil d'edition: le client demandera l'approbation inline.
+            - N'ecris pas de message du type "j'attends ton approbation" ou "si tu veux, j'applique"; laisse l'UI d'approbation faire ce travail.
+            - Une fois l'approbation accordee, applique seulement le changement valide, sans redemander la permission dans le chat.
             [/Canope Accept Edits Mode]
 
             \(promptWithContext)

@@ -88,9 +88,12 @@ struct ChatInteractiveField: Identifiable, Equatable {
 struct ChatApprovalRequest: Identifiable, Equatable {
     let id = UUID()
     let toolName: String
+    let actionLabel: String?
     let prompt: String
     let displayText: String
     let message: String?
+    let details: [String]
+    let preview: ChatApprovalPreview?
     let fields: [ChatInteractiveField]
     let rpcRequestID: Int?
     let rpcMethod: String?
@@ -100,9 +103,12 @@ struct ChatApprovalRequest: Identifiable, Equatable {
 
     init(
         toolName: String,
+        actionLabel: String? = nil,
         prompt: String,
         displayText: String,
         message: String? = nil,
+        details: [String] = [],
+        preview: ChatApprovalPreview? = nil,
         fields: [ChatInteractiveField] = [],
         rpcRequestID: Int? = nil,
         rpcMethod: String? = nil,
@@ -111,9 +117,12 @@ struct ChatApprovalRequest: Identifiable, Equatable {
         turnID: String? = nil
     ) {
         self.toolName = toolName
+        self.actionLabel = actionLabel
         self.prompt = prompt
         self.displayText = displayText
         self.message = message
+        self.details = details
+        self.preview = preview
         self.fields = fields
         self.rpcRequestID = rpcRequestID
         self.rpcMethod = rpcMethod
@@ -124,6 +133,62 @@ struct ChatApprovalRequest: Identifiable, Equatable {
 
     var requiresFormInput: Bool {
         !fields.isEmpty
+    }
+}
+
+struct ChatApprovalPreview: Equatable {
+    let title: String
+    let body: String
+}
+
+enum ChatStatusBadgeKind: String, Equatable {
+    case connecting
+    case connected
+    case reviewActive
+    case reviewDone
+    case reviewAttention
+    case authRequired
+    case mcpOkay
+    case mcpWarning
+}
+
+struct ChatStatusBadge: Identifiable, Equatable {
+    let kind: ChatStatusBadgeKind
+    let text: String
+
+    var id: String {
+        "\(kind.rawValue):\(text)"
+    }
+}
+
+struct ChatReviewFinding: Equatable {
+    let title: String
+    let body: String
+    let filePath: String?
+    let lineStart: Int?
+    let lineEnd: Int?
+    let priority: Int?
+    let confidenceScore: Double?
+
+    var priorityLabel: String? {
+        guard let priority else { return nil }
+        return "P\(priority)"
+    }
+
+    var fileName: String? {
+        guard let filePath, !filePath.isEmpty else { return nil }
+        return URL(fileURLWithPath: filePath).lastPathComponent
+    }
+
+    var locationLabel: String? {
+        guard let fileName else { return nil }
+        if let lineStart {
+            if let lineEnd, lineEnd != lineStart {
+                return "\(fileName):\(lineStart)-\(lineEnd)"
+            }
+            return "\(fileName):\(lineStart)"
+        }
+        return fileName
     }
 }
 
@@ -235,6 +300,7 @@ struct ChatMessage: Identifiable, Equatable {
     enum PresentationKind: Equatable {
         case standard
         case plan
+        case reviewFinding
     }
 
     let id = UUID()
@@ -251,6 +317,7 @@ struct ChatMessage: Identifiable, Equatable {
     var toolCount: Int?
     var queuePosition: Int? = nil
     var presentationKind: PresentationKind = .standard
+    var reviewFinding: ChatReviewFinding?
 
     enum Role: Equatable {
         case user
@@ -273,6 +340,7 @@ struct ChatMessage: Identifiable, Equatable {
             && lhs.queuePosition == rhs.queuePosition
             && lhs.preRenderedMarkdown == rhs.preRenderedMarkdown
             && lhs.presentationKind == rhs.presentationKind
+            && lhs.reviewFinding == rhs.reviewFinding
     }
 
     /// Uses the same markdown pipeline as [`MarkdownBlockView`](MarkdownBlockView.swift).

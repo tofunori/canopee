@@ -1,4 +1,5 @@
 import Combine
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -88,7 +89,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         // Cmd+N handled via menu item or button — SwiftUI doesn't support view-level Cmd shortcuts well
         .sheet(isPresented: $showSessionPicker) {
             SessionPickerView(
-                loadSessions: { provider.listChatSessions(limit: 15, matchingDirectory: chatFileRootURL) },
+                loadSessions: { await provider.listChatSessionsAsync(limit: 15, matchingDirectory: chatFileRootURL) },
                 renameSession: { id, name in
                     Provider.renameChatSession(id: id, name: name)
                 }
@@ -223,23 +224,10 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     .foregroundStyle(.secondary)
             }
 
-            if let reviewState = provider.chatReviewStateDescription, !reviewState.isEmpty {
+            ForEach(provider.chatStatusBadges) { badge in
                 Text("·")
                     .foregroundStyle(.secondary.opacity(0.5))
-                HStack(spacing: 4) {
-                    Image(systemName: "checklist")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text(reviewState)
-                        .lineLimit(1)
-                }
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Color.pink.opacity(0.95))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(Color.pink.opacity(0.12))
-                )
+                statusBadgeView(badge)
             }
 
             Spacer()
@@ -416,6 +404,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     private func assistantRow(_ message: ChatMessage) -> some View {
         if message.presentationKind == .plan {
             planAssistantCard(message)
+        } else if message.presentationKind == .reviewFinding {
+            reviewFindingCard(message)
         } else {
         let needsBlockMarkdown = messageNeedsBlockMarkdown(message.content)
         let shouldUseRichMarkdown = !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content)
@@ -581,6 +571,19 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                             .lineLimit(nil)
                     }
                     .frame(maxHeight: 120)
+                }
+
+                if let imagePath = imagePreviewPath(for: message),
+                   let nsImage = NSImage(contentsOfFile: imagePath) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 240, maxHeight: 140, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
                 }
 
                 if let output = message.toolOutput, !output.isEmpty {
@@ -925,9 +928,21 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     private func approvalRequestCard(_ approval: ChatApprovalRequest) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 8) {
-                Image(systemName: approval.requiresFormInput ? "square.and.pencil" : "checkmark.shield")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.green)
+                if let actionLabel = approval.actionLabel {
+                    Text(actionLabel)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.green.opacity(0.95))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(Color.green.opacity(0.14))
+                        )
+                } else {
+                    Image(systemName: approval.requiresFormInput ? "square.and.pencil" : "checkmark.shield")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.green)
+                }
 
                 Text(approval.message ?? "Autoriser l’action \(approval.toolName) ?")
                     .font(.system(size: 11, weight: .semibold))
@@ -963,6 +978,49 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     .disabled(!canSubmitApprovalRequest(approval))
                 }
             } else {
+                if let preview = approval.preview {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(preview.title)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(preview.body)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.05))
+                        )
+                    }
+                }
+
+                if !approval.details.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(approval.details, id: \.self) { detail in
+                            Text(detail)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .fill(Color.white.opacity(0.04))
+                                )
+                        }
+                    }
+                }
+
                 HStack {
                     Spacer(minLength: 0)
 
@@ -1559,8 +1617,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             return
         }
 
-        if text == "/review", provider.chatSupportsReview {
-            provider.startChatReview()
+        if text.hasPrefix("/review"), provider.chatSupportsReview {
+            let command = String(text.dropFirst("/review".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            provider.startChatReview(command: command.isEmpty ? nil : command)
             return
         }
 
@@ -1616,12 +1675,157 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         )
     }
 
+    private func imagePreviewPath(for message: ChatMessage) -> String? {
+        guard message.toolName == "ImageView",
+              let toolInput = message.toolInput,
+              let data = toolInput.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let path = json["path"] as? String,
+              !path.isEmpty
+        else {
+            return nil
+        }
+        return path
+    }
+
+    private func statusBadgeView(_ badge: ChatStatusBadge) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: statusBadgeIconName(badge.kind))
+                .font(.system(size: 9, weight: .semibold))
+            Text(badge.text)
+                .lineLimit(1)
+        }
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(statusBadgeColor(badge.kind))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(statusBadgeColor(badge.kind).opacity(0.12))
+        )
+    }
+
+    @ViewBuilder
+    private func reviewFindingCard(_ message: ChatMessage) -> some View {
+        let finding = message.reviewFinding
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(reviewFindingColor(finding?.priority).opacity(0.18))
+                .frame(width: 20, height: 20)
+                .overlay {
+                    Image(systemName: "exclamationmark.bubble")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(reviewFindingColor(finding?.priority))
+                }
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 6) {
+                    if let priorityLabel = finding?.priorityLabel {
+                        Text(priorityLabel)
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundStyle(reviewFindingColor(finding?.priority))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule()
+                                    .fill(reviewFindingColor(finding?.priority).opacity(0.12))
+                            )
+                    }
+
+                    Text(finding?.title ?? message.content)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+
+                    Spacer(minLength: 0)
+
+                    if let location = finding?.locationLabel {
+                        Text(location)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+
+                Text(finding?.body ?? message.content)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+
+                if let filePath = finding?.filePath, !filePath.isEmpty {
+                    HStack {
+                        Spacer(minLength: 0)
+                        Button("Ouvrir") {
+                            NSWorkspace.shared.open(URL(fileURLWithPath: filePath))
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.orange.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(reviewFindingColor(finding?.priority).opacity(0.18), lineWidth: 0.8)
+            )
+
+            Spacer(minLength: 20)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func statusBadgeIconName(_ kind: ChatStatusBadgeKind) -> String {
+        switch kind {
+        case .connecting: return "bolt.horizontal.circle"
+        case .connected: return "bolt.horizontal.circle.fill"
+        case .reviewActive: return "checklist"
+        case .reviewDone: return "checkmark.seal"
+        case .reviewAttention: return "exclamationmark.triangle"
+        case .authRequired: return "person.crop.circle.badge.exclamationmark"
+        case .mcpOkay: return "server.rack"
+        case .mcpWarning: return "server.rack"
+        }
+    }
+
+    private func statusBadgeColor(_ kind: ChatStatusBadgeKind) -> Color {
+        switch kind {
+        case .connecting: return .secondary
+        case .connected: return .green.opacity(0.9)
+        case .reviewActive: return .pink.opacity(0.95)
+        case .reviewDone: return .blue.opacity(0.9)
+        case .reviewAttention: return .orange.opacity(0.95)
+        case .authRequired: return .orange.opacity(0.95)
+        case .mcpOkay: return .teal.opacity(0.95)
+        case .mcpWarning: return .orange.opacity(0.95)
+        }
+    }
+
+    private func reviewFindingColor(_ priority: Int?) -> Color {
+        switch priority {
+        case 0: return .red
+        case 1: return .orange
+        case 2: return .yellow
+        case 3: return .blue
+        default: return .orange
+        }
+    }
+
     private func toolAccentColor(_ name: String) -> Color {
         switch name {
         case "Read", "Glob", "Grep": return .blue
         case "Edit", "Write": return .orange
         case "Bash": return .green
         case "WebSearch", "WebFetch": return .purple
+        case "ImageView": return .blue.opacity(0.9)
+        case "Agent": return .mint.opacity(0.9)
         default: return .secondary
         }
     }

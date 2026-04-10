@@ -2,6 +2,14 @@ import Combine
 import Foundation
 import SwiftUI
 
+struct CodexThreadHistorySnapshot {
+    let name: String?
+    let turns: Int
+    let messages: [ChatMessage]
+    let reviewStateDescription: String?
+    let reviewStatusBadge: ChatStatusBadge?
+}
+
 // MARK: - Codex app-server JSON-RPC (stdio JSONL)
 
 private enum CodexTraceLog {
@@ -304,6 +312,9 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     @Published var selectedEffort: String = "medium"
     @Published var chatInteractionMode: ChatInteractionMode = .agent
     @Published var chatReviewStateDescription: String?
+    @Published private var reviewStatusBadge: ChatStatusBadge?
+    @Published private var authStatusBadge: ChatStatusBadge?
+    @Published private var mcpStatusBadge: ChatStatusBadge?
     @Published var pendingApprovalRequest: ChatApprovalRequest?
 
     let providerName = "Codex"
@@ -476,12 +487,15 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             )
             try rpcSession.notify(method: "initialized", params: [:])
             initialized = true
+            authStatusBadge = nil
+            mcpStatusBadge = ChatStatusBadge(kind: .mcpOkay, text: "MCP OK")
 
             await refreshModels(rpc: rpcSession)
         } catch {
             rpcSession.terminate()
             rpc = nil
             appendSystem("Codex: \(error.localizedDescription)")
+            updateStatusForErrorMessage(error.localizedDescription)
             isConnected = false
         }
     }
@@ -596,6 +610,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         } catch {
             CodexTraceLog.write("sendUserMessage error \(error.localizedDescription)")
             appendSystem("Codex: \(error.localizedDescription)")
+            updateStatusForErrorMessage(error.localizedDescription)
             isProcessing = false
         }
     }
@@ -680,6 +695,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             if !willRetry || lastRetryStatusMessage != rendered {
                 appendSystem(rendered)
             }
+            updateStatusForErrorMessage(rendered)
 
             if willRetry {
                 lastRetryStatusMessage = rendered
@@ -705,7 +721,9 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             params: params
         )
         pendingServerRequests[id] = request
-        switch Self.serverRequestDisposition(for: method, mode: currentRunInteractionMode, params: params) {
+        let disposition = Self.serverRequestDisposition(for: method, mode: currentRunInteractionMode, params: params)
+        updateStatusForServerRequest(method: method, disposition: disposition)
+        switch disposition {
         case .autoApprove:
             isProcessing = true
             Task { [weak self] in
@@ -714,9 +732,12 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         case .inlineApproval:
             pendingApprovalRequest = ChatApprovalRequest(
                 toolName: Self.serverRequestToolName(method: method, params: params),
+                actionLabel: Self.serverRequestActionLabel(method: method),
                 prompt: currentRunPrompt,
                 displayText: currentRunDisplayText,
                 message: Self.serverRequestMessage(method: method, params: params),
+                details: Self.serverRequestDetails(method: method, params: params),
+                preview: Self.serverRequestPreview(method: method, params: params),
                 fields: Self.serverRequestFields(method: method, params: params),
                 rpcRequestID: id,
                 rpcMethod: method,
@@ -773,14 +794,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 itemID: item["id"] as? String,
                 toolName: (item["tool"] as? String) ?? "dynamicTool",
                 content: Self.dynamicToolCallSummary(item),
-                toolInput: Self.jsonString(item["arguments"] ?? item)
+                toolInput: Self.dynamicToolCallInputPreview(item) ?? Self.jsonString(item["arguments"] ?? item)
             )
         case "webSearch":
             appendToolUseItem(
                 itemID: item["id"] as? String,
                 toolName: "WebSearch",
                 content: Self.webSearchSummary(item),
-                toolInput: Self.jsonString(["query": item["query"] as? String ?? "", "action": item["action"] as Any])
+                toolInput: Self.webSearchInputPreview(item) ?? Self.jsonString(["query": item["query"] as? String ?? "", "action": item["action"] as Any])
             )
         case "imageView":
             appendToolUseItem(
@@ -794,10 +815,11 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 itemID: item["id"] as? String,
                 toolName: "Agent",
                 content: Self.collabAgentToolCallSummary(item),
-                toolInput: Self.jsonString(item)
+                toolInput: Self.collabAgentToolCallInputPreview(item) ?? Self.jsonString(item)
             )
         case "enteredReviewMode":
             chatReviewStateDescription = Self.reviewStateDescription(item)
+            reviewStatusBadge = ChatStatusBadge(kind: .reviewActive, text: chatReviewStateDescription ?? "Review active")
         case "exitedReviewMode":
             chatReviewStateDescription = nil
         default:
@@ -835,6 +857,8 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         flushPendingAssistantDelta()
         clearAssistantDeltaWork()
         let name = (item["tool"] as? String) ?? "mcp"
+        let summary = (item["server"] as? String).map { "\($0) · \(name)" } ?? name
+        mcpStatusBadge = ChatStatusBadge(kind: .mcpOkay, text: "MCP OK")
         if ClaudeHeadlessProvider.shouldBlockTool(
             name: name,
             input: item["arguments"] as? [String: Any],
@@ -843,8 +867,10 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             if currentRunInteractionMode == .acceptEdits {
                 pendingApprovalRequest = ChatApprovalRequest(
                     toolName: name,
+                    actionLabel: "MCP",
                     prompt: currentRunPrompt,
                     displayText: currentRunDisplayText,
+                    details: [summary],
                     itemID: item["id"] as? String,
                     threadID: currentThreadId,
                     turnID: currentTurnId
@@ -860,7 +886,6 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             currentTurnId = nil
             return
         }
-        let summary = (item["server"] as? String).map { "\($0) · \(name)" } ?? name
         appendToolUseItem(
             itemID: item["id"] as? String,
             toolName: name,
@@ -912,8 +937,11 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             )
         case "enteredReviewMode":
             chatReviewStateDescription = Self.reviewStateDescription(item)
+            reviewStatusBadge = ChatStatusBadge(kind: .reviewActive, text: chatReviewStateDescription ?? "Review active")
         case "exitedReviewMode":
+            appendExitedReviewModeMessages(item)
             chatReviewStateDescription = nil
+            reviewStatusBadge = ChatStatusBadge(kind: .reviewDone, text: "Review terminee")
         case "mcpToolCall":
             completeToolItem(
                 itemID: item["id"] as? String,
@@ -981,6 +1009,32 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 isCollapsed: false
             )
         )
+    }
+
+    private func updateStatusForServerRequest(method: String, disposition: ServerRequestDisposition) {
+        let badges = Self.derivedStatusBadges(forServerRequestMethod: method, disposition: disposition)
+        if let auth = badges.auth {
+            authStatusBadge = auth
+        }
+        if let mcp = badges.mcp {
+            mcpStatusBadge = mcp
+        }
+        if let review = badges.review {
+            reviewStatusBadge = review
+        }
+    }
+
+    private func updateStatusForErrorMessage(_ text: String) {
+        let badges = Self.derivedStatusBadges(forErrorText: text)
+        if let auth = badges.auth {
+            authStatusBadge = auth
+        }
+        if let mcp = badges.mcp {
+            mcpStatusBadge = mcp
+        }
+        if let review = badges.review {
+            reviewStatusBadge = review
+        }
     }
 
     private func handleTurnPlanUpdated(_ params: [String: Any]) {
@@ -1357,17 +1411,50 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
     private static func dynamicToolCallSummary(_ item: [String: Any]) -> String {
         if let tool = (item["tool"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !tool.isEmpty {
+            if let argsPreview = compactKeyValuePreview(
+                from: item["arguments"] as? [String: Any],
+                preferredKeys: ["path", "filePath", "query", "url", "cwd", "pattern"],
+                maxLines: 1
+            ) {
+                return "Appel dynamique · \(tool) · \(argsPreview.replacingOccurrences(of: "\n", with: " · "))"
+            }
             return "Appel dynamique · \(tool)"
         }
         return "Appel d’outil dynamique"
     }
 
+    private static func dynamicToolCallInputPreview(_ item: [String: Any]) -> String? {
+        compactKeyValuePreview(
+            from: item["arguments"] as? [String: Any],
+            preferredKeys: ["path", "filePath", "query", "url", "cwd", "pattern", "command", "text"],
+            maxLines: 5
+        )
+    }
+
     private static func webSearchSummary(_ item: [String: Any]) -> String {
         let query = (item["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let action = (item["action"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        if let query, !query.isEmpty, let action {
+            return "Recherche web · \(query) · \(action)"
+        }
         if let query, !query.isEmpty {
             return "Recherche web · \(query)"
         }
         return "Recherche web"
+    }
+
+    private static func webSearchInputPreview(_ item: [String: Any]) -> String? {
+        var lines: [String] = []
+        if let query = (item["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
+            lines.append("query: \(query)")
+        }
+        if let action = (item["action"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !action.isEmpty {
+            lines.append("action: \(action)")
+        }
+        if let domains = item["allowedDomains"] as? [String], !domains.isEmpty {
+            lines.append("domains: \(domains.prefix(3).joined(separator: ", "))")
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     private static func completedWebSearchSummary(_ item: [String: Any]) -> String? {
@@ -1392,6 +1479,10 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private static func collabAgentToolCallSummary(_ item: [String: Any]) -> String {
         let tool = (item["tool"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let sender = (item["senderThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = (item["targetThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let tool, !tool.isEmpty, let sender, !sender.isEmpty, let target, !target.isEmpty {
+            return "Collab agent · \(tool) · \(sender.prefix(6)) → \(target.prefix(6))"
+        }
         if let tool, !tool.isEmpty, let sender, !sender.isEmpty {
             return "Collab agent · \(tool) · \(sender.prefix(8))"
         }
@@ -1399,6 +1490,27 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             return "Collab agent · \(tool)"
         }
         return "Collab agent"
+    }
+
+    private static func collabAgentToolCallInputPreview(_ item: [String: Any]) -> String? {
+        var lines: [String] = []
+        if let sender = (item["senderThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !sender.isEmpty {
+            lines.append("sender: \(sender)")
+        }
+        if let target = (item["targetThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !target.isEmpty {
+            lines.append("target: \(target)")
+        }
+        if let status = (item["status"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !status.isEmpty {
+            lines.append("status: \(status)")
+        }
+        if let argumentsPreview = compactKeyValuePreview(
+            from: item["arguments"] as? [String: Any],
+            preferredKeys: ["path", "query", "url", "cwd"],
+            maxLines: 2
+        ), !argumentsPreview.isEmpty {
+            lines.append(argumentsPreview)
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     private static func completedCollabAgentToolCallSummary(_ item: [String: Any]) -> String? {
@@ -1409,12 +1521,271 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return base
     }
 
+    private static func compactKeyValuePreview(
+        from dictionary: [String: Any]?,
+        preferredKeys: [String],
+        maxLines: Int
+    ) -> String? {
+        guard let dictionary, !dictionary.isEmpty else { return nil }
+
+        var orderedKeys: [String] = []
+        for key in preferredKeys where dictionary[key] != nil {
+            orderedKeys.append(key)
+        }
+        for key in dictionary.keys.sorted() where !orderedKeys.contains(key) {
+            orderedKeys.append(key)
+        }
+
+        var lines: [String] = []
+        for key in orderedKeys {
+            guard let value = dictionary[key],
+                  let previewValue = compactPreviewValue(value),
+                  !previewValue.isEmpty
+            else { continue }
+            lines.append("\(key): \(previewValue)")
+            if lines.count >= maxLines { break }
+        }
+
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    private static func compactPreviewValue(_ value: Any) -> String? {
+        switch value {
+        case let string as String:
+            return string.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        case let number as NSNumber:
+            return number.stringValue
+        case let array as [String]:
+            let trimmed = array
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard !trimmed.isEmpty else { return nil }
+            let prefix = trimmed.prefix(3).joined(separator: ", ")
+            return trimmed.count > 3 ? "\(prefix), …" : prefix
+        case let array as [Any]:
+            let values = array.compactMap { compactPreviewValue($0) }
+            guard !values.isEmpty else { return nil }
+            let prefix = values.prefix(3).joined(separator: ", ")
+            return values.count > 3 ? "\(prefix), …" : prefix
+        case let nested as [String: Any]:
+            return compactKeyValuePreview(from: nested, preferredKeys: Array(nested.keys.sorted()), maxLines: 1)?
+                .replacingOccurrences(of: "\n", with: " · ")
+        default:
+            return nil
+        }
+    }
+
+    private static func derivedStatusBadges(
+        forServerRequestMethod method: String,
+        disposition: ServerRequestDisposition
+    ) -> (auth: ChatStatusBadge?, mcp: ChatStatusBadge?, review: ChatStatusBadge?) {
+        switch method {
+        case "account/chatgptAuthTokens/refresh":
+            return (ChatStatusBadge(kind: .authRequired, text: "ChatGPT login"), nil, nil)
+        case "mcpServer/oauth/login":
+            return (ChatStatusBadge(kind: .authRequired, text: "Login MCP"), ChatStatusBadge(kind: .mcpWarning, text: "MCP login"), nil)
+        case "config/mcpServer/reload":
+            let kind: ChatStatusBadgeKind = disposition == .unsupported || disposition == .reject ? .mcpWarning : .mcpOkay
+            let text = disposition == .unsupported || disposition == .reject ? "MCP reload" : "MCP recharge"
+            return (nil, ChatStatusBadge(kind: kind, text: text), nil)
+        case "mcpServerStatus/list":
+            let kind: ChatStatusBadgeKind = disposition == .unsupported || disposition == .reject ? .mcpWarning : .mcpOkay
+            return (nil, ChatStatusBadge(kind: kind, text: kind == .mcpOkay ? "MCP status" : "MCP attention"), nil)
+        case let value where value.hasPrefix("mcpServer/"):
+            let kind: ChatStatusBadgeKind = disposition == .unsupported || disposition == .reject ? .mcpWarning : .mcpOkay
+            return (nil, ChatStatusBadge(kind: kind, text: kind == .mcpOkay ? "MCP OK" : "MCP attention"), nil)
+        default:
+            return (nil, nil, nil)
+        }
+    }
+
+    private static func derivedStatusBadges(
+        forErrorText text: String
+    ) -> (auth: ChatStatusBadge?, mcp: ChatStatusBadge?, review: ChatStatusBadge?) {
+        let lower = text.lowercased()
+        let auth: ChatStatusBadge?
+        if lower.contains("chatgpt") && (lower.contains("auth") || lower.contains("token") || lower.contains("login")) {
+            auth = ChatStatusBadge(kind: .authRequired, text: "ChatGPT login")
+        } else if lower.contains("oauth") || lower.contains("login") || lower.contains("auth") || lower.contains("token") {
+            auth = ChatStatusBadge(kind: .authRequired, text: "Auth requise")
+        } else {
+            auth = nil
+        }
+
+        let mcp: ChatStatusBadge?
+        if lower.contains("mcp") && lower.contains("reload") {
+            mcp = ChatStatusBadge(kind: .mcpWarning, text: "MCP reload")
+        } else if lower.contains("mcp") && (lower.contains("transport") || lower.contains("broken pipe") || lower.contains("connection reset")) {
+            mcp = ChatStatusBadge(kind: .mcpWarning, text: "MCP transport")
+        } else if lower.contains("mcp") {
+            mcp = ChatStatusBadge(kind: .mcpWarning, text: "MCP attention")
+        } else {
+            mcp = nil
+        }
+
+        let review: ChatStatusBadge?
+        if lower.contains("review") {
+            review = ChatStatusBadge(kind: .reviewAttention, text: "Review attention")
+        } else {
+            review = nil
+        }
+
+        return (auth, mcp, review)
+    }
+
     private static func reviewStateDescription(_ item: [String: Any]) -> String {
         let review = (item["review"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let review, !review.isEmpty {
             return "Review actif · \(review)"
         }
         return "Review actif"
+    }
+
+    private func appendExitedReviewModeMessages(_ item: [String: Any]) {
+        guard let rendered = (item["review"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rendered.isEmpty
+        else {
+            return
+        }
+
+        let parsed = Self.parseReviewOutput(rendered)
+        if let summary = parsed.summary, !summary.isEmpty {
+            messages.append(
+                ChatMessage(
+                    role: .assistant,
+                    content: summary,
+                    timestamp: Date(),
+                    isStreaming: false,
+                    isCollapsed: false
+                )
+            )
+        }
+
+        for finding in parsed.findings {
+            messages.append(
+                ChatMessage(
+                    role: .assistant,
+                    content: finding.body,
+                    timestamp: Date(),
+                    isStreaming: false,
+                    isCollapsed: false,
+                    presentationKind: .reviewFinding,
+                    reviewFinding: finding
+                )
+            )
+        }
+    }
+
+    private static func parseReviewOutput(_ rendered: String) -> (summary: String?, findings: [ChatReviewFinding]) {
+        let normalized = rendered
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return (nil, []) }
+
+        let lines = normalized.components(separatedBy: "\n")
+        let findingStarts = lines.indices.filter { index in
+            let line = lines[index].trimmingCharacters(in: .whitespacesAndNewlines)
+            return line.hasPrefix("[P") && line.contains("]")
+        }
+
+        guard let firstStart = findingStarts.first else {
+            return (normalized, [])
+        }
+
+        let prefix = lines[..<firstStart]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = prefix
+            .replacingOccurrences(of: "Review Findings:", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+
+        var findings: [ChatReviewFinding] = []
+        for (offset, start) in findingStarts.enumerated() {
+            let end = offset + 1 < findingStarts.count ? findingStarts[offset + 1] : lines.count
+            let block = Array(lines[start..<end])
+            guard let finding = parseRenderedReviewFinding(block) else { continue }
+            findings.append(finding)
+        }
+        return (summary, findings)
+    }
+
+    private static func parseRenderedReviewFinding(_ blockLines: [String]) -> ChatReviewFinding? {
+        guard let firstLineRaw = blockLines.first else { return nil }
+        let firstLine = firstLineRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !firstLine.isEmpty else { return nil }
+
+        let titleRegex = try? NSRegularExpression(pattern: #"^\[P([0-3])\]\s*(.+)$"#)
+        let nsTitle = firstLine as NSString
+        let titleRange = NSRange(location: 0, length: nsTitle.length)
+        let titleMatch = titleRegex?.firstMatch(in: firstLine, range: titleRange)
+
+        let priority = titleMatch.flatMap { match -> Int? in
+            guard match.numberOfRanges > 1 else { return nil }
+            return Int(nsTitle.substring(with: match.range(at: 1)))
+        }
+        let title = titleMatch.map { match -> String in
+            guard match.numberOfRanges > 2 else { return firstLine }
+            return nsTitle.substring(with: match.range(at: 2))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } ?? firstLine
+
+        var bodyLines: [String] = []
+        var filePath: String?
+        var lineStart: Int?
+        var lineEnd: Int?
+        var confidenceScore: Double?
+
+        for rawLine in blockLines.dropFirst() {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("Location:") {
+                let location = String(trimmed.dropFirst("Location:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                let parsed = parseReviewLocation(location)
+                filePath = parsed.path
+                lineStart = parsed.start
+                lineEnd = parsed.end
+                continue
+            }
+            if trimmed.lowercased().hasPrefix("confidence:") {
+                let raw = String(trimmed.dropFirst("Confidence:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                confidenceScore = Double(raw)
+                continue
+            }
+            bodyLines.append(rawLine)
+        }
+
+        let body = bodyLines
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return ChatReviewFinding(
+            title: title,
+            body: body.isEmpty ? title : body,
+            filePath: filePath,
+            lineStart: lineStart,
+            lineEnd: lineEnd,
+            priority: priority,
+            confidenceScore: confidenceScore
+        )
+    }
+
+    private static func parseReviewLocation(_ location: String) -> (path: String?, start: Int?, end: Int?) {
+        let regex = try? NSRegularExpression(pattern: #"^(.*?):(\d+)(?:-(\d+))?$"#)
+        let nsLocation = location as NSString
+        let range = NSRange(location: 0, length: nsLocation.length)
+        guard let match = regex?.firstMatch(in: location, range: range), match.numberOfRanges >= 3 else {
+            return (location.nilIfEmpty, nil, nil)
+        }
+
+        let path = nsLocation.substring(with: match.range(at: 1))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let start = Int(nsLocation.substring(with: match.range(at: 2)))
+        let end: Int? = {
+            guard match.numberOfRanges > 3, match.range(at: 3).location != NSNotFound else { return nil }
+            return Int(nsLocation.substring(with: match.range(at: 3)))
+        }()
+        return (path.nilIfEmpty, start, end)
     }
 
     private static func extractText(fromContentItems items: [[String: Any]]?) -> String? {
@@ -1776,6 +2147,21 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
+    nonisolated static func serverRequestActionLabel(method: String) -> String? {
+        switch method {
+        case "item/fileChange/requestApproval":
+            return "Edit"
+        case "item/commandExecution/requestApproval":
+            return "Bash"
+        case "mcpServer/elicitation/request":
+            return "MCP"
+        case "item/tool/requestUserInput":
+            return "Input"
+        default:
+            return nil
+        }
+    }
+
     nonisolated static func serverRequestMessage(method: String, params: [String: Any]) -> String? {
         switch method {
         case "mcpServer/elicitation/request":
@@ -1794,6 +2180,126 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         default:
             return nil
         }
+    }
+
+    nonisolated static func serverRequestDetails(method: String, params: [String: Any]) -> [String] {
+        switch method {
+        case "item/fileChange/requestApproval":
+            var details: [String] = []
+            if let paths = params["paths"] as? [String], !paths.isEmpty {
+                details.append(contentsOf: paths.map { path in
+                    let last = (path as NSString).lastPathComponent
+                    return last.isEmpty ? path : last
+                })
+                if paths.count > 1 {
+                    details.append("\(paths.count) fichiers")
+                }
+                return details
+            }
+            if let changes = params["changes"] as? [[String: Any]], !changes.isEmpty {
+                details.append(contentsOf: changes.compactMap { change in
+                    let path = (change["path"] as? String) ?? (change["newPath"] as? String) ?? ""
+                    guard !path.isEmpty else { return nil }
+                    let last = (path as NSString).lastPathComponent
+                    return last.isEmpty ? path : last
+                })
+                if changes.count > 1 {
+                    details.append("\(changes.count) modifications")
+                }
+                return details
+            }
+            return []
+        case "item/commandExecution/requestApproval":
+            var details: [String] = []
+            if let command = (params["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !command.isEmpty {
+                details.append(command)
+            }
+            if let cwd = (params["cwd"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !cwd.isEmpty {
+                details.append(cwd)
+            }
+            return details
+        case "mcpServer/elicitation/request":
+            if let serverName = (params["serverName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !serverName.isEmpty {
+                return [serverName]
+            }
+            return []
+        default:
+            return []
+        }
+    }
+
+    nonisolated static func serverRequestPreview(method: String, params: [String: Any]) -> ChatApprovalPreview? {
+        switch method {
+        case "item/fileChange/requestApproval":
+            return fileChangeApprovalPreview(params: params)
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static func fileChangeApprovalPreview(params: [String: Any]) -> ChatApprovalPreview? {
+        guard let changes = params["changes"] as? [[String: Any]], !changes.isEmpty else { return nil }
+        guard let primary = changes.first else { return nil }
+
+        let path = (primary["path"] as? String) ?? (primary["newPath"] as? String) ?? ""
+        let fileName: String
+        if path.isEmpty {
+            fileName = changes.count > 1 ? "\(changes.count) modifications" : "Modification"
+        } else {
+            let last = (path as NSString).lastPathComponent
+            fileName = last.isEmpty ? path : last
+        }
+
+        let kind = ((primary["kind"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty) ?? "update"
+        let title = path.isEmpty ? kind.capitalized : "\(fileName) · \(kind)"
+
+        guard let diff = (primary["diff"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !diff.isEmpty else {
+            return nil
+        }
+
+        let lines = diff
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .newlines) }
+            .filter { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return false }
+                if trimmed.hasPrefix("---") || trimmed.hasPrefix("+++") || trimmed == "\\ No newline at end of file" {
+                    return false
+                }
+                return true
+            }
+
+        var kept: [String] = []
+        for line in lines {
+            if line.hasPrefix("@@") {
+                kept.append(line)
+                continue
+            }
+            if line.hasPrefix("+") || line.hasPrefix("-") {
+                kept.append(line)
+            }
+            if kept.count >= 6 { break }
+        }
+
+        if kept.isEmpty {
+            kept = Array(lines.prefix(4))
+        }
+
+        guard !kept.isEmpty else { return nil }
+
+        let maxLineLength = 92
+        let body = kept.map { line in
+            if line.count > maxLineLength {
+                return String(line.prefix(maxLineLength - 1)) + "…"
+            }
+            return line
+        }.joined(separator: "\n")
+
+        return ChatApprovalPreview(title: title, body: body)
     }
 
     nonisolated static func blockedServerRequestMessage(
@@ -1979,9 +2485,30 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
         let filePath = json["filePath"] as? String ?? ""
         let fileName = (filePath as NSString).lastPathComponent
+        let lineText = (json["lineText"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let selectionLineContext = (json["selectionLineContext"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let contextSuffix: String
+        if let selectionLineContext {
+            contextSuffix = """
+
+            [Selected line context]
+            \(selectionLineContext)
+            [/Selected line context]
+            """
+        } else if let lineText {
+            contextSuffix = """
+
+            [Current line]
+            \(lineText)
+            [/Current line]
+            """
+        } else {
+            contextSuffix = ""
+        }
         return """
         [Canope IDE Context — current selection in "\(fileName)")]
         \(text)
+        \(contextSuffix)
         [/Canope IDE Context]
 
         \(userMessage)
@@ -2001,7 +2528,9 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             - N'utilise pas Bash ni aucune commande shell.
             - N'utilise aucune action de terminal, d'execution ou avec effets de bord.
             - Propose les changements de facon concrete et ciblee.
-            - Si un outil d'edition serait necessaire, attends l'approbation au lieu d'agir.
+            - Si une edition est appropriee et que la demande est claire, tente directement l'outil d'edition: le client demandera l'approbation inline.
+            - N'ecris pas de message du type "j'attends ton approbation" ou "si tu veux, j'applique"; laisse l'UI d'approbation faire ce travail.
+            - Une fois l'approbation accordee, applique seulement le changement valide, sans redemander la permission dans le chat.
             [/Canope Accept Edits Mode]
 
             \(promptWithContext)
@@ -2043,6 +2572,27 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     var chatWorkingDirectory: URL { workingDirectoryURL }
     var chatSupportsPlanMode: Bool { true }
     var chatSupportsReview: Bool { true }
+    var chatStatusBadges: [ChatStatusBadge] {
+        var badges: [ChatStatusBadge] = []
+        if isConnected {
+            badges.append(
+                ChatStatusBadge(
+                    kind: initialized ? .connected : .connecting,
+                    text: initialized ? "Connecte" : "Connexion…"
+                )
+            )
+        }
+        if let mcpStatusBadge {
+            badges.append(mcpStatusBadge)
+        }
+        if let authStatusBadge {
+            badges.append(authStatusBadge)
+        }
+        if let reviewStatusBadge {
+            badges.append(reviewStatusBadge)
+        }
+        return badges
+    }
 
     var chatSessionDisplayName: String {
         let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -2111,12 +2661,13 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         }
     }
 
-    func startChatReview() {
+    func startChatReview(command: String?) {
         guard let tid = currentThreadId else {
             appendSystem("Codex: lance d’abord une conversation avant /review.")
             return
         }
 
+        let target = Self.reviewTarget(from: command)
         isProcessing = true
         Task { [weak self] in
             guard let self else { return }
@@ -2126,9 +2677,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
                     params: [
                         "threadId": tid,
                         "delivery": "inline",
-                        "target": [
-                            "type": "uncommittedChanges",
-                        ],
+                        "target": target,
                     ]
                 )
             } catch {
@@ -2203,6 +2752,10 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         Self.ephemeralThreadList(limit: limit, matchingDirectory: matchingDirectory)
     }
 
+    func listChatSessionsAsync(limit: Int, matchingDirectory: URL?) async -> [ChatSessionListItem] {
+        await Self.ephemeralThreadListAsync(limit: limit, matchingDirectory: matchingDirectory)
+    }
+
     static func renameChatSession(id: String, name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
@@ -2230,6 +2783,9 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         lastRetryStatusMessage = nil
         session = SessionInfo()
         chatReviewStateDescription = nil
+        reviewStatusBadge = nil
+        authStatusBadge = nil
+        mcpStatusBadge = nil
         messages.removeAll()
         pendingApprovalRequest = nil
         pendingServerRequests.removeAll()
@@ -2242,6 +2798,17 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         await connectAndHandshake()
         guard let rpc else { return }
         do {
+            if let threadRead = try await rpc.call(
+                method: "thread/read",
+                params: ["threadId": id, "includeTurns": true]
+            ) as? [String: Any],
+               let snapshot = Self.historySnapshot(fromThreadReadResult: threadRead) {
+                messages = snapshot.messages
+                session.name = snapshot.name
+                session.turns = snapshot.turns
+                chatReviewStateDescription = snapshot.reviewStateDescription
+                reviewStatusBadge = snapshot.reviewStatusBadge
+            }
             _ = try await rpc.call(method: "thread/resume", params: ["threadId": id])
             currentThreadId = id
             session.id = id
@@ -2266,10 +2833,23 @@ extension CodexAppServerProvider: HeadlessChatProviding {
                let data = res["data"] as? [[String: Any]],
                let first = data.first,
                let id = first["id"] as? String {
+                if let threadRead = try await rpc.call(
+                    method: "thread/read",
+                    params: ["threadId": id, "includeTurns": true]
+                ) as? [String: Any],
+                   let snapshot = Self.historySnapshot(fromThreadReadResult: threadRead) {
+                    messages = snapshot.messages
+                    session.name = snapshot.name ?? (first["name"] as? String)
+                    session.turns = snapshot.turns
+                    chatReviewStateDescription = snapshot.reviewStateDescription
+                    reviewStatusBadge = snapshot.reviewStatusBadge
+                }
                 _ = try await rpc.call(method: "thread/resume", params: ["threadId": id])
                 currentThreadId = id
                 session.id = id
-                session.name = first["name"] as? String
+                if session.name == nil {
+                    session.name = first["name"] as? String
+                }
                 appendSystem("Session reprise")
             } else {
                 appendSystem("Aucune session trouvée pour ce dossier")
@@ -2381,6 +2961,269 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         if let v = ProcessInfo.processInfo.environment["CANOPE_CLAUDE_IDE_BRIDGE_URL"], !v.isEmpty { return v }
         return CanopeContextFiles.claudeIDEBridgeURL
     }
+
+    nonisolated private static func reviewTarget(from command: String?) -> [String: Any] {
+        let trimmed = command?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else {
+            return ["type": "uncommittedChanges"]
+        }
+
+        if trimmed.hasPrefix("branch ") {
+            let branch = String(trimmed.dropFirst("branch ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !branch.isEmpty else { return ["type": "uncommittedChanges"] }
+            return [
+                "type": "baseBranch",
+                "branch": branch,
+            ]
+        }
+
+        if trimmed.hasPrefix("commit ") {
+            let sha = String(trimmed.dropFirst("commit ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !sha.isEmpty else { return ["type": "uncommittedChanges"] }
+            return [
+                "type": "commit",
+                "sha": sha,
+            ]
+        }
+
+        return [
+            "type": "custom",
+            "instructions": trimmed,
+        ]
+    }
+
+    static func historySnapshot(fromThreadReadResult result: [String: Any]) -> CodexThreadHistorySnapshot? {
+        guard let thread = result["thread"] as? [String: Any] else { return nil }
+        let turns = thread["turns"] as? [[String: Any]] ?? []
+        var messages: [ChatMessage] = []
+        var reviewStateDescription: String?
+        var reviewStatusBadge: ChatStatusBadge?
+
+        for turn in turns {
+            for item in turn["items"] as? [[String: Any]] ?? [] {
+                messages.append(contentsOf: historyMessages(
+                    for: item,
+                    reviewStateDescription: &reviewStateDescription,
+                    reviewStatusBadge: &reviewStatusBadge
+                ))
+            }
+        }
+
+        return CodexThreadHistorySnapshot(
+            name: thread["name"] as? String,
+            turns: turns.count,
+            messages: messages,
+            reviewStateDescription: reviewStateDescription,
+            reviewStatusBadge: reviewStatusBadge
+        )
+    }
+
+    private static func historyMessages(
+        for item: [String: Any],
+        reviewStateDescription currentReviewStateDescription: inout String?,
+        reviewStatusBadge currentReviewStatusBadge: inout ChatStatusBadge?
+    ) -> [ChatMessage] {
+        guard let type = item["type"] as? String else { return [] }
+
+        switch type {
+        case "userMessage":
+            guard let text = historyUserMessageText(from: item) else { return [] }
+            var message = ChatMessage(
+                role: .user,
+                content: text,
+                timestamp: Date(),
+                isStreaming: false,
+                isCollapsed: false
+            )
+            message.isFromHistory = true
+            return [message]
+
+        case "agentMessage":
+            let text = sanitizeAssistantDisplayText((item["text"] as? String) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return [] }
+            var message = ChatMessage(
+                role: .assistant,
+                content: text,
+                timestamp: Date(),
+                isStreaming: false,
+                isCollapsed: false
+            )
+            message.isFromHistory = true
+            return [message]
+
+        case "plan":
+            let text = ((item["text"] as? String) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return [] }
+            var message = ChatMessage(
+                role: .assistant,
+                content: text,
+                timestamp: Date(),
+                isStreaming: false,
+                isCollapsed: false,
+                presentationKind: .plan
+            )
+            message.isFromHistory = true
+            return [message]
+
+        case "commandExecution":
+            return [historyToolMessage(
+                toolName: "Bash",
+                content: commandExecutionSummary(item),
+                toolInput: jsonString(item["command"] ?? item["commandActions"] ?? item),
+                toolOutput: completedCommandExecutionSummary(item, bufferedOutput: item["aggregatedOutput"] as? String)
+            )]
+
+        case "fileChange":
+            return [historyToolMessage(
+                toolName: "Edit",
+                content: fileChangeSummary(item),
+                toolInput: jsonString(item["changes"] ?? item),
+                toolOutput: completedFileChangeSummary(item, bufferedOutput: item["aggregatedOutput"] as? String)
+            )]
+
+        case "mcpToolCall":
+            let name = (item["tool"] as? String) ?? "mcp"
+            let summary = (item["server"] as? String).map { "\($0) · \(name)" } ?? name
+            return [historyToolMessage(
+                toolName: name,
+                content: summary,
+                toolInput: jsonString(item["arguments"]),
+                toolOutput: completedDynamicToolCallSummary(item)
+            )]
+
+        case "dynamicToolCall":
+            return [historyToolMessage(
+                toolName: (item["tool"] as? String) ?? "dynamicTool",
+                content: dynamicToolCallSummary(item),
+                toolInput: dynamicToolCallInputPreview(item) ?? jsonString(item["arguments"] ?? item),
+                toolOutput: completedDynamicToolCallSummary(item)
+            )]
+
+        case "webSearch":
+            return [historyToolMessage(
+                toolName: "WebSearch",
+                content: webSearchSummary(item),
+                toolInput: webSearchInputPreview(item) ?? jsonString(["query": item["query"] as? String ?? "", "action": item["action"] as Any]),
+                toolOutput: completedWebSearchSummary(item)
+            )]
+
+        case "imageView":
+            return [historyToolMessage(
+                toolName: "ImageView",
+                content: imageViewSummary(item),
+                toolInput: jsonString(["path": item["path"] as? String ?? ""]),
+                toolOutput: completedImageViewSummary(item)
+            )]
+
+        case "collabAgentToolCall":
+            return [historyToolMessage(
+                toolName: "Agent",
+                content: collabAgentToolCallSummary(item),
+                toolInput: collabAgentToolCallInputPreview(item) ?? jsonString(item),
+                toolOutput: completedCollabAgentToolCallSummary(item)
+            )]
+
+        case "enteredReviewMode":
+            currentReviewStateDescription = reviewStateDescription(item)
+            currentReviewStatusBadge = ChatStatusBadge(kind: .reviewActive, text: currentReviewStateDescription ?? "Review active")
+            return []
+
+        case "exitedReviewMode":
+            currentReviewStateDescription = nil
+            currentReviewStatusBadge = ChatStatusBadge(kind: .reviewDone, text: "Review terminee")
+            guard let rendered = (item["review"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rendered.isEmpty
+            else {
+                return []
+            }
+            let parsed = parseReviewOutput(rendered)
+            var renderedMessages: [ChatMessage] = []
+            if let summary = parsed.summary, !summary.isEmpty {
+                var summaryMessage = ChatMessage(
+                    role: .assistant,
+                    content: summary,
+                    timestamp: Date(),
+                    isStreaming: false,
+                    isCollapsed: false
+                )
+                summaryMessage.isFromHistory = true
+                renderedMessages.append(summaryMessage)
+            }
+            for finding in parsed.findings {
+                var findingMessage = ChatMessage(
+                    role: .assistant,
+                    content: finding.body,
+                    timestamp: Date(),
+                    isStreaming: false,
+                    isCollapsed: false,
+                    presentationKind: .reviewFinding,
+                    reviewFinding: finding
+                )
+                findingMessage.isFromHistory = true
+                renderedMessages.append(findingMessage)
+            }
+            return renderedMessages
+
+        default:
+            return []
+        }
+    }
+
+    private static func historyToolMessage(
+        toolName: String,
+        content: String,
+        toolInput: String?,
+        toolOutput: String?
+    ) -> ChatMessage {
+        var message = ChatMessage(
+            role: .toolUse,
+            content: content,
+            timestamp: Date(),
+            toolName: toolName,
+            toolInput: toolInput,
+            toolOutput: toolOutput,
+            isStreaming: false,
+            isCollapsed: true
+        )
+        message.isFromHistory = true
+        return message
+    }
+
+    private static func historyUserMessageText(from item: [String: Any]) -> String? {
+        let content = item["content"] as? [[String: Any]] ?? []
+        let fragments = content.compactMap { fragment -> String? in
+            let type = (fragment["type"] as? String) ?? ""
+            switch type {
+            case "text":
+                return (fragment["text"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty
+            case "localImage":
+                if let path = (fragment["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+                    return "[Image jointe: \((path as NSString).lastPathComponent)]"
+                }
+                return "[Image jointe]"
+            case "image":
+                if let url = (fragment["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
+                    return "[Image jointe: \(url)]"
+                }
+                return "[Image jointe]"
+            case "mention", "skill":
+                let name = (fragment["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return name?.nilIfEmpty.map { "[\($0)]" } ?? "[Contexte joint]"
+            default:
+                if let text = (fragment["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    return text
+                }
+                return nil
+            }
+        }
+
+        return fragments.joined(separator: "\n\n").nilIfEmpty
+    }
 }
 
 #if DEBUG
@@ -2460,6 +3303,58 @@ extension CodexAppServerProvider {
         fieldValues: [String: String]
     ) -> [String: Any] {
         elicitationResponseResult(from: params, approved: approved, fieldValues: fieldValues)
+    }
+
+    static func testReviewTarget(command: String?) -> [String: Any] {
+        reviewTarget(from: command)
+    }
+
+    static func testServerRequestDetails(method: String, params: [String: Any]) -> [String] {
+        serverRequestDetails(method: method, params: params)
+    }
+
+    static func testServerRequestPreview(method: String, params: [String: Any]) -> ChatApprovalPreview? {
+        serverRequestPreview(method: method, params: params)
+    }
+
+    static func testParseReviewOutput(_ text: String) -> (summary: String?, findings: [ChatReviewFinding]) {
+        parseReviewOutput(text)
+    }
+
+    static func testDynamicToolCallInputPreview(_ item: [String: Any]) -> String? {
+        dynamicToolCallInputPreview(item)
+    }
+
+    static func testCollabAgentToolCallInputPreview(_ item: [String: Any]) -> String? {
+        collabAgentToolCallInputPreview(item)
+    }
+
+    static func testWebSearchInputPreview(_ item: [String: Any]) -> String? {
+        webSearchInputPreview(item)
+    }
+
+    static func testDerivedStatusBadgesForServerRequest(
+        method: String,
+        disposition: ServerRequestDisposition
+    ) -> (auth: ChatStatusBadge?, mcp: ChatStatusBadge?, review: ChatStatusBadge?) {
+        derivedStatusBadges(forServerRequestMethod: method, disposition: disposition)
+    }
+
+    static func testDerivedStatusBadgesForErrorText(
+        _ text: String
+    ) -> (auth: ChatStatusBadge?, mcp: ChatStatusBadge?, review: ChatStatusBadge?) {
+        derivedStatusBadges(forErrorText: text)
+    }
+
+    func testSetStatusBadges(review: ChatStatusBadge? = nil, auth: ChatStatusBadge? = nil, mcp: ChatStatusBadge? = nil) {
+        reviewStatusBadge = review
+        authStatusBadge = auth
+        mcpStatusBadge = mcp
+    }
+
+    func testSetConnectionState(isConnected: Bool, initialized: Bool) {
+        self.isConnected = isConnected
+        self.initialized = initialized
     }
 }
 #endif

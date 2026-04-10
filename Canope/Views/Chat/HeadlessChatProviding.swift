@@ -10,6 +10,7 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     var chatSupportsPlanMode: Bool { get }
     var chatSupportsReview: Bool { get }
     var chatReviewStateDescription: String? { get }
+    var chatStatusBadges: [ChatStatusBadge] { get }
     var pendingApprovalRequest: ChatApprovalRequest? { get }
 
     var chatAvailableModels: [String] { get }
@@ -24,11 +25,12 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     func editAndResendLastUser(newText: String)
     func sendMessageWithDisplay(displayText: String, items: [ChatInputItem])
     func sendMessageWithDisplay(displayText: String, prompt: String)
-    func startChatReview()
+    func startChatReview(command: String?)
     func approvePendingApprovalRequest()
     func submitPendingApprovalRequest(fieldValues: [String: String])
     func dismissPendingApprovalRequest()
     func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem]
+    func listChatSessionsAsync(limit: Int, matchingDirectory: URL?) async -> [ChatSessionListItem]
 
     static func renameChatSession(id: String, name: String)
     static func toolIconName(for toolName: String) -> String
@@ -100,11 +102,18 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
 extension HeadlessChatProviding {
     var chatSupportsReview: Bool { false }
     var chatReviewStateDescription: String? { nil }
+    var chatStatusBadges: [ChatStatusBadge] { [] }
 
-    func startChatReview() {}
+    func startChatReview(command: String?) {
+        _ = command
+    }
 
     func submitPendingApprovalRequest(fieldValues: [String: String]) {
         _ = fieldValues
         approvePendingApprovalRequest()
+    }
+
+    func listChatSessionsAsync(limit: Int, matchingDirectory: URL?) async -> [ChatSessionListItem] {
+        listChatSessions(limit: limit, matchingDirectory: matchingDirectory)
     }
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SessionPickerView: View {
-    let loadSessions: () -> [ChatSessionListItem]
+    let loadSessions: () async -> [ChatSessionListItem]
     let renameSession: (String, String) -> Void
     let onSelect: (String) -> Void
     let onCancel: () -> Void
@@ -10,6 +10,7 @@ struct SessionPickerView: View {
     @State private var search = ""
     @State private var renamingSession: ChatSessionListItem?
     @State private var renameText = ""
+    @State private var isLoading = false
 
     private var filtered: [ChatSessionListItem] {
         if search.isEmpty { return sessions }
@@ -46,62 +47,75 @@ struct SessionPickerView: View {
             Divider()
 
             // Session list
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(filtered) { entry in
-                        Button {
-                            onSelect(entry.id)
-                        } label: {
-                            HStack(spacing: 10) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(entry.displayName)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
+            Group {
+                if isLoading && sessions.isEmpty {
+                    VStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Chargement des sessions…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(filtered) { entry in
+                                Button {
+                                    onSelect(entry.id)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(entry.displayName)
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundStyle(.primary)
+                                                .lineLimit(1)
 
-                                    HStack(spacing: 6) {
-                                        Text(String(entry.id.prefix(8)))
+                                            HStack(spacing: 6) {
+                                                Text(String(entry.id.prefix(8)))
+                                                    .font(.system(size: 10, design: .monospaced))
+                                                    .foregroundStyle(.secondary)
+
+                                                if !entry.project.isEmpty && entry.project != entry.displayName {
+                                                    Text("·")
+                                                        .foregroundStyle(.secondary.opacity(0.5))
+                                                    Text(entry.project)
+                                                        .font(.system(size: 10))
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                        }
+
+                                        Spacer()
+
+                                        Text(entry.dateString)
                                             .font(.system(size: 10, design: .monospaced))
                                             .foregroundStyle(.secondary)
-
-                                        if !entry.project.isEmpty && entry.project != entry.displayName {
-                                            Text("·")
-                                                .foregroundStyle(.secondary.opacity(0.5))
-                                            Text(entry.project)
-                                                .font(.system(size: 10))
-                                                .foregroundStyle(.secondary)
-                                        }
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .background(Color.clear)
+                                .contextMenu {
+                                    Button("Renommer…") {
+                                        renameText = entry.name
+                                        renamingSession = entry
                                     }
                                 }
 
-                                Spacer()
-
-                                Text(entry.dateString)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .background(Color.clear)
-                        .contextMenu {
-                            Button("Renommer…") {
-                                renameText = entry.name
-                                renamingSession = entry
+                                Divider().padding(.leading, 16)
                             }
                         }
-
-                        Divider().padding(.leading, 16)
                     }
                 }
             }
         }
         .frame(width: 420, height: 350)
         .background(AppChromePalette.surfaceBar)
-        .onAppear {
-            sessions = loadSessions()
+        .task {
+            await reloadSessions()
         }
         .sheet(item: $renamingSession) { entry in
             VStack(spacing: 12) {
@@ -119,8 +133,10 @@ struct SessionPickerView: View {
                     Spacer()
                     Button("Renommer") {
                         renameSession(entry.id, renameText)
-                        sessions = loadSessions()
-                        renamingSession = nil
+                        Task {
+                            await reloadSessions()
+                            renamingSession = nil
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -129,5 +145,12 @@ struct SessionPickerView: View {
             .padding(20)
             .frame(width: 300)
         }
+    }
+
+    @MainActor
+    private func reloadSessions() async {
+        isLoading = true
+        sessions = await loadSessions()
+        isLoading = false
     }
 }

@@ -262,6 +262,8 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(state?.selection.start.character, 2)
         XCTAssertEqual(state?.selection.end.line, 1)
         XCTAssertEqual(state?.selection.end.character, 3)
+        XCTAssertEqual(state?.lineText, "alpha\nbeta")
+        XCTAssertEqual(state?.selectionLineContext, "al[[pha\nbet]]a")
     }
 
     func testClaudeIDESelectionStatePreservesCollapsedSelectionsForCursorUpdates() {
@@ -993,6 +995,10 @@ final class ServiceParsingTests: XCTestCase {
         let raw = """
         [Canope IDE Context — current selection in "sample.pdf"]
         (no text currently selected)
+        
+        [Selected line context]
+        foo[[bar]]
+        [/Selected line context]
         [/Canope IDE Context]
 
         il est ou?
@@ -1001,6 +1007,24 @@ final class ServiceParsingTests: XCTestCase {
         let cleaned = ClaudeHeadlessProvider.cleanedResumedUserMessage(raw)
 
         XCTAssertEqual(cleaned, "il est ou?")
+    }
+
+    func testClaudeBuildPromptWithIDEContextIncludesSelectedLineContextWhenAvailable() throws {
+        let path = CanopeContextFiles.ideSelectionStatePaths[0]
+        let payload: [String: Any] = [
+            "filePath": "/tmp/main.tex",
+            "text": "right=2.0cm]{",
+            "lineText": "\\begin{adjustwidth}{0cm}{right=2.0cm]{",
+            "selectionLineContext": "\\begin{adjustwidth}{0cm}{[[right=2.0cm]{",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let out = ClaudeHeadlessProvider.buildPromptWithIDEContext("met ca a 1cm")
+        XCTAssertTrue(out.contains("[Selected line context]"))
+        XCTAssertTrue(out.contains("\\begin{adjustwidth}{0cm}{[[right=2.0cm]{"))
+        XCTAssertTrue(out.contains("met ca a 1cm"))
     }
 
     func testArtifactDescriptorMapsPreviewableKinds() {

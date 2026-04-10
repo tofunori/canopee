@@ -60,6 +60,23 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertTrue(out.contains("Hello"))
     }
 
+    func testCodexBuildPromptWithIDEContextIncludesSelectedLineContext() throws {
+        let path = CanopeContextFiles.ideSelectionStatePaths[0]
+        let payload: [String: Any] = [
+            "text": "right=2.0cm]{",
+            "filePath": "/tmp/paper.tex",
+            "selectionLineContext": "\\begin{adjustwidth}{0cm}{[[right=2.0cm]{",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let out = CodexAppServerProvider.buildPromptWithIDEContext("met ca a 1cm")
+        XCTAssertTrue(out.contains("[Selected line context]"))
+        XCTAssertTrue(out.contains("\\begin{adjustwidth}{0cm}{[[right=2.0cm]{"))
+        XCTAssertTrue(out.contains("met ca a 1cm"))
+    }
+
     func testClaudePlanPromptWrapsUserMessageAndAddsGuardrails() {
         let out = ClaudeHeadlessProvider.buildPromptForInteractionMode("Fais le plan", mode: .plan)
         XCTAssertTrue(out.contains("[Canope Plan Mode]"))
@@ -72,7 +89,70 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertTrue(out.contains("[Canope Accept Edits Mode]"))
         XCTAssertTrue(out.contains("N'applique aucune edition de fichier sans approbation explicite"))
         XCTAssertTrue(out.contains("N'utilise pas Bash"))
+        XCTAssertTrue(out.contains("le client demandera l'approbation inline"))
+        XCTAssertTrue(out.contains("N'ecris pas de message du type"))
         XCTAssertTrue(out.contains("Modifie ce fichier"))
+    }
+
+    func testCodexAcceptEditsPromptPrefersInlineApprovalOverChatNegotiation() {
+        let out = CodexAppServerProvider.buildPromptForInteractionMode("Modifie ce fichier", mode: .acceptEdits)
+        XCTAssertTrue(out.contains("[Canope Accept Edits Mode]"))
+        XCTAssertTrue(out.contains("le client demandera l'approbation inline"))
+        XCTAssertTrue(out.contains("N'ecris pas de message du type"))
+        XCTAssertFalse(out.contains("attends l'approbation au lieu d'agir"))
+        XCTAssertTrue(out.contains("Modifie ce fichier"))
+    }
+
+    @MainActor
+    func testCodexThreadReadHistorySnapshotBuildsVisibleMessages() {
+        let result: [String: Any] = [
+            "thread": [
+                "name": "Session test",
+                "turns": [
+                    [
+                        "id": "turn-1",
+                        "items": [
+                            [
+                                "type": "userMessage",
+                                "id": "item-user",
+                                "content": [[
+                                    "type": "text",
+                                    "text": "Bonjour Codex"
+                                ]]
+                            ],
+                            [
+                                "type": "agentMessage",
+                                "id": "item-assistant",
+                                "text": "Salut"
+                            ],
+                            [
+                                "type": "commandExecution",
+                                "id": "item-bash",
+                                "command": "/bin/echo hi",
+                                "cwd": "/tmp",
+                                "status": "completed",
+                                "exitCode": 0,
+                                "aggregatedOutput": "hi"
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        let snapshot = CodexAppServerProvider.historySnapshot(fromThreadReadResult: result)
+
+        XCTAssertEqual(snapshot?.name, "Session test")
+        XCTAssertEqual(snapshot?.turns, 1)
+        XCTAssertEqual(snapshot?.messages.count, 3)
+        XCTAssertEqual(snapshot?.messages.first?.role, .user)
+        XCTAssertEqual(snapshot?.messages.first?.content, "Bonjour Codex")
+        XCTAssertEqual(snapshot?.messages[1].role, .assistant)
+        XCTAssertEqual(snapshot?.messages[1].content, "Salut")
+        XCTAssertEqual(snapshot?.messages[2].role, .toolUse)
+        XCTAssertEqual(snapshot?.messages[2].toolName, "Bash")
+        XCTAssertEqual(snapshot?.messages[2].toolOutput, "Commande terminee (code 0) · /bin/echo hi\nhi")
+        XCTAssertTrue(snapshot?.messages.allSatisfy(\.isFromHistory) ?? false)
     }
 
     func testClaudeMutatingToolDetectionFlagsEditsAndBash() {
@@ -529,21 +609,43 @@ final class ChatSolidificationTests: XCTestCase {
             params: ["item": ["type": "enteredReviewMode", "id": "review_1", "review": "working-tree"]]
         )
         XCTAssertEqual(provider.chatReviewStateDescription, "Review actif · working-tree")
+        XCTAssertEqual(provider.chatStatusBadges.last?.kind, .reviewActive)
 
         provider.testHandleNotification(
             method: "item/completed",
-            params: ["item": ["type": "exitedReviewMode", "id": "review_1", "review": "working-tree"]]
+            params: ["item": ["type": "exitedReviewMode", "id": "review_1", "review": "Aucun finding."]]
         )
         XCTAssertNil(provider.chatReviewStateDescription)
+        XCTAssertEqual(provider.chatStatusBadges.last?.kind, .reviewDone)
     }
 
     @MainActor
     func testCodexReviewCommandWithoutActiveThreadShowsHelpfulMessage() {
         let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
-        provider.startChatReview()
+        provider.startChatReview(command: nil)
 
         XCTAssertEqual(provider.messages.last?.role, .system)
         XCTAssertEqual(provider.messages.last?.content, "Codex: lance d’abord une conversation avant /review.")
+    }
+
+    @MainActor
+    func testCodexReviewTargetParsingSupportsBranchCommitAndCustomInstructions() {
+        XCTAssertEqual(
+            CodexAppServerProvider.testReviewTarget(command: nil)["type"] as? String,
+            "uncommittedChanges"
+        )
+        XCTAssertEqual(
+            CodexAppServerProvider.testReviewTarget(command: "branch main")["branch"] as? String,
+            "main"
+        )
+        XCTAssertEqual(
+            CodexAppServerProvider.testReviewTarget(command: "commit abc123")["sha"] as? String,
+            "abc123"
+        )
+        XCTAssertEqual(
+            CodexAppServerProvider.testReviewTarget(command: "cherche les regressions UI")["instructions"] as? String,
+            "cherche les regressions UI"
+        )
     }
 
     @MainActor
@@ -578,6 +680,7 @@ final class ChatSolidificationTests: XCTestCase {
                 "type": "webSearch",
                 "id": "web_1",
                 "query": "hydrology paper",
+                "action": "search",
             ]]
         )
         provider.testHandleNotification(
@@ -586,14 +689,60 @@ final class ChatSolidificationTests: XCTestCase {
                 "type": "webSearch",
                 "id": "web_1",
                 "query": "hydrology paper",
+                "action": "search",
             ]]
         )
 
         XCTAssertEqual(provider.messages.count, 1)
         XCTAssertEqual(provider.messages.last?.role, .toolUse)
         XCTAssertEqual(provider.messages.last?.toolName, "WebSearch")
-        XCTAssertEqual(provider.messages.last?.content, "Recherche web · hydrology paper")
-        XCTAssertEqual(provider.messages.last?.toolOutput, "Recherche web · hydrology paper")
+        XCTAssertEqual(provider.messages.last?.content, "Recherche web · hydrology paper · search")
+        XCTAssertEqual(provider.messages.last?.toolInput, "query: hydrology paper\naction: search")
+        XCTAssertEqual(provider.messages.last?.toolOutput, "Recherche web · hydrology paper · search\nAction: search")
+    }
+
+    @MainActor
+    func testCodexDynamicToolCallUsesCompactArgumentPreview() {
+        let preview = CodexAppServerProvider.testDynamicToolCallInputPreview([
+            "tool": "read_file",
+            "arguments": [
+                "path": "/tmp/demo.tex",
+                "query": "snow albedo",
+                "limit": 25,
+            ],
+        ])
+
+        XCTAssertEqual(
+            preview,
+            """
+            path: /tmp/demo.tex
+            query: snow albedo
+            limit: 25
+            """
+        )
+    }
+
+    @MainActor
+    func testCodexCollabAgentToolCallUsesCompactPreview() {
+        let preview = CodexAppServerProvider.testCollabAgentToolCallInputPreview([
+            "tool": "delegate",
+            "senderThreadId": "thread_source_123",
+            "targetThreadId": "thread_target_456",
+            "status": "running",
+            "arguments": [
+                "path": "/tmp/demo.tex",
+            ],
+        ])
+
+        XCTAssertEqual(
+            preview,
+            """
+            sender: thread_source_123
+            target: thread_target_456
+            status: running
+            path: /tmp/demo.tex
+            """
+        )
     }
 
     @MainActor
@@ -624,6 +773,193 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertEqual(provider.messages.count, 1)
         XCTAssertEqual(provider.messages.last?.role, .toolUse)
         XCTAssertEqual(provider.messages.last?.toolOutput, "Modification proposee · demo.tex non appliquee")
+    }
+
+    @MainActor
+    func testCodexServerRequestDetailsSummarizeFileEditsAndCommands() {
+        XCTAssertEqual(
+            CodexAppServerProvider.testServerRequestDetails(
+                method: "item/fileChange/requestApproval",
+                params: ["paths": ["/tmp/demo.tex", "/tmp/notes.md"]]
+            ),
+            ["demo.tex", "notes.md", "2 fichiers"]
+        )
+        XCTAssertEqual(
+            CodexAppServerProvider.testServerRequestDetails(
+                method: "item/commandExecution/requestApproval",
+                params: ["command": "latexmk main.tex", "cwd": "/tmp/project"]
+            ),
+            ["latexmk main.tex", "/tmp/project"]
+        )
+    }
+
+    @MainActor
+    func testCodexServerRequestPreviewExtractsCompactDiffForFileChanges() {
+        let preview = CodexAppServerProvider.testServerRequestPreview(
+            method: "item/fileChange/requestApproval",
+            params: [
+                "changes": [[
+                    "path": "/tmp/demo.tex",
+                    "kind": "update",
+                    "diff": """
+                    --- a/demo.tex
+                    +++ b/demo.tex
+                    @@ -10,3 +10,3 @@
+                    -\\setlength{\\tabcolsep}{8pt}
+                    +\\setlength{\\tabcolsep}{6pt}
+                    """,
+                ]],
+            ]
+        )
+
+        XCTAssertEqual(preview?.title, "demo.tex · update")
+        XCTAssertEqual(
+            preview?.body,
+            """
+            @@ -10,3 +10,3 @@
+            -\\setlength{\\tabcolsep}{8pt}
+            +\\setlength{\\tabcolsep}{6pt}
+            """
+        )
+    }
+
+    @MainActor
+    func testCodexAcceptEditsApprovalCarriesContextDetails() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetCurrentRunState(interactionMode: .acceptEdits, prompt: "Fais le changement", displayText: "Fais le changement")
+        provider.testHandleServerRequest(
+            id: 99,
+            method: "item/fileChange/requestApproval",
+            params: [
+                "itemId": "edit_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "paths": ["/tmp/demo.tex"],
+                "changes": [[
+                    "path": "/tmp/demo.tex",
+                    "kind": "update",
+                    "diff": """
+                    @@ -1,1 +1,1 @@
+                    -left=8pt
+                    +left=6pt
+                    """,
+                ]],
+            ]
+        )
+
+        XCTAssertEqual(provider.pendingApprovalRequest?.details, ["demo.tex"])
+        XCTAssertEqual(provider.pendingApprovalRequest?.actionLabel, "Edit")
+        XCTAssertEqual(provider.pendingApprovalRequest?.preview?.title, "demo.tex · update")
+        XCTAssertEqual(
+            provider.pendingApprovalRequest?.preview?.body,
+            """
+            @@ -1,1 +1,1 @@
+            -left=8pt
+            +left=6pt
+            """
+        )
+    }
+
+    @MainActor
+    func testCodexParseRenderedReviewOutputCreatesSummaryAndFindings() {
+        let rendered = """
+        Patch incorrect: deux regressions doivent etre corrigees.
+
+        Review Findings:
+
+        [P1] Valider l’entree utilisateur
+        Cette branche ecrit des donnees non verifiees dans le cache.
+        Location: /tmp/demo.swift:10-12
+
+        [P2] Reutiliser le formatter partage
+        Le formatter local recree dans la boucle est inutilement couteux.
+        Location: /tmp/format.swift:30-31
+        """
+
+        let parsed = CodexAppServerProvider.testParseReviewOutput(rendered)
+        XCTAssertEqual(parsed.summary, "Patch incorrect: deux regressions doivent etre corrigees.")
+        XCTAssertEqual(parsed.findings.count, 2)
+        XCTAssertEqual(parsed.findings[0].title, "Valider l’entree utilisateur")
+        XCTAssertEqual(parsed.findings[0].priority, 1)
+        XCTAssertEqual(parsed.findings[0].filePath, "/tmp/demo.swift")
+        XCTAssertEqual(parsed.findings[0].lineStart, 10)
+        XCTAssertEqual(parsed.findings[0].lineEnd, 12)
+    }
+
+    @MainActor
+    func testCodexExitedReviewModeAppendsReviewFindingCards() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testHandleNotification(
+            method: "item/started",
+            params: ["item": ["type": "enteredReviewMode", "id": "review_1", "review": "working-tree"]]
+        )
+        provider.testHandleNotification(
+            method: "item/completed",
+            params: ["item": ["type": "exitedReviewMode", "id": "review_1", "review": """
+            Patch incorrect.
+
+            [P1] Stabiliser le calcul
+            Le resultat diverge selon l’ordre des entrees.
+            Location: /tmp/demo.swift:42-44
+            """]]
+        )
+
+        XCTAssertEqual(provider.messages.count, 2)
+        XCTAssertEqual(provider.messages[0].presentationKind, .standard)
+        XCTAssertEqual(provider.messages[1].presentationKind, .reviewFinding)
+        XCTAssertEqual(provider.messages[1].reviewFinding?.title, "Stabiliser le calcul")
+        XCTAssertEqual(provider.messages[1].reviewFinding?.locationLabel, "demo.swift:42-44")
+    }
+
+    @MainActor
+    func testCodexStatusBadgesCombineConnectionAndSubsystemState() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetConnectionState(isConnected: true, initialized: true)
+        provider.testSetStatusBadges(
+            review: ChatStatusBadge(kind: .reviewDone, text: "Review terminee"),
+            auth: ChatStatusBadge(kind: .authRequired, text: "Auth requise"),
+            mcp: ChatStatusBadge(kind: .mcpOkay, text: "MCP OK")
+        )
+
+        XCTAssertEqual(
+            provider.chatStatusBadges.map(\.text),
+            ["Connecte", "MCP OK", "Auth requise", "Review terminee"]
+        )
+    }
+
+    @MainActor
+    func testCodexServerRequestStatusBadgesAreSpecificForAuthAndMcp() {
+        let authBadges = CodexAppServerProvider.testDerivedStatusBadgesForServerRequest(
+            method: "account/chatgptAuthTokens/refresh",
+            disposition: .unsupported
+        )
+        XCTAssertEqual(authBadges.auth?.text, "ChatGPT login")
+
+        let reloadBadges = CodexAppServerProvider.testDerivedStatusBadgesForServerRequest(
+            method: "config/mcpServer/reload",
+            disposition: .unsupported
+        )
+        XCTAssertEqual(reloadBadges.mcp?.text, "MCP reload")
+
+        let loginBadges = CodexAppServerProvider.testDerivedStatusBadgesForServerRequest(
+            method: "mcpServer/oauth/login",
+            disposition: .inlineApproval
+        )
+        XCTAssertEqual(loginBadges.auth?.text, "Login MCP")
+        XCTAssertEqual(loginBadges.mcp?.text, "MCP login")
+    }
+
+    @MainActor
+    func testCodexErrorStatusBadgesDetectMcpTransportAndChatgptAuth() {
+        let transportBadges = CodexAppServerProvider.testDerivedStatusBadgesForErrorText(
+            "MCP transport closed: broken pipe"
+        )
+        XCTAssertEqual(transportBadges.mcp?.text, "MCP transport")
+
+        let authBadges = CodexAppServerProvider.testDerivedStatusBadgesForErrorText(
+            "ChatGPT auth token refresh required"
+        )
+        XCTAssertEqual(authBadges.auth?.text, "ChatGPT login")
     }
 
     @MainActor

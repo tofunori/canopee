@@ -14,6 +14,8 @@ struct ClaudeIDESelectionState: Codable, Equatable {
     let selection: SelectionRange
     let text: String
     let filePath: String
+    let lineText: String?
+    let selectionLineContext: String?
 
     static func make(text: String, fileURL: URL, range: NSRange) -> ClaudeIDESelectionState? {
         let nsText = text as NSString
@@ -22,6 +24,24 @@ struct ClaudeIDESelectionState: Codable, Equatable {
 
         let startOffset = normalizedRange.location
         let endOffset = normalizedRange.location + normalizedRange.length
+        let lineRange = nsText.lineRange(for: normalizedRange)
+        let rawLineText = nsText.substring(with: lineRange)
+        let lineText = rawLineText.trimmingCharacters(in: .newlines)
+
+        let selectionLineContext: String?
+        if lineRange.location <= normalizedRange.location,
+           endOffset <= NSMaxRange(lineRange) {
+            let relativeStart = normalizedRange.location - lineRange.location
+            let relativeEnd = endOffset - lineRange.location
+            let lineNSString = rawLineText as NSString
+            let prefix = lineNSString.substring(with: NSRange(location: 0, length: max(0, relativeStart)))
+            let selected = lineNSString.substring(with: NSRange(location: max(0, relativeStart), length: max(0, relativeEnd - relativeStart)))
+            let suffix = lineNSString.substring(with: NSRange(location: max(0, relativeEnd), length: max(0, lineNSString.length - relativeEnd)))
+            selectionLineContext = (prefix + "[[" + selected + "]]" + suffix)
+                .trimmingCharacters(in: .newlines)
+        } else {
+            selectionLineContext = nil
+        }
 
         return ClaudeIDESelectionState(
             selection: SelectionRange(
@@ -29,7 +49,9 @@ struct ClaudeIDESelectionState: Codable, Equatable {
                 end: point(forUTF16Offset: endOffset, in: nsText)
             ),
             text: normalizedRange.length > 0 ? nsText.substring(with: normalizedRange) : "",
-            filePath: fileURL.path
+            filePath: fileURL.path,
+            lineText: lineText.isEmpty ? nil : lineText,
+            selectionLineContext: selectionLineContext?.isEmpty == true ? nil : selectionLineContext
         )
     }
 
@@ -42,7 +64,9 @@ struct ClaudeIDESelectionState: Codable, Equatable {
                 end: point(forUTF16Offset: nsText.length, in: nsText)
             ),
             text: selectedText,
-            filePath: fileURL.path
+            filePath: fileURL.path,
+            lineText: nil,
+            selectionLineContext: nil
         )
     }
 
