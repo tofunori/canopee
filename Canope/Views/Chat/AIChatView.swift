@@ -30,6 +30,45 @@ extension AttachedFile {
             return .localImage(path: path)
         }
     }
+
+    static func chatDisplayText(userText: String, attachedFiles: [AttachedFile]) -> String {
+        let trimmedText = userText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachmentSummary = chatDisplaySummary(for: attachedFiles)
+
+        if trimmedText.isEmpty {
+            return attachmentSummary ?? ""
+        }
+
+        guard let attachmentSummary else {
+            return trimmedText
+        }
+        return "\(trimmedText)\n\(attachmentSummary)"
+    }
+
+    static func chatDisplaySummary(for attachedFiles: [AttachedFile]) -> String? {
+        guard !attachedFiles.isEmpty else { return nil }
+
+        let imageCount = attachedFiles.filter { $0.kind == .image }.count
+        let textFiles = attachedFiles.filter { $0.kind == .textFile }
+        var parts: [String] = []
+
+        if imageCount == 1 {
+            parts.append("🖼 1 image jointe")
+        } else if imageCount > 1 {
+            parts.append("🖼 \(imageCount) images jointes")
+        }
+
+        switch textFiles.count {
+        case 0:
+            break
+        case 1:
+            parts.append("📎 1 fichier joint")
+        default:
+            parts.append("📎 \(textFiles.count) fichiers")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }
 
 // MARK: - AI Chat View (Native headless chat panel)
@@ -56,6 +95,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var approvalFieldValues: [String: String] = [:]
     @State private var hoveredUserMessageID: UUID?
     @State private var hoveredUserMessageHideTask: Task<Void, Never>?
+    @State private var showCustomInstructionsEditor = false
+    @State private var globalCustomInstructionsDraft = ""
+    @State private var sessionCustomInstructionsDraft = ""
 
     private var visibleMessages: [ChatMessage] {
         provider.messages.filter { !$0.isLegacyAcceptEditsApprovalNotice }
@@ -108,6 +150,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             } onCancel: {
                 showSessionPicker = false
             }
+        }
+        .sheet(isPresented: $showCustomInstructionsEditor) {
+            customInstructionsEditorSheet
         }
         .sheet(isPresented: $isRenamingCurrentSession) {
             VStack(spacing: 12) {
@@ -399,6 +444,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     }
                     .padding(.horizontal, usesCodexVisualStyle ? 16 : 12)
                     .padding(.vertical, usesCodexVisualStyle ? 11 : 8)
+                    .fixedSize(horizontal: shouldUseCompactUserBubbleLayout(for: message), vertical: true)
                     .frame(maxWidth: codexUserBubbleMaxWidth(for: message), alignment: .trailing)
                     .background(
                         RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexUserBubbleCornerRadius : 14, style: .continuous)
@@ -495,11 +541,29 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     private func codexUserBubbleMaxWidth(for message: ChatMessage) -> CGFloat? {
         guard usesCodexVisualStyle else { return nil }
-        let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count <= 42 && !trimmed.contains("\n") {
+        if shouldUseCompactUserBubbleLayout(for: message) {
             return nil
         }
         return 460
+    }
+
+    private func shouldUseCompactUserBubbleLayout(for message: ChatMessage) -> Bool {
+        guard usesCodexVisualStyle else { return false }
+        let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+
+        let lines = trimmed.components(separatedBy: .newlines)
+        let longestLine = lines.map(\.count).max() ?? 0
+
+        if lines.count == 1 {
+            return longestLine <= 88
+        }
+
+        if lines.count == 2 {
+            return trimmed.count <= 120 && longestLine <= 72
+        }
+
+        return false
     }
 
     private func shouldShowUserMessageActions(for message: ChatMessage) -> Bool {
@@ -1130,26 +1194,40 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 }
 
                 if let configurationLabel = provider.chatPromptConfigurationLabel {
-                    codexSecondaryMenuLabel(title: configurationLabel, iconName: "gearshape") {
-                        Button {} label: {
-                            HStack {
-                                Text(configurationLabel)
-                                Image(systemName: "checkmark")
+                    if provider.chatSupportsCustomInstructions {
+                        Button {
+                            openCustomInstructionsEditor()
+                        } label: {
+                            codexSecondaryButtonLabel(
+                                title: configurationLabel,
+                                iconName: "gearshape",
+                                showsIndicator: provider.chatCustomInstructions.hasAny
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Instructions personnalisées · \(provider.chatCustomInstructions.summaryLabel)")
+                    } else {
+                        codexSecondaryMenuLabel(title: configurationLabel, iconName: "gearshape") {
+                            Button {} label: {
+                                HStack {
+                                    Text(configurationLabel)
+                                    Image(systemName: "checkmark")
+                                }
                             }
-                        }
-                        .disabled(true)
+                            .disabled(true)
 
-                        Divider()
+                            Divider()
 
-                        Button {} label: {
-                            Text("Modele: \(provider.chatSelectedModel.uppercased())")
-                        }
-                        .disabled(true)
+                            Button {} label: {
+                                Text("Modele: \(provider.chatSelectedModel.uppercased())")
+                            }
+                            .disabled(true)
 
-                        Button {} label: {
-                            Text("Raisonnement: \(effortDisplayLabel(provider.chatSelectedEffort))")
+                            Button {} label: {
+                                Text("Raisonnement: \(effortDisplayLabel(provider.chatSelectedEffort))")
+                            }
+                            .disabled(true)
                         }
-                        .disabled(true)
                     }
                 }
 
@@ -1495,6 +1573,29 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         .foregroundStyle((currentSelection != nil || !attachedFiles.isEmpty) ? AppChromePalette.codexIDEContext : AppChromePalette.codexMutedText)
     }
 
+    private func codexSecondaryButtonLabel(
+        title: String,
+        iconName: String,
+        showsIndicator: Bool = false
+    ) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: iconName)
+                .font(.system(size: 10, weight: .medium))
+            Text(title)
+                .font(.system(size: 8.5, weight: .medium))
+            if showsIndicator {
+                Circle()
+                    .fill(AppChromePalette.codexIDEContext)
+                    .frame(width: 4, height: 4)
+            }
+            Image(systemName: "chevron.down")
+                .font(.system(size: 7, weight: .semibold))
+        }
+        .foregroundStyle(AppChromePalette.codexMutedText)
+        .frame(minWidth: 68, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
     @ViewBuilder
     private func codexSecondaryMenuLabel<Content: View>(
         title: String,
@@ -1504,17 +1605,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         Menu {
             content()
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: iconName)
-                    .font(.system(size: 10, weight: .medium))
-                Text(title)
-                    .font(.system(size: 8.5, weight: .medium))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .semibold))
-            }
-            .foregroundStyle(AppChromePalette.codexMutedText)
-            .frame(minWidth: 68, alignment: .leading)
-            .contentShape(Rectangle())
+            codexSecondaryButtonLabel(title: title, iconName: iconName)
         }
         .menuStyle(.borderlessButton)
     }
@@ -2339,6 +2430,131 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         .help("Preset actif du chat Codex")
     }
 
+    private var customInstructionsEditorSheet: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Instructions")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Ces consignes orientent uniquement le chat Codex.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppChromePalette.codexMutedText)
+                }
+
+                Spacer(minLength: 0)
+
+                Text(provider.chatCustomInstructions.summaryLabel)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(provider.chatCustomInstructions.hasAny ? AppChromePalette.codexIDEContext : AppChromePalette.codexMutedText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(AppChromePalette.codexPromptInner)
+                    )
+            }
+
+            customInstructionsEditorSection(
+                title: "Instructions globales",
+                subtitle: "Toujours actives pour tous les chats Codex.",
+                text: $globalCustomInstructionsDraft,
+                placeholder: "Ex.: Reponds en francais quebecois simple et direct."
+            )
+
+            customInstructionsEditorSection(
+                title: "Instructions de cette session",
+                subtitle: "Actives seulement pour la conversation courante.",
+                text: $sessionCustomInstructionsDraft,
+                placeholder: "Ex.: Dans cette conversation, sois tres concis et cite toujours les fichiers."
+            )
+
+            HStack(spacing: 10) {
+                Button("Reinitialiser le global") {
+                    globalCustomInstructionsDraft = ""
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                Button("Reinitialiser la session") {
+                    sessionCustomInstructionsDraft = ""
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                Button("Cancel") {
+                    showCustomInstructionsEditor = false
+                }
+                .buttonStyle(.bordered)
+
+                Button("Save") {
+                    provider.updateChatCustomInstructions(
+                        global: globalCustomInstructionsDraft,
+                        session: sessionCustomInstructionsDraft
+                    )
+                    showCustomInstructionsEditor = false
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 620, height: 430, alignment: .topLeading)
+        .background(AppChromePalette.codexCanvas)
+    }
+
+    private func customInstructionsEditorSection(
+        title: String,
+        subtitle: String,
+        text: Binding<String>,
+        placeholder: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(subtitle)
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppChromePalette.codexMutedText)
+            }
+
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: text)
+                    .scrollContentBackground(.hidden)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 2)
+                    .padding(.vertical, 2)
+
+                if text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 12))
+                        .foregroundStyle(AppChromePalette.codexMutedText.opacity(0.7))
+                        .padding(.top, 8)
+                        .padding(.leading, 7)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(minHeight: 112, maxHeight: 140)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(AppChromePalette.codexPromptShell)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(AppChromePalette.codexPromptStroke, lineWidth: 1)
+            )
+        }
+    }
+
+    private func openCustomInstructionsEditor() {
+        globalCustomInstructionsDraft = provider.chatCustomInstructions.globalText
+        sessionCustomInstructionsDraft = provider.chatCustomInstructions.sessionText
+        showCustomInstructionsEditor = true
+    }
+
     private var environmentExecutionLabel: String {
         switch provider.chatInteractionMode {
         case .plan:
@@ -2422,12 +2638,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
 
         if !attachedFiles.isEmpty {
-            let fileNames = attachedFiles
-                .map { $0.kind == .image ? "[\($0.name)]" : "📎 \($0.name)" }
-                .joined(separator: " ")
-            let displayText = [text.isEmpty ? nil : text, fileNames]
-                .compactMap { $0 }
-                .joined(separator: "\n")
+            let displayText = AttachedFile.chatDisplayText(userText: text, attachedFiles: attachedFiles)
             let items = attachedFiles.map(\.chatInputItem) + (text.isEmpty ? [] : [.text(text)])
             attachedFiles.removeAll()
 

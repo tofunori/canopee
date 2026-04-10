@@ -38,6 +38,55 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Explique ce contenu"))
     }
 
+    func testAttachedFileDisplaySummaryUsesCompactImageLabel() {
+        let imageFile = AttachedFile(
+            name: "image_001.png",
+            path: "/tmp/image_001.png",
+            content: "",
+            kind: .image
+        )
+
+        XCTAssertEqual(AttachedFile.chatDisplaySummary(for: [imageFile]), "🖼 1 image jointe")
+    }
+
+    func testAttachedFileDisplayTextKeepsPromptReadableWithImageAttachment() {
+        let imageFile = AttachedFile(
+            name: "image_001.png",
+            path: "/tmp/image_001.png",
+            content: "",
+            kind: .image
+        )
+
+        let displayText = AttachedFile.chatDisplayText(
+            userText: "non regarde comment la premiere etait belle",
+            attachedFiles: [imageFile]
+        )
+
+        XCTAssertEqual(
+            displayText,
+            "non regarde comment la premiere etait belle\n🖼 1 image jointe"
+        )
+    }
+
+    func testAttachedFileDisplayTextKeepsLongDocumentAttachmentCompact() {
+        let pdfFile = AttachedFile(
+            name: "dossier_determinisme_diamond_seminaire_doctoral.pdf",
+            path: "/tmp/dossier_determinisme_diamond_seminaire_doctoral.pdf",
+            content: "PDF",
+            kind: .textFile
+        )
+
+        let displayText = AttachedFile.chatDisplayText(
+            userText: "fit toi a ce document",
+            attachedFiles: [pdfFile]
+        )
+
+        XCTAssertEqual(
+            displayText,
+            "fit toi a ce document\n📎 1 fichier joint"
+        )
+    }
+
     func testChatInteractionModeCyclesInExpectedOrder() {
         XCTAssertEqual(ChatInteractionMode.agent.next, .acceptEdits)
         XCTAssertEqual(ChatInteractionMode.acceptEdits.next, .plan)
@@ -51,6 +100,16 @@ final class ChatSolidificationTests: XCTestCase {
 
         XCTAssertEqual(claude.chatVisualStyle, .standard)
         XCTAssertEqual(codex.chatVisualStyle, .codex)
+    }
+
+    func testChatCustomInstructionsSummaryLabelReflectsState() {
+        XCTAssertEqual(ChatCustomInstructions().summaryLabel, "Aucune instruction")
+        XCTAssertEqual(ChatCustomInstructions(globalText: "Toujours concis").summaryLabel, "Global actif")
+        XCTAssertEqual(ChatCustomInstructions(sessionText: "Cite les fichiers").summaryLabel, "Session active")
+        XCTAssertEqual(
+            ChatCustomInstructions(globalText: "Toujours concis", sessionText: "Cite les fichiers").summaryLabel,
+            "Global + session"
+        )
     }
 
     func testBuildPromptWithIDEContext_appendsSelection() throws {
@@ -110,6 +169,61 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertTrue(out.contains("N'ecris pas de message du type"))
         XCTAssertFalse(out.contains("attends l'approbation au lieu d'agir"))
         XCTAssertTrue(out.contains("Modifie ce fichier"))
+    }
+
+    func testCodexPromptIncludesGlobalAndSessionCustomInstructionsInOrder() {
+        let out = CodexAppServerProvider.buildPromptForInteractionMode(
+            "Explique ce fichier",
+            mode: .agent,
+            globalCustomInstructions: "Toujours repondre en francais quebecois.",
+            sessionCustomInstructions: "Dans cette session, sois tres concis."
+        )
+
+        XCTAssertTrue(out.contains("[Canope Custom Instructions — Global]"))
+        XCTAssertTrue(out.contains("[Canope Custom Instructions — Session]"))
+        XCTAssertLessThan(
+            out.range(of: "[Canope Custom Instructions — Global]")!.lowerBound,
+            out.range(of: "[Canope Custom Instructions — Session]")!.lowerBound
+        )
+        XCTAssertLessThan(
+            out.range(of: "[Canope Custom Instructions — Session]")!.lowerBound,
+            out.range(of: "Explique ce fichier")!.lowerBound
+        )
+    }
+
+    func testCodexPromptSkipsDuplicateSessionInstructions() {
+        let out = CodexAppServerProvider.buildPromptForInteractionMode(
+            "Explique ce fichier",
+            mode: .agent,
+            globalCustomInstructions: "Toujours etre concis.",
+            sessionCustomInstructions: "Toujours etre concis."
+        )
+
+        XCTAssertTrue(out.contains("[Canope Custom Instructions — Global]"))
+        XCTAssertFalse(out.contains("[Canope Custom Instructions — Session]"))
+    }
+
+    @MainActor
+    func testCodexCustomInstructionsPersistGloballyAndPerThread() {
+        CodexAppServerProvider.testClearStoredCustomInstructions()
+        defer { CodexAppServerProvider.testClearStoredCustomInstructions() }
+
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetCurrentThreadId("thread-123")
+        provider.updateChatCustomInstructions(
+            global: "Toujours repondre en francais quebecois.",
+            session: "Dans cette session, sois tres concis."
+        )
+
+        XCTAssertEqual(provider.chatCustomInstructions.globalText, "Toujours repondre en francais quebecois.")
+        XCTAssertEqual(provider.chatCustomInstructions.sessionText, "Dans cette session, sois tres concis.")
+        XCTAssertEqual(
+            CodexAppServerProvider.testStoredSessionCustomInstructions(threadId: "thread-123"),
+            "Dans cette session, sois tres concis."
+        )
+
+        let reloaded = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        XCTAssertEqual(reloaded.chatCustomInstructions.globalText, "Toujours repondre en francais quebecois.")
     }
 
     @MainActor

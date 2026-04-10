@@ -316,12 +316,16 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     @Published private var authStatusBadge: ChatStatusBadge?
     @Published private var mcpStatusBadge: ChatStatusBadge?
     @Published var pendingApprovalRequest: ChatApprovalRequest?
+    @Published private var globalCustomInstructionsText: String
+    @Published private var sessionCustomInstructionsText: String = ""
 
     let providerName = "Codex"
     let providerIcon = "chevron.left.forwardslash.chevron.right"
 
     static let defaultModels = ["gpt-5.4", "gpt-5.3-codex", "gpt-5.2"]
     static let defaultEfforts = ["low", "medium", "high", "xhigh"]
+    static let globalCustomInstructionsDefaultsKey = "Canope.CodexChatCustomInstructions.Global"
+    static let sessionCustomInstructionsDefaultsKey = "Canope.CodexChatCustomInstructions.ByThread"
 
     private var workingDirectory: URL
     private var resumeWorkingDirectory: URL?
@@ -349,6 +353,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private static let markdownPreRenderDelayNanoseconds: UInt64 = 80_000_000
 
     init(workingDirectory: URL? = nil) {
+        self.globalCustomInstructionsText = Self.loadGlobalCustomInstructions()
         if let wd = workingDirectory {
             self.workingDirectory = wd
         } else {
@@ -586,6 +591,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                     session.id = id
                     session.name = thread["name"] as? String
                     session.turns = 0
+                    Self.saveSessionCustomInstructions(sessionCustomInstructionsText, threadId: id)
                     CodexTraceLog.write("thread/start result threadId=\(id)")
                 }
             }
@@ -596,7 +602,12 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
             let turnParams: [String: Any] = [
                 "threadId": threadId,
-                "input": Self.buildTurnInputPayload(from: items, interactionMode: interactionMode),
+                "input": Self.buildTurnInputPayload(
+                    from: items,
+                    interactionMode: interactionMode,
+                    globalCustomInstructions: globalCustomInstructionsText,
+                    sessionCustomInstructions: sessionCustomInstructionsText
+                ),
                 "cwd": workingDirectoryURL.path,
                 "model": selectedModel,
                 "effort": selectedEffort,
@@ -2571,52 +2582,155 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     }
 
     nonisolated static func buildPromptForInteractionMode(_ userMessage: String, mode: ChatInteractionMode) -> String {
+        buildPromptForInteractionMode(
+            userMessage,
+            mode: mode,
+            globalCustomInstructions: "",
+            sessionCustomInstructions: ""
+        )
+    }
+
+    nonisolated static func buildPromptForInteractionMode(
+        _ userMessage: String,
+        mode: ChatInteractionMode,
+        globalCustomInstructions: String,
+        sessionCustomInstructions: String
+    ) -> String {
         let promptWithContext = buildPromptWithIDEContext(userMessage)
+        let customInstructionsBlock = buildCustomInstructionsBlock(
+            global: globalCustomInstructions,
+            session: sessionCustomInstructions
+        )
+
+        func joinSections(_ sections: [String]) -> String {
+            sections
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+        }
+
         switch mode {
         case .agent:
-            return promptWithContext
+            return joinSections([customInstructionsBlock, promptWithContext])
         case .acceptEdits:
-            return """
-            [Canope Accept Edits Mode]
-            Tu es en mode accept edits.
-            - N'applique aucune edition de fichier sans approbation explicite.
-            - N'utilise pas Bash ni aucune commande shell.
-            - N'utilise aucune action de terminal, d'execution ou avec effets de bord.
-            - Propose les changements de facon concrete et ciblee.
-            - Si une edition est appropriee et que la demande est claire, tente directement l'outil d'edition: le client demandera l'approbation inline.
-            - N'ecris pas de message du type "j'attends ton approbation" ou "si tu veux, j'applique"; laisse l'UI d'approbation faire ce travail.
-            - Une fois l'approbation accordee, applique seulement le changement valide, sans redemander la permission dans le chat.
-            [/Canope Accept Edits Mode]
-
-            \(promptWithContext)
-            """
+            return joinSections([
+                """
+                [Canope Accept Edits Mode]
+                Tu es en mode accept edits.
+                - N'applique aucune edition de fichier sans approbation explicite.
+                - N'utilise pas Bash ni aucune commande shell.
+                - N'utilise aucune action de terminal, d'execution ou avec effets de bord.
+                - Propose les changements de facon concrete et ciblee.
+                - Si une edition est appropriee et que la demande est claire, tente directement l'outil d'edition: le client demandera l'approbation inline.
+                - N'ecris pas de message du type "j'attends ton approbation" ou "si tu veux, j'applique"; laisse l'UI d'approbation faire ce travail.
+                - Une fois l'approbation accordee, applique seulement le changement valide, sans redemander la permission dans le chat.
+                [/Canope Accept Edits Mode]
+                """,
+                customInstructionsBlock,
+                promptWithContext,
+            ])
         case .plan:
-            return """
-            [Canope Plan Mode]
-            Tu es en mode plan strict.
-            - N'execute aucune edition de fichier.
-            - N'utilise aucune commande mutante.
-            - Ne lance aucune action avec effets de bord.
-            - Produis seulement un plan structure avec: Objectif, Changements proposes, Validation, Risques.
-            - Si une information manque, formule des hypotheses explicites au lieu d'agir.
-            [/Canope Plan Mode]
-
-            \(promptWithContext)
-            """
+            return joinSections([
+                """
+                [Canope Plan Mode]
+                Tu es en mode plan strict.
+                - N'execute aucune edition de fichier.
+                - N'utilise aucune commande mutante.
+                - Ne lance aucune action avec effets de bord.
+                - Produis seulement un plan structure avec: Objectif, Changements proposes, Validation, Risques.
+                - Si une information manque, formule des hypotheses explicites au lieu d'agir.
+                [/Canope Plan Mode]
+                """,
+                customInstructionsBlock,
+                promptWithContext,
+            ])
         }
     }
 
     nonisolated static func buildTurnInputPayload(
         from items: [ChatInputItem],
-        interactionMode: ChatInteractionMode
+        interactionMode: ChatInteractionMode,
+        globalCustomInstructions: String = "",
+        sessionCustomInstructions: String = ""
     ) -> [[String: Any]] {
         items.flatMap { item in
             switch item {
             case .text(let text):
-                return ChatInputItem.text(buildPromptForInteractionMode(text, mode: interactionMode)).codexPayloads
+                return ChatInputItem.text(
+                    buildPromptForInteractionMode(
+                        text,
+                        mode: interactionMode,
+                        globalCustomInstructions: globalCustomInstructions,
+                        sessionCustomInstructions: sessionCustomInstructions
+                    )
+                ).codexPayloads
             default:
                 return item.codexPayloads
             }
+        }
+    }
+
+    private nonisolated static func buildCustomInstructionsBlock(
+        global: String,
+        session: String
+    ) -> String {
+        let normalizedGlobal = global.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSession = session.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveSession = normalizedSession == normalizedGlobal ? "" : normalizedSession
+        var sections: [String] = []
+
+        if !normalizedGlobal.isEmpty {
+            sections.append("""
+            [Canope Custom Instructions — Global]
+            \(normalizedGlobal)
+            [/Canope Custom Instructions — Global]
+            """)
+        }
+
+        if !effectiveSession.isEmpty {
+            sections.append("""
+            [Canope Custom Instructions — Session]
+            \(effectiveSession)
+            [/Canope Custom Instructions — Session]
+            """)
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    private static func loadGlobalCustomInstructions() -> String {
+        UserDefaults.standard.string(forKey: globalCustomInstructionsDefaultsKey) ?? ""
+    }
+
+    private static func saveGlobalCustomInstructions(_ text: String) {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            UserDefaults.standard.removeObject(forKey: globalCustomInstructionsDefaultsKey)
+        } else {
+            UserDefaults.standard.set(normalized, forKey: globalCustomInstructionsDefaultsKey)
+        }
+    }
+
+    private static func loadSessionInstructionStore() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: sessionCustomInstructionsDefaultsKey) as? [String: String] ?? [:]
+    }
+
+    private static func loadSessionCustomInstructions(threadId: String) -> String {
+        loadSessionInstructionStore()[threadId] ?? ""
+    }
+
+    private static func saveSessionCustomInstructions(_ text: String, threadId: String) {
+        var store = loadSessionInstructionStore()
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            store.removeValue(forKey: threadId)
+        } else {
+            store[threadId] = normalized
+        }
+        if store.isEmpty {
+            UserDefaults.standard.removeObject(forKey: sessionCustomInstructionsDefaultsKey)
+        } else {
+            UserDefaults.standard.set(store, forKey: sessionCustomInstructionsDefaultsKey)
         }
     }
 }
@@ -2629,6 +2743,13 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     var chatUsesBottomPromptControls: Bool { true }
     var chatPromptEnvironmentLabel: String? { "Local" }
     var chatPromptConfigurationLabel: String? { "Personnalise" }
+    var chatSupportsCustomInstructions: Bool { true }
+    var chatCustomInstructions: ChatCustomInstructions {
+        ChatCustomInstructions(
+            globalText: globalCustomInstructionsText,
+            sessionText: sessionCustomInstructionsText
+        )
+    }
     var chatSupportsPlanMode: Bool { true }
     var chatSupportsReview: Bool { true }
     var chatStatusBadges: [ChatStatusBadge] {
@@ -2686,6 +2807,21 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     var chatSelectedEffort: String {
         get { selectedEffort }
         set { selectedEffort = newValue }
+    }
+
+    func updateChatCustomInstructions(global: String, session: String) {
+        let normalizedGlobal = global.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSession = session.trimmingCharacters(in: .whitespacesAndNewlines)
+        globalCustomInstructionsText = normalizedGlobal
+        sessionCustomInstructionsText = normalizedSession
+        Self.saveGlobalCustomInstructions(normalizedGlobal)
+        if let threadId = currentThreadId {
+            Self.saveSessionCustomInstructions(normalizedSession, threadId: threadId)
+        }
+    }
+
+    func resetSessionCustomInstructions() {
+        updateChatCustomInstructions(global: globalCustomInstructionsText, session: "")
     }
 
     func newChatSession() {
@@ -2943,6 +3079,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         currentAssistantMessageIndex = nil
         lastRetryStatusMessage = nil
         session = SessionInfo()
+        sessionCustomInstructionsText = ""
         chatReviewStateDescription = nil
         reviewStatusBadge = nil
         authStatusBadge = nil
@@ -2973,6 +3110,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             _ = try await rpc.call(method: "thread/resume", params: ["threadId": id])
             currentThreadId = id
             session.id = id
+            sessionCustomInstructionsText = Self.loadSessionCustomInstructions(threadId: id)
             appendSystem("Session reprise : \(id.prefix(12))…")
         } catch {
             appendSystem("Reprise impossible : \(error.localizedDescription)")
@@ -3008,6 +3146,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
                 _ = try await rpc.call(method: "thread/resume", params: ["threadId": id])
                 currentThreadId = id
                 session.id = id
+                sessionCustomInstructionsText = Self.loadSessionCustomInstructions(threadId: id)
                 if session.name == nil {
                     session.name = first["name"] as? String
                 }
@@ -3544,6 +3683,20 @@ extension CodexAppServerProvider {
     func testSetConnectionState(isConnected: Bool, initialized: Bool) {
         self.isConnected = isConnected
         self.initialized = initialized
+    }
+
+    func testSetCurrentThreadId(_ id: String?) {
+        currentThreadId = id
+        session.id = id
+    }
+
+    static func testStoredSessionCustomInstructions(threadId: String) -> String {
+        loadSessionCustomInstructions(threadId: threadId)
+    }
+
+    static func testClearStoredCustomInstructions() {
+        UserDefaults.standard.removeObject(forKey: globalCustomInstructionsDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: sessionCustomInstructionsDefaultsKey)
     }
 }
 #endif

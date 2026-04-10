@@ -5,6 +5,49 @@ enum ChatVisualStyle {
     case codex
 }
 
+struct ChatCustomInstructions: Equatable {
+    var globalText: String
+    var sessionText: String
+
+    init(globalText: String = "", sessionText: String = "") {
+        self.globalText = globalText
+        self.sessionText = sessionText
+    }
+
+    var normalizedGlobalText: String {
+        globalText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var normalizedSessionText: String {
+        sessionText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var hasGlobal: Bool {
+        !normalizedGlobalText.isEmpty
+    }
+
+    var hasSession: Bool {
+        !normalizedSessionText.isEmpty
+    }
+
+    var hasAny: Bool {
+        hasGlobal || hasSession
+    }
+
+    var summaryLabel: String {
+        switch (hasGlobal, hasSession) {
+        case (true, true):
+            return "Global + session"
+        case (true, false):
+            return "Global actif"
+        case (false, true):
+            return "Session active"
+        case (false, false):
+            return "Aucune instruction"
+        }
+    }
+}
+
 /// Capabilities of the native headless chat beyond [`AIHeadlessProvider`](AIHeadlessProvider.swift).
 @MainActor
 protocol HeadlessChatProviding: AIHeadlessProvider {
@@ -15,6 +58,8 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     var chatUsesBottomPromptControls: Bool { get }
     var chatPromptEnvironmentLabel: String? { get }
     var chatPromptConfigurationLabel: String? { get }
+    var chatSupportsCustomInstructions: Bool { get }
+    var chatCustomInstructions: ChatCustomInstructions { get }
     var chatInteractionMode: ChatInteractionMode { get set }
     var chatSupportsPlanMode: Bool { get }
     var chatSupportsReview: Bool { get }
@@ -33,6 +78,8 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     func resumeLastChatSession(matchingDirectory: URL?)
     func resumeChatSession(id: String)
     func renameCurrentChatSession(to name: String)
+    func updateChatCustomInstructions(global: String, session: String)
+    func resetSessionCustomInstructions()
     func editAndResendLastUser(newText: String)
     func forkChatFromUserMessage(newText: String)
     func sendMessageWithDisplay(displayText: String, items: [ChatInputItem])
@@ -122,6 +169,8 @@ extension HeadlessChatProviding {
     var chatUsesBottomPromptControls: Bool { false }
     var chatPromptEnvironmentLabel: String? { nil }
     var chatPromptConfigurationLabel: String? { nil }
+    var chatSupportsCustomInstructions: Bool { false }
+    var chatCustomInstructions: ChatCustomInstructions { ChatCustomInstructions() }
     var chatSupportsReview: Bool { false }
     var chatReviewStateDescription: String? { nil }
     var chatStatusBadges: [ChatStatusBadge] { [] }
@@ -136,6 +185,13 @@ extension HeadlessChatProviding {
     func startChatReview(command: String?) {
         _ = command
     }
+
+    func updateChatCustomInstructions(global: String, session: String) {
+        _ = global
+        _ = session
+    }
+
+    func resetSessionCustomInstructions() {}
 
     func submitPendingApprovalRequest(fieldValues: [String: String]) {
         _ = fieldValues
