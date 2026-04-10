@@ -8,6 +8,8 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     var chatCanRenameCurrentSession: Bool { get }
     var chatInteractionMode: ChatInteractionMode { get set }
     var chatSupportsPlanMode: Bool { get }
+    var chatSupportsReview: Bool { get }
+    var chatReviewStateDescription: String? { get }
     var pendingApprovalRequest: ChatApprovalRequest? { get }
 
     var chatAvailableModels: [String] { get }
@@ -22,6 +24,7 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     func editAndResendLastUser(newText: String)
     func sendMessageWithDisplay(displayText: String, items: [ChatInputItem])
     func sendMessageWithDisplay(displayText: String, prompt: String)
+    func startChatReview()
     func approvePendingApprovalRequest()
     func submitPendingApprovalRequest(fieldValues: [String: String])
     func dismissPendingApprovalRequest()
@@ -52,6 +55,8 @@ struct ChatSessionListItem: Identifiable, Hashable {
 
 extension ClaudeHeadlessProvider: HeadlessChatProviding {
     var chatWorkingDirectory: URL { workingDirectoryURL }
+    var chatSupportsReview: Bool { false }
+    var chatReviewStateDescription: String? { nil }
     var chatSessionDisplayName: String {
         let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !trimmed.isEmpty { return trimmed }
@@ -93,6 +98,11 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
 }
 
 extension HeadlessChatProviding {
+    var chatSupportsReview: Bool { false }
+    var chatReviewStateDescription: String? { nil }
+
+    func startChatReview() {}
+
     func submitPendingApprovalRequest(fieldValues: [String: String]) {
         _ = fieldValues
         approvePendingApprovalRequest()

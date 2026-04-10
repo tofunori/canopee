@@ -223,6 +223,25 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let reviewState = provider.chatReviewStateDescription, !reviewState.isEmpty {
+                Text("·")
+                    .foregroundStyle(.secondary.opacity(0.5))
+                HStack(spacing: 4) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text(reviewState)
+                        .lineLimit(1)
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.pink.opacity(0.95))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(Color.pink.opacity(0.12))
+                )
+            }
+
             Spacer()
 
             if provider.isProcessing {
@@ -1537,6 +1556,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         if text == "/agent" {
             provider.chatInteractionMode = .agent
             flashModeChange()
+            return
+        }
+
+        if text == "/review", provider.chatSupportsReview {
+            provider.startChatReview()
             return
         }
 

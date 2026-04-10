@@ -1171,6 +1171,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         case "Grep": return "magnifyingglass"
         case "WebSearch": return "globe"
         case "WebFetch": return "globe"
+        case "ImageView": return "photo"
+        case "Review": return "checklist"
         case "Agent": return "person.2"
         default: return "wrench"
         }

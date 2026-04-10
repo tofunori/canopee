@@ -303,6 +303,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     @Published var selectedModel: String = "gpt-5.4"
     @Published var selectedEffort: String = "medium"
     @Published var chatInteractionMode: ChatInteractionMode = .agent
+    @Published var chatReviewStateDescription: String?
     @Published var pendingApprovalRequest: ChatApprovalRequest?
 
     let providerName = "Codex"
@@ -771,9 +772,34 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             appendToolUseItem(
                 itemID: item["id"] as? String,
                 toolName: (item["tool"] as? String) ?? "dynamicTool",
-                content: "Appel d’outil dynamique",
+                content: Self.dynamicToolCallSummary(item),
                 toolInput: Self.jsonString(item["arguments"] ?? item)
             )
+        case "webSearch":
+            appendToolUseItem(
+                itemID: item["id"] as? String,
+                toolName: "WebSearch",
+                content: Self.webSearchSummary(item),
+                toolInput: Self.jsonString(["query": item["query"] as? String ?? "", "action": item["action"] as Any])
+            )
+        case "imageView":
+            appendToolUseItem(
+                itemID: item["id"] as? String,
+                toolName: "ImageView",
+                content: Self.imageViewSummary(item),
+                toolInput: Self.jsonString(["path": item["path"] as? String ?? ""])
+            )
+        case "collabAgentToolCall":
+            appendToolUseItem(
+                itemID: item["id"] as? String,
+                toolName: "Agent",
+                content: Self.collabAgentToolCallSummary(item),
+                toolInput: Self.jsonString(item)
+            )
+        case "enteredReviewMode":
+            chatReviewStateDescription = Self.reviewStateDescription(item)
+        case "exitedReviewMode":
+            chatReviewStateDescription = nil
         default:
             break
         }
@@ -866,6 +892,28 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 toolName: (item["tool"] as? String) ?? "dynamicTool",
                 summary: Self.completedDynamicToolCallSummary(item)
             )
+        case "webSearch":
+            completeToolItem(
+                itemID: item["id"] as? String,
+                toolName: "WebSearch",
+                summary: Self.completedWebSearchSummary(item)
+            )
+        case "imageView":
+            completeToolItem(
+                itemID: item["id"] as? String,
+                toolName: "ImageView",
+                summary: Self.completedImageViewSummary(item)
+            )
+        case "collabAgentToolCall":
+            completeToolItem(
+                itemID: item["id"] as? String,
+                toolName: "Agent",
+                summary: Self.completedCollabAgentToolCallSummary(item)
+            )
+        case "enteredReviewMode":
+            chatReviewStateDescription = Self.reviewStateDescription(item)
+        case "exitedReviewMode":
+            chatReviewStateDescription = nil
         case "mcpToolCall":
             completeToolItem(
                 itemID: item["id"] as? String,
@@ -1305,6 +1353,68 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         default:
             return text ?? "Appel d’outil termine"
         }
+    }
+
+    private static func dynamicToolCallSummary(_ item: [String: Any]) -> String {
+        if let tool = (item["tool"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !tool.isEmpty {
+            return "Appel dynamique · \(tool)"
+        }
+        return "Appel d’outil dynamique"
+    }
+
+    private static func webSearchSummary(_ item: [String: Any]) -> String {
+        let query = (item["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let query, !query.isEmpty {
+            return "Recherche web · \(query)"
+        }
+        return "Recherche web"
+    }
+
+    private static func completedWebSearchSummary(_ item: [String: Any]) -> String? {
+        let base = webSearchSummary(item)
+        if let action = (item["action"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !action.isEmpty {
+            return "\(base)\nAction: \(action)"
+        }
+        return base
+    }
+
+    private static func imageViewSummary(_ item: [String: Any]) -> String {
+        if let path = (item["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+            return "Image ouverte · \((path as NSString).lastPathComponent)"
+        }
+        return "Image ouverte"
+    }
+
+    private static func completedImageViewSummary(_ item: [String: Any]) -> String? {
+        imageViewSummary(item)
+    }
+
+    private static func collabAgentToolCallSummary(_ item: [String: Any]) -> String {
+        let tool = (item["tool"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sender = (item["senderThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let tool, !tool.isEmpty, let sender, !sender.isEmpty {
+            return "Collab agent · \(tool) · \(sender.prefix(8))"
+        }
+        if let tool, !tool.isEmpty {
+            return "Collab agent · \(tool)"
+        }
+        return "Collab agent"
+    }
+
+    private static func completedCollabAgentToolCallSummary(_ item: [String: Any]) -> String? {
+        let base = collabAgentToolCallSummary(item)
+        if let status = (item["status"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !status.isEmpty {
+            return "\(base)\nStatut: \(status)"
+        }
+        return base
+    }
+
+    private static func reviewStateDescription(_ item: [String: Any]) -> String {
+        let review = (item["review"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let review, !review.isEmpty {
+            return "Review actif · \(review)"
+        }
+        return "Review actif"
     }
 
     private static func extractText(fromContentItems items: [[String: Any]]?) -> String? {
@@ -1932,6 +2042,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 extension CodexAppServerProvider: HeadlessChatProviding {
     var chatWorkingDirectory: URL { workingDirectoryURL }
     var chatSupportsPlanMode: Bool { true }
+    var chatSupportsReview: Bool { true }
 
     var chatSessionDisplayName: String {
         let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1997,6 +2108,33 @@ extension CodexAppServerProvider: HeadlessChatProviding {
                 messages.removeSubrange(lastUser...)
             }
             await sendUserMessage([.text(trimmed)], display: trimmed, interactionMode: chatInteractionMode)
+        }
+    }
+
+    func startChatReview() {
+        guard let tid = currentThreadId else {
+            appendSystem("Codex: lance d’abord une conversation avant /review.")
+            return
+        }
+
+        isProcessing = true
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.rpc?.call(
+                    method: "review/start",
+                    params: [
+                        "threadId": tid,
+                        "delivery": "inline",
+                        "target": [
+                            "type": "uncommittedChanges",
+                        ],
+                    ]
+                )
+            } catch {
+                self.appendSystem("Codex: impossible de lancer la review (\(error.localizedDescription))")
+                self.isProcessing = false
+            }
         }
     }
 
@@ -2091,6 +2229,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         currentAssistantMessageIndex = nil
         lastRetryStatusMessage = nil
         session = SessionInfo()
+        chatReviewStateDescription = nil
         messages.removeAll()
         pendingApprovalRequest = nil
         pendingServerRequests.removeAll()

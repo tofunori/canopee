@@ -522,6 +522,31 @@ final class ChatSolidificationTests: XCTestCase {
     }
 
     @MainActor
+    func testCodexReviewNotificationsUpdateReviewState() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testHandleNotification(
+            method: "item/started",
+            params: ["item": ["type": "enteredReviewMode", "id": "review_1", "review": "working-tree"]]
+        )
+        XCTAssertEqual(provider.chatReviewStateDescription, "Review actif · working-tree")
+
+        provider.testHandleNotification(
+            method: "item/completed",
+            params: ["item": ["type": "exitedReviewMode", "id": "review_1", "review": "working-tree"]]
+        )
+        XCTAssertNil(provider.chatReviewStateDescription)
+    }
+
+    @MainActor
+    func testCodexReviewCommandWithoutActiveThreadShowsHelpfulMessage() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.startChatReview()
+
+        XCTAssertEqual(provider.messages.last?.role, .system)
+        XCTAssertEqual(provider.messages.last?.content, "Codex: lance d’abord une conversation avant /review.")
+    }
+
+    @MainActor
     func testCodexCompletedCommandExecutionKeepsCompactToolCard() {
         let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
         provider.testHandleNotification(
@@ -542,6 +567,33 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertTrue(provider.messages.last?.toolOutput?.contains("Commande terminee") == true)
         XCTAssertTrue(provider.messages.last?.toolOutput?.contains("file.txt") == true)
         XCTAssertEqual(provider.messages.last?.isCollapsed, true)
+    }
+
+    @MainActor
+    func testCodexWebSearchCreatesCompactToolCard() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testHandleNotification(
+            method: "item/started",
+            params: ["item": [
+                "type": "webSearch",
+                "id": "web_1",
+                "query": "hydrology paper",
+            ]]
+        )
+        provider.testHandleNotification(
+            method: "item/completed",
+            params: ["item": [
+                "type": "webSearch",
+                "id": "web_1",
+                "query": "hydrology paper",
+            ]]
+        )
+
+        XCTAssertEqual(provider.messages.count, 1)
+        XCTAssertEqual(provider.messages.last?.role, .toolUse)
+        XCTAssertEqual(provider.messages.last?.toolName, "WebSearch")
+        XCTAssertEqual(provider.messages.last?.content, "Recherche web · hydrology paper")
+        XCTAssertEqual(provider.messages.last?.toolOutput, "Recherche web · hydrology paper")
     }
 
     @MainActor
