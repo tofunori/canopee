@@ -278,6 +278,29 @@ final class ChatSolidificationTests: XCTestCase {
             ),
             .reject
         )
+        let toolRequestInput: [String: Any] = [
+            "questions": [[
+                "header": "Nom",
+                "id": "name",
+                "question": "Quel nom veux-tu utiliser ?",
+            ]],
+        ]
+        XCTAssertEqual(
+            CodexAppServerProvider.serverRequestDisposition(
+                for: "item/tool/requestUserInput",
+                mode: .agent,
+                params: toolRequestInput
+            ),
+            .inlineApproval
+        )
+        XCTAssertEqual(
+            CodexAppServerProvider.serverRequestDisposition(
+                for: "item/tool/requestUserInput",
+                mode: .plan,
+                params: toolRequestInput
+            ),
+            .reject
+        )
         XCTAssertEqual(
             CodexAppServerProvider.serverRequestDisposition(
                 for: "mcpServer/elicitation/request",
@@ -292,7 +315,7 @@ final class ChatSolidificationTests: XCTestCase {
                     ],
                 ]
             ),
-            .unsupported
+            .inlineApproval
         )
     }
 
@@ -366,6 +389,106 @@ final class ChatSolidificationTests: XCTestCase {
     }
 
     @MainActor
+    func testCodexAgentToolRequestUserInputCreatesInteractiveApproval() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetCurrentRunState(interactionMode: .agent, prompt: "Configure ça", displayText: "Configure ça")
+        provider.testHandleServerRequest(
+            id: 43,
+            method: "item/tool/requestUserInput",
+            params: [
+                "itemId": "tool_1",
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "questions": [[
+                    "header": "Nom",
+                    "id": "name",
+                    "question": "Quel nom veux-tu utiliser ?",
+                ]],
+            ]
+        )
+
+        XCTAssertEqual(provider.pendingApprovalRequest?.rpcRequestID, 43)
+        XCTAssertEqual(provider.pendingApprovalRequest?.fields.count, 1)
+        XCTAssertEqual(provider.pendingApprovalRequest?.fields.first?.id, "name")
+        XCTAssertEqual(provider.pendingApprovalRequest?.message, "Quel nom veux-tu utiliser ?")
+    }
+
+    @MainActor
+    func testCodexMcpFormFieldExtractionSupportsBooleanAndText() {
+        let fields = CodexAppServerProvider.testServerRequestFields(
+            method: "mcpServer/elicitation/request",
+            params: [
+                "mode": "form",
+                "message": "Confirme la publication",
+                "requestedSchema": [
+                    "type": "object",
+                    "properties": [
+                        "confirmed": [
+                            "type": "boolean",
+                            "title": "Confirmation",
+                        ],
+                        "title": [
+                            "type": "string",
+                            "description": "Titre affiche",
+                        ],
+                    ],
+                    "required": ["confirmed", "title"],
+                ],
+            ]
+        )
+
+        XCTAssertEqual(fields.count, 2)
+        XCTAssertEqual(fields.first(where: { $0.id == "confirmed" })?.kind, .boolean)
+        XCTAssertEqual(fields.first(where: { $0.id == "title" })?.kind, .text)
+    }
+
+    @MainActor
+    func testCodexToolRequestUserInputResponseResultMapsAnswersByQuestionId() {
+        let result = CodexAppServerProvider.testToolRequestUserInputResponseResult(
+            params: [
+                "questions": [[
+                    "header": "Nom",
+                    "id": "name",
+                    "question": "Quel nom ?",
+                ]],
+            ],
+            fieldValues: ["name": "Canope"]
+        )
+
+        let answers = result["answers"] as? [String: Any]
+        let name = answers?["name"] as? [String: Any]
+        XCTAssertEqual(name?["answers"] as? [String], ["Canope"])
+    }
+
+    @MainActor
+    func testCodexMcpElicitationResponseResultBuildsTypedContent() {
+        let result = CodexAppServerProvider.testMcpElicitationResponseResult(
+            params: [
+                "requestedSchema": [
+                    "type": "object",
+                    "properties": [
+                        "confirmed": ["type": "boolean"],
+                        "count": ["type": "integer"],
+                        "label": ["type": "string"],
+                    ],
+                ],
+            ],
+            approved: true,
+            fieldValues: [
+                "confirmed": "true",
+                "count": "3",
+                "label": "Hydrology",
+            ]
+        )
+
+        XCTAssertEqual(result["action"] as? String, "accept")
+        let content = result["content"] as? [String: Any]
+        XCTAssertEqual(content?["confirmed"] as? Bool, true)
+        XCTAssertEqual(content?["count"] as? Int, 3)
+        XCTAssertEqual(content?["label"] as? String, "Hydrology")
+    }
+
+    @MainActor
     func testCodexUnsupportedServerRequestAppendsSystemMessage() {
         let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
         provider.testHandleServerRequest(id: 7, method: "item/tool/call", params: [:])
@@ -419,5 +542,50 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertTrue(provider.messages.last?.toolOutput?.contains("Commande terminee") == true)
         XCTAssertTrue(provider.messages.last?.toolOutput?.contains("file.txt") == true)
         XCTAssertEqual(provider.messages.last?.isCollapsed, true)
+    }
+
+    @MainActor
+    func testCodexFailedFileChangeUsesNeutralSummary() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testHandleNotification(
+            method: "item/started",
+            params: ["item": [
+                "type": "fileChange",
+                "id": "edit_1",
+                "changes": [["path": "/tmp/demo.tex"]],
+            ]]
+        )
+        provider.testHandleNotification(
+            method: "item/fileChange/outputDelta",
+            params: ["itemId": "edit_1", "delta": "Exact text not found"]
+        )
+        provider.testHandleNotification(
+            method: "item/completed",
+            params: ["item": [
+                "type": "fileChange",
+                "id": "edit_1",
+                "status": "failed",
+                "changes": [["path": "/tmp/demo.tex"]],
+            ]]
+        )
+
+        XCTAssertEqual(provider.messages.count, 1)
+        XCTAssertEqual(provider.messages.last?.role, .toolUse)
+        XCTAssertEqual(provider.messages.last?.toolOutput, "Modification proposee · demo.tex non appliquee")
+    }
+
+    @MainActor
+    func testCodexSuppressesDirectEditFailureBoilerplateFromAssistantDisplay() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testBeginAssistantMessage()
+        provider.testReceiveAssistantDelta("Je vais appliquer seulement le changement approuve.\n\n")
+        provider.testReceiveAssistantDelta("L’edition directe a echoue parce que le texte exact left=8pt n’a pas ete retrouve tel quel dans le fichier.\n\n")
+        provider.testReceiveAssistantDelta("Je verifie maintenant la selection active.")
+        provider.testFlushPendingAssistantDelta()
+
+        XCTAssertEqual(
+            provider.messages.last?.content,
+            "Je vais appliquer seulement le changement approuve.\n\nJe verifie maintenant la selection active."
+        )
     }
 }

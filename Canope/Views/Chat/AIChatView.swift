@@ -52,6 +52,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var currentSessionNameDraft = ""
     @State private var cachedSelectionModifiedAt: Date?
     @State private var modeStatusFlash = false
+    @State private var approvalFieldValues: [String: String] = [:]
 
     private var visibleMessages: [ChatMessage] {
         provider.messages.filter { !$0.isLegacyAcceptEditsApprovalNotice }
@@ -72,10 +73,14 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 provider.start()
             }
             refreshSelectionCache(force: true)
+            syncPendingApprovalFormState()
         }
         .onDisappear {
             fileListTask?.cancel()
             fileListTask = nil
+        }
+        .onChange(of: provider.pendingApprovalRequest?.id) { _ in
+            syncPendingApprovalFormState()
         }
         .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
             refreshSelectionCache()
@@ -672,32 +677,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             }
 
             if let approval = provider.pendingApprovalRequest {
-                HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: "checkmark.shield")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.green)
-
-                    Text("Autoriser l’action \(approval.toolName) ?")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 8)
-
-                    Button("Refuser") {
-                        provider.dismissPendingApprovalRequest()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                    Button("Autoriser") {
-                        provider.approvePendingApprovalRequest()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
-                    .font(.system(size: 11, weight: .semibold))
-                }
+                approvalRequestCard(approval)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(Color.green.opacity(0.08))
@@ -920,6 +900,196 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 provider.stop()
             }
         }
+    }
+
+    @ViewBuilder
+    private func approvalRequestCard(_ approval: ChatApprovalRequest) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: approval.requiresFormInput ? "square.and.pencil" : "checkmark.shield")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.green)
+
+                Text(approval.message ?? "Autoriser l’action \(approval.toolName) ?")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+
+                Spacer(minLength: 8)
+            }
+
+            if approval.requiresFormInput {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(approval.fields) { field in
+                        approvalFieldRow(field)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Button("Annuler") {
+                        provider.dismissPendingApprovalRequest()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button("Envoyer") {
+                        provider.submitPendingApprovalRequest(fieldValues: approvalFieldValues)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .font(.system(size: 11, weight: .semibold))
+                    .disabled(!canSubmitApprovalRequest(approval))
+                }
+            } else {
+                HStack {
+                    Spacer(minLength: 0)
+
+                    Button("Refuser") {
+                        provider.dismissPendingApprovalRequest()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                    Button("Autoriser") {
+                        provider.approvePendingApprovalRequest()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .font(.system(size: 11, weight: .semibold))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func approvalFieldRow(_ field: ChatInteractiveField) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text(field.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                if field.isRequired {
+                    Text("*")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            if let prompt = field.prompt, !prompt.isEmpty {
+                Text(prompt)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            switch field.kind {
+            case .boolean:
+                Toggle(isOn: approvalBoolBinding(for: field)) {
+                    Text(approvalBoolBinding(for: field).wrappedValue ? "Oui" : "Non")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.primary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+
+            case .singleChoice:
+                Picker("", selection: approvalTextBinding(for: field)) {
+                    ForEach(field.options) { option in
+                        Text(option.label).tag(option.label)
+                    }
+                    if field.supportsCustomValue {
+                        Text("Autre…").tag("__other__")
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+
+                if approvalTextBinding(for: field).wrappedValue == "__other__" {
+                    TextField("Autre valeur", text: approvalOtherTextBinding(for: field))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                }
+
+            case .secureText:
+                SecureField(field.placeholder ?? "Valeur", text: approvalTextBinding(for: field))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+
+            case .text, .integer, .number:
+                TextField(field.placeholder ?? "Valeur", text: approvalTextBinding(for: field))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+            }
+        }
+    }
+
+    private func syncPendingApprovalFormState() {
+        guard let approval = provider.pendingApprovalRequest else {
+            approvalFieldValues = [:]
+            return
+        }
+
+        var values: [String: String] = [:]
+        for field in approval.fields {
+            values[field.id] = field.defaultValue
+            if field.supportsCustomValue {
+                values["\(field.id)__other"] = ""
+            }
+        }
+        approvalFieldValues = values
+    }
+
+    private func approvalTextBinding(for field: ChatInteractiveField) -> Binding<String> {
+        Binding(
+            get: { approvalFieldValues[field.id] ?? field.defaultValue },
+            set: { approvalFieldValues[field.id] = $0 }
+        )
+    }
+
+    private func approvalOtherTextBinding(for field: ChatInteractiveField) -> Binding<String> {
+        Binding(
+            get: { approvalFieldValues["\(field.id)__other"] ?? "" },
+            set: { approvalFieldValues["\(field.id)__other"] = $0 }
+        )
+    }
+
+    private func approvalBoolBinding(for field: ChatInteractiveField) -> Binding<Bool> {
+        Binding(
+            get: { (approvalFieldValues[field.id] ?? field.defaultValue) == "true" },
+            set: { approvalFieldValues[field.id] = $0 ? "true" : "false" }
+        )
+    }
+
+    private func resolvedApprovalValue(for field: ChatInteractiveField) -> String {
+        let raw = (approvalFieldValues[field.id] ?? field.defaultValue)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if field.supportsCustomValue && raw == "__other__" {
+            return (approvalFieldValues["\(field.id)__other"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return raw
+    }
+
+    private func canSubmitApprovalRequest(_ approval: ChatApprovalRequest) -> Bool {
+        for field in approval.fields {
+            let value = resolvedApprovalValue(for: field)
+            if field.isRequired && value.isEmpty {
+                return false
+            }
+            switch field.kind {
+            case .integer where !value.isEmpty && Int(value) == nil:
+                return false
+            case .number where !value.isEmpty && Double(value) == nil:
+                return false
+            default:
+                break
+            }
+        }
+        return true
     }
 
     // MARK: - Slash Commands

@@ -23,6 +23,7 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     func sendMessageWithDisplay(displayText: String, items: [ChatInputItem])
     func sendMessageWithDisplay(displayText: String, prompt: String)
     func approvePendingApprovalRequest()
+    func submitPendingApprovalRequest(fieldValues: [String: String])
     func dismissPendingApprovalRequest()
     func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem]
 
@@ -88,5 +89,12 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
 
     static func toolIconName(for toolName: String) -> String {
         toolIcon(for: toolName)
+    }
+}
+
+extension HeadlessChatProviding {
+    func submitPendingApprovalRequest(fieldValues: [String: String]) {
+        _ = fieldValues
+        approvePendingApprovalRequest()
     }
 }

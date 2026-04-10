@@ -715,6 +715,8 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 toolName: Self.serverRequestToolName(method: method, params: params),
                 prompt: currentRunPrompt,
                 displayText: currentRunDisplayText,
+                message: Self.serverRequestMessage(method: method, params: params),
+                fields: Self.serverRequestFields(method: method, params: params),
                 rpcRequestID: id,
                 rpcMethod: method,
                 itemID: request.itemID,
@@ -1030,7 +1032,8 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             pendingAssistantDelta.removeAll()
             return
         }
-        messages[idx].content += pendingAssistantDelta
+        let merged = messages[idx].content + pendingAssistantDelta
+        messages[idx].content = Self.sanitizeAssistantDisplayText(merged)
         messages[idx].isStreaming = true
         pendingAssistantDelta.removeAll()
     }
@@ -1039,6 +1042,30 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         assistantDeltaFlushTask?.cancel()
         assistantDeltaFlushTask = nil
         pendingAssistantDelta.removeAll()
+    }
+
+    private static func sanitizeAssistantDisplayText(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return text }
+
+        let paragraphs = trimmed.components(separatedBy: "\n\n")
+        let filtered = paragraphs.filter { paragraph in
+            let normalized = paragraph.folding(
+                options: [String.CompareOptions.diacriticInsensitive, String.CompareOptions.caseInsensitive],
+                locale: Locale.current
+            )
+            if normalized.contains("l'edition directe a echoue") { return false }
+            if normalized.contains("the direct edit failed") { return false }
+            if normalized.contains("direct edit failed") { return false }
+            if normalized.contains("i couldn't find the exact text") { return false }
+            if normalized.contains("je n'ai pas trouve le texte exact") { return false }
+            if normalized.contains("le texte exact") && normalized.contains("pas ete retrouve") { return false }
+            if normalized.contains("exact text") && normalized.contains("not found") { return false }
+            return true
+        }
+
+        guard !filtered.isEmpty else { return "" }
+        return filtered.joined(separator: "\n\n")
     }
 
     private func enqueueMarkdownPreRender(for id: UUID, text: String) {
@@ -1087,7 +1114,12 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         markdownTask = nil
     }
 
-    private func replyToServerRequest(id: Int, method: String, approved: Bool) async {
+    private func replyToServerRequest(
+        id: Int,
+        method: String,
+        approved: Bool,
+        fieldValues: [String: String] = [:]
+    ) async {
         guard let rpc else { return }
         do {
             CodexTraceLog.write("replyToServerRequest id=\(id) method=\(method) approved=\(approved)")
@@ -1117,7 +1149,20 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                     id: id,
                     result: Self.elicitationResponseResult(
                         from: pendingServerRequests[id]?.params ?? [:],
-                        approved: approved
+                        approved: approved,
+                        fieldValues: fieldValues
+                    )
+                )
+            case "item/tool/requestUserInput":
+                guard approved else {
+                    try rpc.respondError(id: id, message: "User declined interactive input")
+                    break
+                }
+                try rpc.respond(
+                    id: id,
+                    result: Self.toolRequestUserInputResponseResult(
+                        from: pendingServerRequests[id]?.params ?? [:],
+                        fieldValues: fieldValues
                     )
                 )
             default:
@@ -1239,10 +1284,10 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         case "declined":
             return "\(base) refusee"
         case "failed":
-            if let output {
-                return "\(base) echouee\n\(output)"
+            if let output, !output.isEmpty {
+                return "\(base) non appliquee"
             }
-            return "\(base) echouee"
+            return "\(base) non appliquee"
         default:
             if let output {
                 return "\(base) appliquee\n\(output)"
@@ -1309,11 +1354,16 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         ]
     }
 
-    nonisolated private static func elicitationResponseResult(from params: [String: Any], approved: Bool) -> [String: Any] {
+    nonisolated private static func elicitationResponseResult(
+        from params: [String: Any],
+        approved: Bool,
+        fieldValues: [String: String] = [:]
+    ) -> [String: Any] {
         if approved {
+            let content = mcpElicitationContent(from: params, fieldValues: fieldValues)
             return [
                 "action": "accept",
-                "content": [:] as [String: Any],
+                "content": content,
             ]
         }
         return [
@@ -1330,6 +1380,196 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         let properties = requestedSchema["properties"] as? [String: Any] ?? [:]
         let required = requestedSchema["required"] as? [Any] ?? []
         return properties.isEmpty && required.isEmpty
+    }
+
+    nonisolated private static func toolRequestUserInputFields(from params: [String: Any]) -> [ChatInteractiveField] {
+        guard let questions = params["questions"] as? [[String: Any]], !questions.isEmpty else {
+            return []
+        }
+
+        return questions.compactMap { question in
+            guard let id = (question["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let header = (question["header"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let prompt = (question["question"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !id.isEmpty
+            else {
+                return nil
+            }
+
+            let options = (question["options"] as? [[String: Any]] ?? []).compactMap { option -> ChatInteractiveOption? in
+                guard let label = option["label"] as? String,
+                      let description = option["description"] as? String
+                else {
+                    return nil
+                }
+                return ChatInteractiveOption(label: label, description: description)
+            }
+
+            let isSecret = question["isSecret"] as? Bool ?? false
+            let allowsOther = question["isOther"] as? Bool ?? false
+            let kind: ChatInteractiveFieldKind = options.isEmpty ? (isSecret ? .secureText : .text) : .singleChoice
+            let defaultValue = options.first?.label ?? (kind == .boolean ? "false" : "")
+
+            return ChatInteractiveField(
+                id: id,
+                title: header.isEmpty ? id : header,
+                prompt: prompt,
+                kind: kind,
+                options: options,
+                isRequired: true,
+                allowsCustomValue: allowsOther,
+                placeholder: isSecret ? "Saisir la valeur" : nil,
+                defaultValue: defaultValue
+            )
+        }
+    }
+
+    nonisolated private static func mcpElicitationFields(from params: [String: Any]) -> [ChatInteractiveField] {
+        guard (params["mode"] as? String) != "url",
+              let requestedSchema = params["requestedSchema"] as? [String: Any],
+              (requestedSchema["type"] as? String) == "object",
+              let properties = requestedSchema["properties"] as? [String: Any]
+        else {
+            return []
+        }
+
+        let requiredSet = Set((requestedSchema["required"] as? [String]) ?? [])
+
+        return properties.keys.sorted().compactMap { key in
+            guard let schema = properties[key] as? [String: Any] else { return nil }
+
+            let enumValues = (schema["enum"] as? [Any])?.compactMap { $0 as? String } ?? []
+            let type = (schema["type"] as? String) ?? "string"
+            let title = (schema["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let description = (schema["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let kind: ChatInteractiveFieldKind
+            let options: [ChatInteractiveOption]
+
+            if !enumValues.isEmpty {
+                kind = .singleChoice
+                options = enumValues.map { ChatInteractiveOption(label: $0, description: $0) }
+            } else {
+                options = []
+                switch type {
+                case "boolean":
+                    kind = .boolean
+                case "integer":
+                    kind = .integer
+                case "number":
+                    kind = .number
+                default:
+                    kind = .text
+                }
+            }
+
+            let defaultValue: String
+            switch kind {
+            case .boolean:
+                defaultValue = "false"
+            case .singleChoice:
+                defaultValue = options.first?.label ?? ""
+            default:
+                defaultValue = ""
+            }
+
+            return ChatInteractiveField(
+                id: key,
+                title: (title?.isEmpty == false ? title! : key),
+                prompt: description?.nilIfEmpty,
+                kind: kind,
+                options: options,
+                isRequired: requiredSet.contains(key),
+                allowsCustomValue: false,
+                placeholder: nil,
+                defaultValue: defaultValue
+            )
+        }
+    }
+
+    nonisolated private static func serverRequestFields(method: String, params: [String: Any]) -> [ChatInteractiveField] {
+        switch method {
+        case "item/tool/requestUserInput":
+            return toolRequestUserInputFields(from: params)
+        case "mcpServer/elicitation/request":
+            return mcpElicitationFields(from: params)
+        default:
+            return []
+        }
+    }
+
+    nonisolated private static func supportsInlineMCPFormElicitation(_ params: [String: Any]) -> Bool {
+        !mcpElicitationFields(from: params).isEmpty
+    }
+
+    nonisolated private static func supportsToolRequestUserInput(_ params: [String: Any]) -> Bool {
+        !toolRequestUserInputFields(from: params).isEmpty
+    }
+
+    nonisolated private static func interactiveAnswerStrings(
+        for fieldID: String,
+        fieldValues: [String: String]
+    ) -> [String] {
+        let key = fieldID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return [] }
+        let selected = (fieldValues[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if selected == "__other__" {
+            let custom = (fieldValues["\(key)__other"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return custom.isEmpty ? [] : [custom]
+        }
+        return selected.isEmpty ? [] : [selected]
+    }
+
+    nonisolated private static func toolRequestUserInputResponseResult(
+        from params: [String: Any],
+        fieldValues: [String: String]
+    ) -> [String: Any] {
+        let questions = params["questions"] as? [[String: Any]] ?? []
+        var answers: [String: Any] = [:]
+        for question in questions {
+            guard let id = question["id"] as? String, !id.isEmpty else { continue }
+            answers[id] = [
+                "answers": interactiveAnswerStrings(for: id, fieldValues: fieldValues),
+            ]
+        }
+        return ["answers": answers]
+    }
+
+    nonisolated private static func mcpElicitationContent(
+        from params: [String: Any],
+        fieldValues: [String: String]
+    ) -> [String: Any] {
+        guard let requestedSchema = params["requestedSchema"] as? [String: Any],
+              let properties = requestedSchema["properties"] as? [String: Any]
+        else {
+            return [:]
+        }
+
+        var content: [String: Any] = [:]
+        for key in properties.keys.sorted() {
+            guard let schema = properties[key] as? [String: Any] else { continue }
+            let raw = (fieldValues[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let type = (schema["type"] as? String) ?? "string"
+
+            switch type {
+            case "boolean":
+                if !raw.isEmpty {
+                    content[key] = (raw as NSString).boolValue
+                }
+            case "integer":
+                if let value = Int(raw) {
+                    content[key] = value
+                }
+            case "number":
+                if let value = Double(raw) {
+                    content[key] = value
+                }
+            default:
+                if !raw.isEmpty {
+                    content[key] = raw
+                }
+            }
+        }
+        return content
     }
 
     nonisolated private static func mcpElicitationToolName(from params: [String: Any]) -> String {
@@ -1371,14 +1611,25 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             case .acceptEdits, .plan: return .denyPermissions
             }
         case "mcpServer/elicitation/request":
-            guard supportsSimpleMCPApprovalElicitation(params) else { return .unsupported }
+            if supportsSimpleMCPApprovalElicitation(params) {
+                switch mode {
+                case .agent: return .autoApprove
+                case .acceptEdits: return .inlineApproval
+                case .plan: return .reject
+                }
+            }
+            guard supportsInlineMCPFormElicitation(params) else { return .unsupported }
             switch mode {
-            case .agent: return .autoApprove
-            case .acceptEdits: return .inlineApproval
+            case .agent, .acceptEdits: return .inlineApproval
+            case .plan: return .reject
+            }
+        case "item/tool/requestUserInput":
+            guard supportsToolRequestUserInput(params) else { return .unsupported }
+            switch mode {
+            case .agent, .acceptEdits: return .inlineApproval
             case .plan: return .reject
             }
         case "item/tool/call",
-             "item/tool/requestUserInput",
              "account/chatgptAuthTokens/refresh":
             return .unsupported
         default:
@@ -1402,8 +1653,36 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             return "Permissions"
         case "mcpServer/elicitation/request":
             return mcpElicitationToolName(from: params)
+        case "item/tool/requestUserInput":
+            if let questions = params["questions"] as? [[String: Any]],
+               let first = questions.first,
+               let header = first["header"] as? String,
+               !header.isEmpty {
+                return header
+            }
+            return "Reponse requise"
         default:
             return method
+        }
+    }
+
+    nonisolated static func serverRequestMessage(method: String, params: [String: Any]) -> String? {
+        switch method {
+        case "mcpServer/elicitation/request":
+            return (params["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        case "item/tool/requestUserInput":
+            if let questions = params["questions"] as? [[String: Any]],
+               let first = questions.first,
+               let prompt = first["question"] as? String {
+                return prompt.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            }
+            return "Saisie requise"
+        case "item/fileChange/requestApproval":
+            return "Autoriser cette modification ?"
+        case "item/commandExecution/requestApproval":
+            return "Autoriser cette commande ?"
+        default:
+            return nil
         }
     }
 
@@ -1747,11 +2026,39 @@ extension CodexAppServerProvider: HeadlessChatProviding {
            let rpcMethod = request.rpcMethod {
             pendingApprovalRequest = nil
             Task { [weak self] in
-                await self?.replyToServerRequest(id: rpcRequestID, method: rpcMethod, approved: false)
+                if rpcMethod == "mcpServer/elicitation/request" {
+                    await self?.replyToServerRequest(id: rpcRequestID, method: rpcMethod, approved: false)
+                } else if rpcMethod == "item/tool/requestUserInput" {
+                    await self?.replyUnsupportedServerRequest(
+                        id: rpcRequestID,
+                        method: rpcMethod,
+                        message: "Codex: saisie utilisateur annulee."
+                    )
+                } else {
+                    await self?.replyToServerRequest(id: rpcRequestID, method: rpcMethod, approved: false)
+                }
             }
             return
         }
         pendingApprovalRequest = nil
+    }
+
+    func submitPendingApprovalRequest(fieldValues: [String: String]) {
+        guard let request = pendingApprovalRequest else { return }
+        pendingApprovalRequest = nil
+        if let rpcRequestID = request.rpcRequestID, let rpcMethod = request.rpcMethod {
+            isProcessing = true
+            Task { [weak self] in
+                await self?.replyToServerRequest(
+                    id: rpcRequestID,
+                    method: rpcMethod,
+                    approved: true,
+                    fieldValues: fieldValues
+                )
+            }
+            return
+        }
+        approvePendingApprovalRequest()
     }
 
     func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem] {
@@ -1995,6 +2302,25 @@ extension CodexAppServerProvider {
 
     var testPendingMarkdownCount: Int {
         pendingMarkdown.count
+    }
+
+    static func testServerRequestFields(method: String, params: [String: Any]) -> [ChatInteractiveField] {
+        serverRequestFields(method: method, params: params)
+    }
+
+    static func testToolRequestUserInputResponseResult(
+        params: [String: Any],
+        fieldValues: [String: String]
+    ) -> [String: Any] {
+        toolRequestUserInputResponseResult(from: params, fieldValues: fieldValues)
+    }
+
+    static func testMcpElicitationResponseResult(
+        params: [String: Any],
+        approved: Bool,
+        fieldValues: [String: String]
+    ) -> [String: Any] {
+        elicitationResponseResult(from: params, approved: approved, fieldValues: fieldValues)
     }
 }
 #endif

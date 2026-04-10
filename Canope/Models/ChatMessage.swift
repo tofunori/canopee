@@ -54,11 +54,44 @@ enum ChatInteractionMode: String, Codable, CaseIterable, Equatable {
     }
 }
 
+enum ChatInteractiveFieldKind: String, Equatable {
+    case text
+    case secureText
+    case boolean
+    case singleChoice
+    case integer
+    case number
+}
+
+struct ChatInteractiveOption: Identifiable, Equatable {
+    var id: String { label }
+    let label: String
+    let description: String
+}
+
+struct ChatInteractiveField: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let prompt: String?
+    let kind: ChatInteractiveFieldKind
+    let options: [ChatInteractiveOption]
+    let isRequired: Bool
+    let allowsCustomValue: Bool
+    let placeholder: String?
+    let defaultValue: String
+
+    var supportsCustomValue: Bool {
+        kind == .singleChoice && allowsCustomValue
+    }
+}
+
 struct ChatApprovalRequest: Identifiable, Equatable {
     let id = UUID()
     let toolName: String
     let prompt: String
     let displayText: String
+    let message: String?
+    let fields: [ChatInteractiveField]
     let rpcRequestID: Int?
     let rpcMethod: String?
     let itemID: String?
@@ -69,6 +102,8 @@ struct ChatApprovalRequest: Identifiable, Equatable {
         toolName: String,
         prompt: String,
         displayText: String,
+        message: String? = nil,
+        fields: [ChatInteractiveField] = [],
         rpcRequestID: Int? = nil,
         rpcMethod: String? = nil,
         itemID: String? = nil,
@@ -78,11 +113,17 @@ struct ChatApprovalRequest: Identifiable, Equatable {
         self.toolName = toolName
         self.prompt = prompt
         self.displayText = displayText
+        self.message = message
+        self.fields = fields
         self.rpcRequestID = rpcRequestID
         self.rpcMethod = rpcMethod
         self.itemID = itemID
         self.threadID = threadID
         self.turnID = turnID
+    }
+
+    var requiresFormInput: Bool {
+        !fields.isEmpty
     }
 }
 
