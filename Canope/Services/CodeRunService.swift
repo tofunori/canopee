@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import OSLog
 
 struct CodeRunRecord: Identifiable, Codable, Equatable {
     let runID: UUID
@@ -116,6 +117,11 @@ struct CodeDocumentWorkspaceState: Codable, Equatable {
 
 @MainActor
 final class CodeDocumentUIState: ObservableObject {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.canope.app",
+        category: "CodeRunUI"
+    )
+
     @Published var showLogs: Bool
     @Published var runHistory: [CodeRunRecord]
     @Published var selectedRunID: UUID?
@@ -250,11 +256,15 @@ final class CodeDocumentUIState: ObservableObject {
         }
         sanitizeArtifactSelection()
         sanitizeSecondaryArtifactSelection(preferNewestAlternative: true)
+        Self.logger.info(
+            "Recorded code run \(result.runID.uuidString, privacy: .public) exit=\(result.exitCode, privacy: .public) timedOut=\(result.timedOut, privacy: .public) artifacts=\(result.artifacts.count, privacy: .public)"
+        )
     }
 
     func beginRun(commandDescription: String) {
         lastCommandDescription = commandDescription
         isRunning = true
+        Self.logger.info("Starting code run command: \(commandDescription, privacy: .public)")
     }
 
     func applyRefreshedRun(_ record: CodeRunRecord) {
@@ -271,6 +281,7 @@ final class CodeDocumentUIState: ObservableObject {
     func setManualPreviewArtifact(_ artifact: ArtifactDescriptor) {
         manualPreviewArtifact = artifact
         updateOutputLayout { $0.isOutputVisible = true }
+        Self.logger.debug("Selected manual preview artifact: \(artifact.displayName, privacy: .public)")
     }
 
     func returnToSelectedRun() {
@@ -278,6 +289,7 @@ final class CodeDocumentUIState: ObservableObject {
         sanitizeArtifactSelection()
         sanitizeSecondaryArtifactSelection()
         refreshOutputLogFromSelectedRun()
+        Self.logger.debug("Returned from manual preview to selected run")
     }
 
     func setSecondaryManualPreviewArtifact(_ artifact: ArtifactDescriptor) {
@@ -286,12 +298,14 @@ final class CodeDocumentUIState: ObservableObject {
             $0.secondaryPaneVisible = true
             $0.isOutputVisible = true
         }
+        Self.logger.debug("Selected secondary preview artifact: \(artifact.displayName, privacy: .public)")
     }
 
     func clearSecondaryPreview() {
         secondaryManualPreviewArtifact = nil
         secondaryArtifactPath = nil
         sanitizeSecondaryArtifactSelection()
+        Self.logger.debug("Cleared secondary preview artifact")
     }
 
     func selectPreviousRun() {
@@ -303,6 +317,7 @@ final class CodeDocumentUIState: ObservableObject {
         sanitizeArtifactSelection()
         sanitizeSecondaryArtifactSelection()
         refreshOutputLogFromSelectedRun()
+        Self.logger.info("Selected previous code run: \(self.selectedRunID?.uuidString ?? "nil", privacy: .public)")
     }
 
     func selectNextRun() {
@@ -314,6 +329,7 @@ final class CodeDocumentUIState: ObservableObject {
         sanitizeArtifactSelection()
         sanitizeSecondaryArtifactSelection()
         refreshOutputLogFromSelectedRun()
+        Self.logger.info("Selected next code run: \(self.selectedRunID?.uuidString ?? "nil", privacy: .public)")
     }
 
     func setSecondaryArtifactPath(_ path: String?) {
@@ -429,6 +445,10 @@ final class CodeDocumentStateStore: ObservableObject {
 
 enum CodeRunService {
     static let maxStoredRuns = 20
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.canope.app",
+        category: "CodeRun"
+    )
 
     private static let supportedArtifactExtensions = EditorFileSupport.previewableArtifactExtensions
     private static let recordFileName = "run.json"
@@ -440,6 +460,10 @@ enum CodeRunService {
         let artifactDirectory = runDirectoryURL(for: file, runID: runID, executedAt: executedAt)
         let basename = file.deletingPathExtension().lastPathComponent
         let currentDirectory = file.deletingLastPathComponent()
+
+        logger.info(
+            "Launching code run request file=\(file.lastPathComponent, privacy: .public) mode=\(describe(mode: mode), privacy: .public) runID=\(runID.uuidString, privacy: .public)"
+        )
 
         return await Task.detached(priority: .userInitiated) {
             do {
@@ -453,6 +477,7 @@ enum CodeRunService {
                         "python3",
                         preferredPaths: ["/opt/homebrew/bin/python3", "/usr/bin/python3", "/usr/local/bin/python3"]
                     ) else {
+                        logger.error("python3 not found for code run \(runID.uuidString, privacy: .public)")
                         return try makeFailureResult(
                             fileURL: file,
                             runID: runID,
@@ -470,6 +495,7 @@ enum CodeRunService {
                         "Rscript",
                         preferredPaths: ["/opt/homebrew/bin/Rscript", "/usr/local/bin/Rscript", "/usr/bin/Rscript"]
                     ) else {
+                        logger.error("Rscript not found for code run \(runID.uuidString, privacy: .public)")
                         return try makeFailureResult(
                             fileURL: file,
                             runID: runID,
@@ -525,9 +551,15 @@ enum CodeRunService {
                 )
                 try writeRunRecord(result.record, in: artifactDirectory)
                 try pruneRunHistory(for: file, keeping: maxStoredRuns)
+                logger.info(
+                    "Finished code run \(runID.uuidString, privacy: .public) exit=\(execution.exitCode, privacy: .public) timedOut=\(execution.timedOut, privacy: .public) artifacts=\(artifacts.count, privacy: .public)"
+                )
                 return result
             } catch {
                 let logURL = artifactDirectory.appendingPathComponent(logFileName, isDirectory: false)
+                logger.error(
+                    "Code run \(runID.uuidString, privacy: .public) failed with error: \(error.localizedDescription, privacy: .public)"
+                )
                 return CodeRunResult(
                     runID: runID,
                     executedAt: executedAt,
@@ -708,5 +740,18 @@ enum CodeRunService {
             hash = ((hash << 5) &+ hash) &+ UInt64(byte)
         }
         return String(hash, radix: 16)
+    }
+
+    private static func describe(mode: EditorDocumentMode) -> String {
+        switch mode {
+        case .latex:
+            return "latex"
+        case .markdown:
+            return "markdown"
+        case .python:
+            return "python"
+        case .r:
+            return "r"
+        }
     }
 }

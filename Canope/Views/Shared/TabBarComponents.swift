@@ -41,8 +41,7 @@ struct TabBar: View {
     }
 
     var body: some View {
-        // Section tabs only (Bibliothèque + LaTeX)
-        HStack(spacing: 0) {
+        HStack(spacing: 2) {
             SectionTab(
                 icon: "books.vertical",
                 label: "Bibliothèque",
@@ -52,7 +51,6 @@ struct TabBar: View {
 
             SectionTab(
                 icon: "chevron.left.forwardslash.chevron.right",
-                iconColor: .green,
                 label: editorTabs.count > 1 ? "Éditeur" : (editorTab.map { title(for: $0) } ?? "Éditeur"),
                 isSelected: isEditorSelected,
                 indicatorNamespace: sectionTabIndicatorNamespace
@@ -64,8 +62,8 @@ struct TabBar: View {
                 }
             }
         }
-        .frame(height: AppChromeMetrics.topBarHeight)
-        .clipped()
+        .frame(height: AppChromeMetrics.sectionTabBarHeight)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func title(for tab: TabItem) -> String {
@@ -108,25 +106,31 @@ struct SectionTab: View {
         Button(action: {
             AppChromeMotion.performSelection(reduceMotion: reduceMotion, updates: action)
         }) {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(.system(size: 8.5, weight: .medium))
                     .foregroundStyle(iconColor ?? (isSelected ? .primary : .secondary))
                 Text(label)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 10.5, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? .primary : .secondary)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .background(AppChromePalette.tabFill(isSelected: isSelected, isHovered: isHovered, role: .section))
-            .overlay(alignment: .bottom) {
+            .padding(.horizontal, AppChromeMetrics.sectionTabHorizontalPadding)
+            .frame(minHeight: AppChromeMetrics.sectionTabBarHeight)
+            .background {
                 if isSelected {
-                    Rectangle()
-                        .fill(AppChromePalette.tabIndicator(for: .section))
-                        .frame(height: AppChromeMetrics.tabIndicatorHeight)
-                        .matchedGeometryEffect(id: "section-tab-indicator", in: indicatorNamespace)
+                    RoundedRectangle(cornerRadius: AppChromeMetrics.sectionTabInnerCornerRadius, style: .continuous)
+                        .fill(AppChromePalette.tabSelectedFill.opacity(0.82))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppChromeMetrics.sectionTabInnerCornerRadius, style: .continuous)
+                                .stroke(AppChromePalette.clusterStroke.opacity(0.45), lineWidth: 1)
+                        )
+                        .matchedGeometryEffect(id: "section-tab-surface", in: indicatorNamespace)
+                } else if isHovered {
+                    RoundedRectangle(cornerRadius: AppChromeMetrics.sectionTabInnerCornerRadius, style: .continuous)
+                        .fill(AppChromePalette.tabHoverFill.opacity(0.26))
                 }
             }
+            .contentShape(RoundedRectangle(cornerRadius: AppChromeMetrics.sectionTabInnerCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }

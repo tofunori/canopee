@@ -38,7 +38,8 @@ extension UnifiedEditorView {
         }
 
         if !documentMode.isRunnableCode {
-            loadExistingPDF()
+            // Avoid rebuilding the PDFKit document on every library/editor toggle.
+            loadExistingPDF(forceReload: false)
         }
     }
 

@@ -3,12 +3,27 @@ import Foundation
 import PDFKit
 
 extension UnifiedEditorView {
-    func loadExistingPDF() {
-        if FileManager.default.fileExists(atPath: previewPDFURL.path) {
-            compiledPDF = PDFDocument(url: previewPDFURL)
-        } else {
+    func loadExistingPDF(forceReload: Bool = true) {
+        let previewExists = FileManager.default.fileExists(atPath: previewPDFURL.path)
+
+        guard previewExists else {
             compiledPDF = nil
+            documentState.compiledPDFLastKnownPageIndex = 0
+            documentState.compiledPDFRequestedRestorePageIndex = nil
+            return
         }
+
+        let existingURL = compiledPDF?.documentURL?.standardizedFileURL
+        if !forceReload, existingURL == previewPDFURL.standardizedFileURL {
+            return
+        }
+
+        replaceCompiledPDF(with: PDFDocument(url: previewPDFURL))
+    }
+
+    func replaceCompiledPDF(with document: PDFDocument?) {
+        documentState.compiledPDFRequestedRestorePageIndex = documentState.compiledPDFLastKnownPageIndex
+        compiledPDF = document
     }
 
     func reloadActiveFileState() {
@@ -233,7 +248,7 @@ extension UnifiedEditorView {
                 compileOutput = result.log
                 showErrors = true
                 if let pdfURL = result.pdfURL {
-                    compiledPDF = PDFDocument(url: pdfURL)
+                    replaceCompiledPDF(with: PDFDocument(url: pdfURL))
                 }
                 isCompiling = false
                 if activeErrorCount > 0 {
@@ -257,7 +272,7 @@ extension UnifiedEditorView {
                 compileOutput = result.log
                 showErrors = !result.success || !result.errors.isEmpty
                 if let pdfURL = result.pdfURL {
-                    compiledPDF = PDFDocument(url: pdfURL)
+                    replaceCompiledPDF(with: PDFDocument(url: pdfURL))
                 } else if !result.success {
                     compiledPDF = nil
                 }

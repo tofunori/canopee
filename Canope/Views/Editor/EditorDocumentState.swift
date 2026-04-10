@@ -14,6 +14,8 @@ final class EditorDocumentUIState: ObservableObject {
     @Published var isCompiling = false
     @Published var syncTarget: SyncTeXForwardResult?
     @Published var inverseSyncResult: SyncTeXInverseResult?
+    @Published var compiledPDFLastKnownPageIndex = 0
+    @Published var compiledPDFRequestedRestorePageIndex: Int?
     @Published var latexAnnotations: [LaTeXAnnotation] = []
     @Published var resolvedLaTeXAnnotations: [ResolvedLaTeXAnnotation] = []
     @Published var selectedEditorRange: NSRange?
@@ -42,6 +44,8 @@ final class EditorDocumentUIState: ObservableObject {
         isCompiling = false
         syncTarget = nil
         inverseSyncResult = nil
+        compiledPDFLastKnownPageIndex = 0
+        compiledPDFRequestedRestorePageIndex = nil
         latexAnnotations = []
         resolvedLaTeXAnnotations = []
         selectedEditorRange = nil

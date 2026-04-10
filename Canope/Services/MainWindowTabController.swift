@@ -1,12 +1,29 @@
 import Foundation
 import SwiftUI
+import OSLog
 
 /// Owns main-window tab list, selection, and split-PDF state so `MainWindow` stays thinner.
 @MainActor
 final class MainWindowTabController: ObservableObject {
     @Published var openTabs: [TabItem] = [.library]
-    @Published var selectedTab: TabItem = .library
-    @Published var splitPaperID: UUID?
+    @Published var selectedTab: TabItem = .library {
+        didSet {
+            guard self.selectedTab != oldValue else { return }
+            Self.logger.info("Selected main tab: \(Self.describe(tab: self.selectedTab), privacy: .public)")
+        }
+    }
+    @Published var splitPaperID: UUID? {
+        didSet {
+            guard self.splitPaperID != oldValue else { return }
+            let value = self.splitPaperID?.uuidString ?? "nil"
+            Self.logger.debug("Updated split paper id: \(value, privacy: .public)")
+        }
+    }
+
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.canope.app",
+        category: "WindowTabs"
+    )
 
     var openPaperIDs: [UUID] {
         openTabs.compactMap { if case .paper(let id) = $0 { return id } else { return nil } }
@@ -71,6 +88,10 @@ final class MainWindowTabController: ObservableObject {
         } else {
             splitPaperID = nil
         }
+
+        Self.logger.info(
+            "Restored workspace tabs=\(self.openTabs.count, privacy: .public) selected=\(Self.describe(tab: self.selectedTab), privacy: .public)"
+        )
     }
 
     func openPDFFile(_ url: URL) {
@@ -79,6 +100,7 @@ final class MainWindowTabController: ObservableObject {
             openTabs.append(tab)
         }
         selectedTab = tab
+        Self.logger.info("Opened standalone PDF tab: \(url.lastPathComponent, privacy: .public)")
     }
 
     func openEditorTab(path: String, select: Bool = true) {
@@ -89,6 +111,7 @@ final class MainWindowTabController: ObservableObject {
         if select {
             selectedTab = tab
         }
+        Self.logger.info("Opened editor tab: \(URL(fileURLWithPath: path).lastPathComponent, privacy: .public) select=\(select, privacy: .public)")
     }
 
     func closeTab(_ tab: TabItem) {
@@ -96,6 +119,22 @@ final class MainWindowTabController: ObservableObject {
         openTabs.remove(at: index)
         if selectedTab == tab {
             selectedTab = index > 0 ? openTabs[index - 1] : (openTabs.first ?? .library)
+        }
+        Self.logger.info("Closed tab: \(Self.describe(tab: tab), privacy: .public)")
+    }
+
+    private static func describe(tab: TabItem) -> String {
+        switch tab {
+        case .library:
+            return "library"
+        case .paper(let id):
+            return "paper:\(id.uuidString)"
+        case .editorWorkspace:
+            return "editorWorkspace"
+        case .editor(let path):
+            return "editor:\(URL(fileURLWithPath: path).lastPathComponent)"
+        case .pdfFile(let path):
+            return "pdf:\(URL(fileURLWithPath: path).lastPathComponent)"
         }
     }
 }

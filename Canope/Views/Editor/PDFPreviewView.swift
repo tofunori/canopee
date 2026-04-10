@@ -9,23 +9,29 @@ struct PDFPreviewView: NSViewRepresentable {
     var syncTarget: SyncTeXForwardResult?
     var onInverseSync: ((SyncTeXInverseResult) -> Void)?
     var allowsInverseSync: Bool = true
+    var restoredPageIndex: Int? = nil
     var fitToWidthTrigger: Bool = false
     @ObservedObject var searchState: PDFSearchUIState
+    var onCurrentPageChanged: ((Int) -> Void)? = nil
 
     init(
         document: PDFDocument,
         syncTarget: SyncTeXForwardResult? = nil,
         onInverseSync: ((SyncTeXInverseResult) -> Void)? = nil,
         allowsInverseSync: Bool = true,
+        restoredPageIndex: Int? = nil,
         fitToWidthTrigger: Bool = false,
-        searchState: PDFSearchUIState = PDFSearchUIState()
+        searchState: PDFSearchUIState = PDFSearchUIState(),
+        onCurrentPageChanged: ((Int) -> Void)? = nil
     ) {
         self.document = document
         self.syncTarget = syncTarget
         self.onInverseSync = onInverseSync
         self.allowsInverseSync = allowsInverseSync
+        self.restoredPageIndex = restoredPageIndex
         self.fitToWidthTrigger = fitToWidthTrigger
         self._searchState = ObservedObject(wrappedValue: searchState)
+        self.onCurrentPageChanged = onCurrentPageChanged
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -48,6 +54,10 @@ struct PDFPreviewView: NSViewRepresentable {
         // then we disable it so manual zoom gestures work.
         DispatchQueue.main.async {
             pdfView.autoScales = false
+            if let restoredPageIndex,
+               let restoredPage = document.page(at: restoredPageIndex) {
+                pdfView.go(to: restoredPage)
+            }
         }
 
         // Add ⌘+click gesture for inverse sync
@@ -55,7 +65,9 @@ struct PDFPreviewView: NSViewRepresentable {
         clickGesture.numberOfClicksRequired = 1
         pdfView.addGestureRecognizer(clickGesture)
         context.coordinator.searchState = searchState
+        context.coordinator.onCurrentPageChanged = onCurrentPageChanged
         context.coordinator.configureSelectionObservation(for: pdfView)
+        context.coordinator.configurePageObservation(for: pdfView)
         context.coordinator.configureSearchState(for: pdfView)
         context.coordinator.syncSearchQuery(in: pdfView, force: true)
 
@@ -72,12 +84,18 @@ struct PDFPreviewView: NSViewRepresentable {
             pdfView.autoScales = true
             DispatchQueue.main.async {
                 pdfView.autoScales = false
+                if let restoredPageIndex,
+                   let restoredPage = document.page(at: restoredPageIndex) {
+                    pdfView.go(to: restoredPage)
+                }
             }
         }
         context.coordinator.onInverseSync = onInverseSync
         context.coordinator.allowsInverseSync = allowsInverseSync
         context.coordinator.searchState = searchState
+        context.coordinator.onCurrentPageChanged = onCurrentPageChanged
         context.coordinator.configureSelectionObservation(for: pdfView)
+        context.coordinator.configurePageObservation(for: pdfView)
         context.coordinator.configureSearchState(for: pdfView)
 
         // Fit to width
@@ -120,8 +138,10 @@ struct PDFPreviewView: NSViewRepresentable {
 
         weak var pdfView: PDFView?
         weak var observedSelectionPDFView: PDFView?
+        weak var observedPagePDFView: PDFView?
         var searchState: PDFSearchUIState?
         var onInverseSync: ((SyncTeXInverseResult) -> Void)?
+        var onCurrentPageChanged: ((Int) -> Void)?
         var allowsInverseSync = true
         var lastFitTrigger: Bool = false
         private var hadSelectionAtMouseDown = false
@@ -172,6 +192,28 @@ struct PDFPreviewView: NSViewRepresentable {
             )
         }
 
+        func configurePageObservation(for pdfView: PDFView) {
+            self.pdfView = pdfView
+            guard observedPagePDFView !== pdfView else { return }
+
+            if let observedPagePDFView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: Notification.Name.PDFViewPageChanged,
+                    object: observedPagePDFView
+                )
+            }
+
+            observedPagePDFView = pdfView
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handlePageChangedNotification(_:)),
+                name: Notification.Name.PDFViewPageChanged,
+                object: pdfView
+            )
+            reportCurrentPage(in: pdfView)
+        }
+
         func configureSearchState(for pdfView: PDFView) {
             self.pdfView = pdfView
             searchState?.configureActions(
@@ -209,7 +251,15 @@ struct PDFPreviewView: NSViewRepresentable {
                     object: observedSelectionPDFView
                 )
             }
+            if let observedPagePDFView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: Notification.Name.PDFViewPageChanged,
+                    object: observedPagePDFView
+                )
+            }
             observedSelectionPDFView = nil
+            observedPagePDFView = nil
             pdfView = nil
             searchState?.configureActions(next: nil, previous: nil, clear: nil)
         }
@@ -288,6 +338,12 @@ struct PDFPreviewView: NSViewRepresentable {
                 CanopeContextFiles.writeIDESelectionState(state)
                 CanopeContextFiles.clearLegacySelectionMirror()
             }
+        }
+
+        @objc
+        private func handlePageChangedNotification(_ notification: Notification) {
+            guard let pdfView else { return }
+            reportCurrentPage(in: pdfView)
         }
 
         func handlePreMouseDown(event: NSEvent, at locationInView: NSPoint, in pdfView: SelectablePDFPreviewView) -> Bool {
@@ -419,6 +475,12 @@ struct PDFPreviewView: NSViewRepresentable {
             }
             isUpdatingSearchSelection = false
             searchState?.currentMatchIndex = index + 1
+        }
+
+        private func reportCurrentPage(in pdfView: PDFView) {
+            guard let document = pdfView.document,
+                  let page = pdfView.currentPage else { return }
+            onCurrentPageChanged?(document.index(for: page))
         }
     }
 }

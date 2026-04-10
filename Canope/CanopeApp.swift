@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import OSLog
 
 enum AppRuntime {
     static var isRunningTests: Bool {
@@ -30,6 +31,7 @@ struct CanopeApp: App {
         }
         .modelContainer(for: [Paper.self, PaperCollection.self])
         .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .defaultSize(width: 1100, height: 700)
         .commands {
             BibliographyCommands(router: bibliographyCommandRouter)
@@ -39,9 +41,14 @@ struct CanopeApp: App {
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.canope.app",
+        category: "AppLifecycle"
+    )
     private var windowChromeMonitors: [ObjectIdentifier: WindowChromeDoubleClickMonitor] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        logger.info("Application did finish launching. runningTests=\(AppRuntime.isRunningTests, privacy: .public)")
         // Prefer classic key repeat over the macOS accent popup inside the app,
         // which makes terminal input behave like a real terminal.
         UserDefaults.standard.register(defaults: ["ApplePressAndHoldEnabled": false])
@@ -49,6 +56,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ClaudeIDEBridgeService.shared.startIfNeeded()
             _ = ClaudeCLIWrapperService.shared.prepareWrapperIfNeeded()
             _ = ClaudeCLIWrapperService.shared.prepareCodexWrapperIfNeeded()
+            logger.info("Prepared Claude and Codex bridge wrappers")
         }
 
         NotificationCenter.default.addObserver(
@@ -67,6 +75,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        logger.info("Application will terminate")
         // Only terminate children launched by the app itself.
         ChildProcessRegistry.shared.terminateAllTrackedChildren()
 
@@ -86,6 +95,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let key = ObjectIdentifier(window)
         if windowChromeMonitors[key] == nil {
             windowChromeMonitors[key] = WindowChromeDoubleClickMonitor(window: window)
+            logger.debug("Installed window chrome monitor for window")
         }
     }
 
@@ -94,7 +104,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
-        window.isMovableByWindowBackground = true
+        window.toolbarStyle = .unifiedCompact
     }
 }
 

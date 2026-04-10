@@ -49,18 +49,7 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("Canope")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: {
-                    addingToParent = nil
-                    isAddingCollection = true
-                    newCollectionName = ""
-                }) {
-                    Image(systemName: "folder.badge.plus")
-                }
-                .help("Nouvelle collection")
-            }
-        }
+        .toolbar(removing: .sidebarToggle)
     }
 
     // MARK: - Collection Row (recursive via flat list)

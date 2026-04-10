@@ -71,8 +71,12 @@ extension UnifiedEditorView {
                             syncTarget: documentMode == .latex && selectedPdfTab == .compiled ? syncTarget : nil,
                             onInverseSync: documentMode == .latex ? { result in inverseSyncResult = result } : nil,
                             allowsInverseSync: documentMode == .latex,
+                            restoredPageIndex: documentState.compiledPDFRequestedRestorePageIndex,
                             fitToWidthTrigger: selectedPdfTab == .compiled ? fitToWidthTrigger : false,
-                            searchState: compiledPDFSearchState
+                            searchState: compiledPDFSearchState,
+                            onCurrentPageChanged: { pageIndex in
+                                documentState.compiledPDFLastKnownPageIndex = pageIndex
+                            }
                         )
                     } else {
                         ContentUnavailableView(

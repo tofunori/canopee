@@ -4,6 +4,10 @@ import Foundation
 enum AppChromeMetrics {
     static let topBarHeight: CGFloat = 26
     static let topButtonSize: CGFloat = 24
+    static let sectionTabBarHeight: CGFloat = 22
+    static let sectionTabOuterCornerRadius: CGFloat = 11
+    static let sectionTabInnerCornerRadius: CGFloat = 8
+    static let sectionTabHorizontalPadding: CGFloat = 8
     static let toolbarHeight: CGFloat = 32
     static let tabBarHeight: CGFloat = 26
     static let clusterHeight: CGFloat = 24

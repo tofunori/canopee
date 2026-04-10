@@ -53,6 +53,10 @@ struct MainWindow: View {
             )
                 .opacity(tabController.selectedTab == .library ? 1 : 0)
                 .allowsHitTesting(tabController.selectedTab == .library)
+                .zIndex(tabController.selectedTab == .library ? 1 : 0)
+                // Keep the library/editor switch immediate: crossfading a live PDFKit
+                // surface behind the library produces visible flashes.
+                .animation(nil, value: tabController.selectedTab)
 
             ForEach(openPaperIDs, id: \.self) { paperId in
                 if let paper = allPapers.first(where: { $0.id == paperId }) {
@@ -73,6 +77,7 @@ struct MainWindow: View {
                     }
                     .opacity(tabController.selectedTab == .paper(paperId) ? 1 : 0)
                     .allowsHitTesting(tabController.selectedTab == .paper(paperId))
+                    .zIndex(tabController.selectedTab == .paper(paperId) ? 1 : 0)
                 }
             }
 
@@ -92,15 +97,22 @@ struct MainWindow: View {
             )
             .opacity(isEditorSelected ? 1 : 0)
             .allowsHitTesting(isEditorSelected)
+            .zIndex(isEditorSelected ? 1 : 0)
+            // Preserve the mounted editor state, but avoid animating the hidden PDF
+            // preview when the user jumps to the library and back.
+            .animation(nil, value: tabController.selectedTab)
 
             ForEach(openPDFPaths, id: \.self) { path in
                 StandalonePDFView(url: URL(fileURLWithPath: path))
                     .opacity(tabController.selectedTab == .pdfFile(path) ? 1 : 0)
                     .allowsHitTesting(tabController.selectedTab == .pdfFile(path))
+                    .zIndex(tabController.selectedTab == .pdfFile(path) ? 1 : 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: tabController.selectedTab)
+        // Keep large content-surface switches deterministic. Animating between
+        // the library and a live PDF/editor stack still produces subtle flicker
+        // and feels less fluid than an immediate swap.
     }
 
     private var terminalPane: some View {
@@ -129,6 +141,45 @@ struct MainWindow: View {
         case .editorWorkspace: return "Éditeur"
         case .editor(let path): return URL(fileURLWithPath: path).lastPathComponent
         case .pdfFile(let path): return URL(fileURLWithPath: path).lastPathComponent
+        }
+    }
+
+    @ViewBuilder
+    private func documentTabButton(for tab: TabItem) -> some View {
+        let baseButton = TabButton(
+            tab: tab,
+            isSelected: tabController.selectedTab == tab,
+            indicatorNamespace: documentTabIndicatorNamespace,
+            title: tabTitle(tab),
+            onSelect: { tabController.selectedTab = tab },
+            onClose: {
+                tabController.closeTab(tab)
+            }
+        )
+
+        if case .paper(let currentPaperID) = tab {
+            baseButton.contextMenu {
+                if tabController.splitPaperID != nil {
+                    Button("Fermer le split") {
+                        tabController.splitPaperID = nil
+                    }
+
+                    if openPaperIDs.contains(where: { $0 != currentPaperID }) {
+                        Divider()
+                    }
+                }
+
+                ForEach(openPaperIDs.filter { $0 != currentPaperID }, id: \.self) { otherPaperID in
+                    if let paper = allPapers.first(where: { $0.id == otherPaperID }) {
+                        Button("Comparer avec \(paper.title)") {
+                            tabController.splitPaperID = otherPaperID
+                            tabController.selectedTab = .paper(currentPaperID)
+                        }
+                    }
+                }
+            }
+        } else {
+            baseButton
         }
     }
 
@@ -230,81 +281,6 @@ struct MainWindow: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                // Top: section tabs + action buttons
-                HStack(spacing: 0) {
-                    TabBar(
-                        tabs: $tabController.openTabs,
-                        selectedTab: $tabController.selectedTab,
-                        allPapers: allPapers,
-                        onOpenTeX: { isOpeningTeX = true }
-                    )
-
-                    // Action buttons (right side, aligned with section row)
-                    HStack(spacing: 1) {
-                        if tabController.selectedTab == .library {
-                            Button {
-                                isImportingPDF = true
-                            } label: {
-                                Image(systemName: "doc.badge.plus")
-                                    .font(.system(size: 11))
-                                    .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Importer un PDF")
-                        } else {
-                            // Open .tex file (with recent files)
-                            Menu {
-                                let recents = RecentTeXFilesStore.recentTeXFiles
-                                if !recents.isEmpty {
-                                    ForEach(recents, id: \.self) { path in
-                                        Button {
-                                            openTeXFile(URL(fileURLWithPath: path))
-                                        } label: {
-                                            Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "doc.plaintext")
-                                        }
-                                    }
-                                    Divider()
-                                }
-                                Button {
-                                    isOpeningTeX = true
-                                } label: {
-                                    Label("Parcourir…", systemImage: "folder")
-                                }
-                            } label: {
-                                Image(systemName: "doc.badge.plus")
-                                    .font(.system(size: 11))
-                                    .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Ouvrir un fichier .tex, .md, .py ou .R (⌘O)")
-                        }
-
-                        // Split toggle
-                        if case .paper = tabController.selectedTab {
-                            Menu {
-                                if tabController.splitPaperID != nil {
-                                    Button("Fermer le split") { tabController.splitPaperID = nil }
-                                    Divider()
-                                }
-                                ForEach(openPaperIDs, id: \.self) { id in
-                                    if let paper = allPapers.first(where: { $0.id == id }) {
-                                        Button(paper.title) { tabController.splitPaperID = id }
-                                    }
-                                }
-                            } label: {
-                                Image(systemName: tabController.splitPaperID != nil ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
-                                    .font(.system(size: 11))
-                                    .frame(width: AppChromeMetrics.topButtonSize, height: AppChromeMetrics.topButtonSize)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Split view")
-                        }
-                    }
-                    .padding(.trailing, 4)
-                }
-                .frame(height: AppChromeMetrics.topBarHeight)
-                .background(AppChromePalette.surfaceBar)
-
                 // Document tabs row (papers/PDFs from library)
                 let docTabs = tabController.openTabs.filter {
                     if case .paper = $0 { return true }
@@ -315,16 +291,7 @@ struct MainWindow: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 0) {
                             ForEach(docTabs, id: \.self) { tab in
-                                TabButton(
-                                    tab: tab,
-                                    isSelected: tabController.selectedTab == tab,
-                                    indicatorNamespace: documentTabIndicatorNamespace,
-                                    title: tabTitle(tab),
-                                    onSelect: { tabController.selectedTab = tab },
-                                    onClose: {
-                                        tabController.closeTab(tab)
-                                    }
-                                )
+                                documentTabButton(for: tab)
                             }
                         }
                     }
@@ -334,7 +301,6 @@ struct MainWindow: View {
 
                 AppChromeDivider(role: .shell)
             }
-            .modifier(MainWindowTitleBarBehavior())
 
             // Content + resizable shared terminal
             HSplitView {
@@ -344,6 +310,16 @@ struct MainWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                TabBar(
+                    tabs: $tabController.openTabs,
+                    selectedTab: $tabController.selectedTab,
+                    allPapers: allPapers,
+                    onOpenTeX: { isOpeningTeX = true }
+                )
+            }
+        }
         .onAppear {
             DispatchQueue.main.async {
                 if !AppRuntime.isRunningTests {

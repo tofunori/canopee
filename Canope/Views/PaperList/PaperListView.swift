@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import OSLog
 
 struct PaperListView: View {
     let sidebarSelection: SidebarSelection
@@ -8,6 +9,11 @@ struct PaperListView: View {
     @Query(sort: \Paper.dateAdded, order: .reverse) private var allPapers: [Paper]
     @Environment(\.modelContext) private var modelContext
     @State private var isImporting = false
+
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.canope.app",
+        category: "PaperList"
+    )
 
     private var filteredPapers: [Paper] {
         switch sidebarSelection {
@@ -66,6 +72,10 @@ struct PaperListView: View {
             handleDrop(providers)
             return true
         }
+        .onChange(of: selectedPaperID) {
+            let value = selectedPaperID.map { String(describing: $0) } ?? "nil"
+            Self.logger.info("Selected paper persistent id: \(value, privacy: .public)")
+        }
         .overlay {
             if filteredPapers.isEmpty {
                 ContentUnavailableView {
@@ -88,7 +98,11 @@ struct PaperListView: View {
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {
-        guard let urls = try? result.get() else { return }
+        guard let urls = try? result.get() else {
+            Self.logger.error("PDF import failed before processing file list")
+            return
+        }
+        Self.logger.info("Import requested for \(urls.count, privacy: .public) PDF file(s)")
         for url in urls {
             guard url.startAccessingSecurityScopedResource() else { continue }
             defer { url.stopAccessingSecurityScopedResource() }
@@ -128,13 +142,15 @@ struct PaperListView: View {
             }
 
             modelContext.insert(paper)
+            Self.logger.info("Imported PDF: \(url.lastPathComponent, privacy: .public)")
         } catch {
-            print("Failed to import PDF: \(error)")
+            Self.logger.error("Failed to import PDF \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
     private func deletePaper(_ paper: Paper) {
         PDFFileManager.deletePDF(fileName: paper.fileName)
         modelContext.delete(paper)
+        Self.logger.info("Deleted paper: \(paper.title, privacy: .public)")
     }
 }

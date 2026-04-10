@@ -233,7 +233,9 @@ struct LaTeXEditorContainer: View {
         let codeDocumentState = codeDocumentStateStore.stateOrCreate(for: fileURL)
         return UnifiedEditorView(
             fileURL: fileURL,
-            isActive: true,
+            // Keep the editor mounted to preserve per-file SwiftUI/AppKit state,
+            // but let the view suspend watchers and command routing when hidden.
+            isActive: isEditorSectionActive,
             showTerminal: $showTerminal,
             mainWindowTab: $selectedTab,
             openEditorPaths: openPaths,

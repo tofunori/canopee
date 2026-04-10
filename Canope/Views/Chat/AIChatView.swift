@@ -2431,64 +2431,75 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     private var customInstructionsEditorSheet: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Instructions")
-                        .font(.system(size: 15, weight: .semibold))
-                    Text("Ces consignes orientent uniquement le chat Codex.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AppChromePalette.codexMutedText)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Instructions")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("Ces consignes orientent uniquement le chat Codex.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(AppChromePalette.codexMutedText)
+                        }
 
-                Spacer(minLength: 0)
+                        Spacer(minLength: 0)
 
-                Text(provider.chatCustomInstructions.summaryLabel)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(provider.chatCustomInstructions.hasAny ? AppChromePalette.codexIDEContext : AppChromePalette.codexMutedText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(AppChromePalette.codexPromptInner)
+                        Text(provider.chatCustomInstructions.summaryLabel)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(provider.chatCustomInstructions.hasAny ? AppChromePalette.codexIDEContext : AppChromePalette.codexMutedText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(AppChromePalette.codexPromptInner)
+                            )
+                    }
+
+                    customInstructionsEditorSection(
+                        title: "Instructions globales",
+                        subtitle: "Toujours actives pour tous les chats Codex.",
+                        text: $globalCustomInstructionsDraft,
+                        placeholder: "Ex.: Reponds en francais quebecois simple et direct."
                     )
+
+                    customInstructionsEditorSection(
+                        title: "Instructions de cette session",
+                        subtitle: "Actives seulement pour la conversation courante.",
+                        text: $sessionCustomInstructionsDraft,
+                        placeholder: "Ex.: Dans cette conversation, sois tres concis et cite toujours les fichiers."
+                    )
+
+                    HStack(spacing: 10) {
+                        Button("Reinitialiser le global") {
+                            globalCustomInstructionsDraft = ""
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+
+                        Button("Reinitialiser la session") {
+                            sessionCustomInstructionsDraft = ""
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(20)
             }
 
-            customInstructionsEditorSection(
-                title: "Instructions globales",
-                subtitle: "Toujours actives pour tous les chats Codex.",
-                text: $globalCustomInstructionsDraft,
-                placeholder: "Ex.: Reponds en francais quebecois simple et direct."
-            )
-
-            customInstructionsEditorSection(
-                title: "Instructions de cette session",
-                subtitle: "Actives seulement pour la conversation courante.",
-                text: $sessionCustomInstructionsDraft,
-                placeholder: "Ex.: Dans cette conversation, sois tres concis et cite toujours les fichiers."
-            )
+            Divider()
+                .overlay(AppChromePalette.codexPromptDivider.opacity(0.65))
 
             HStack(spacing: 10) {
-                Button("Reinitialiser le global") {
-                    globalCustomInstructionsDraft = ""
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-
-                Button("Reinitialiser la session") {
-                    sessionCustomInstructionsDraft = ""
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-
                 Spacer(minLength: 0)
 
-                Button("Cancel") {
+                Button("Annuler") {
                     showCustomInstructionsEditor = false
                 }
                 .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
 
-                Button("Save") {
+                Button("Enregistrer") {
                     provider.updateChatCustomInstructions(
                         global: globalCustomInstructionsDraft,
                         session: sessionCustomInstructionsDraft
@@ -2498,9 +2509,12 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(AppChromePalette.codexCanvas)
         }
-        .padding(20)
-        .frame(width: 620, height: 430, alignment: .topLeading)
+        .frame(width: 620)
+        .frame(minHeight: 430, idealHeight: 500, maxHeight: 620, alignment: .topLeading)
         .background(AppChromePalette.codexCanvas)
     }
 
