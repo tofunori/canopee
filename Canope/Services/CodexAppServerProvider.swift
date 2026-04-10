@@ -310,6 +310,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     @Published var session = SessionInfo()
     @Published var selectedModel: String = "gpt-5.4"
     @Published var selectedEffort: String = "medium"
+    @Published var includesIDEContext = true
     @Published var chatInteractionMode: ChatInteractionMode = .agent
     @Published var chatReviewStateDescription: String?
     @Published private var reviewStatusBadge: ChatStatusBadge?
@@ -342,6 +343,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private var pendingMarkdown: [(UUID, String)] = []
     private var markdownTask: Task<Void, Never>?
     private var currentRunInteractionMode: ChatInteractionMode = .agent
+    private var currentRunIncludesIDEContext = true
     private var currentRunInputItems: [ChatInputItem] = []
     private var currentRunPrompt = ""
     private var currentRunDisplayText = ""
@@ -403,7 +405,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         guard !trimmed.isEmpty else { return }
         if !isConnected { start() }
         pendingApprovalRequest = nil
-        Task { await sendUserMessage([.text(trimmed)], display: trimmed, interactionMode: chatInteractionMode) }
+        Task {
+            await sendUserMessage(
+                [.text(trimmed)],
+                display: trimmed,
+                interactionMode: chatInteractionMode,
+                includeIDEContext: includesIDEContext
+            )
+        }
     }
 
     func sendMessageWithDisplay(displayText: String, items: [ChatInputItem]) {
@@ -411,7 +420,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if !isConnected { start() }
         pendingApprovalRequest = nil
-        Task { await sendUserMessage(items, display: displayText, interactionMode: chatInteractionMode) }
+        Task {
+            await sendUserMessage(
+                items,
+                display: displayText,
+                interactionMode: chatInteractionMode,
+                includeIDEContext: includesIDEContext
+            )
+        }
     }
 
     func sendMessageWithDisplay(displayText: String, prompt: String) {
@@ -419,7 +435,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         guard !p.isEmpty else { return }
         if !isConnected { start() }
         pendingApprovalRequest = nil
-        Task { await sendUserMessage([.text(p)], display: displayText, interactionMode: chatInteractionMode) }
+        Task {
+            await sendUserMessage(
+                [.text(p)],
+                display: displayText,
+                interactionMode: chatInteractionMode,
+                includeIDEContext: includesIDEContext
+            )
+        }
     }
 
     // MARK: - Connection
@@ -537,6 +560,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         _ items: [ChatInputItem],
         display: String,
         interactionMode: ChatInteractionMode,
+        includeIDEContext: Bool,
         appendUserMessage: Bool = true
     ) async {
         let prompt = ChatInputItem.legacyPrompt(from: items)
@@ -554,6 +578,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
         isProcessing = true
         currentRunInteractionMode = interactionMode
+        currentRunIncludesIDEContext = includeIDEContext
         currentRunInputItems = items
         currentRunPrompt = prompt
         currentRunDisplayText = display
@@ -605,6 +630,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 "input": Self.buildTurnInputPayload(
                     from: items,
                     interactionMode: interactionMode,
+                    includeIDEContext: includeIDEContext,
                     globalCustomInstructions: globalCustomInstructionsText,
                     sessionCustomInstructions: sessionCustomInstructionsText
                 ),
@@ -2540,7 +2566,13 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return normalized
     }
 
-    nonisolated static func buildPromptWithIDEContext(_ userMessage: String) -> String {
+    nonisolated static func buildPromptWithIDEContext(
+        _ userMessage: String,
+        includeIDEContext: Bool = true
+    ) -> String {
+        guard includeIDEContext else {
+            return userMessage
+        }
         let path = CanopeContextFiles.ideSelectionStatePaths[0]
         guard let data = FileManager.default.contents(atPath: path),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -2581,10 +2613,15 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         """
     }
 
-    nonisolated static func buildPromptForInteractionMode(_ userMessage: String, mode: ChatInteractionMode) -> String {
+    nonisolated static func buildPromptForInteractionMode(
+        _ userMessage: String,
+        mode: ChatInteractionMode,
+        includeIDEContext: Bool = true
+    ) -> String {
         buildPromptForInteractionMode(
             userMessage,
             mode: mode,
+            includeIDEContext: includeIDEContext,
             globalCustomInstructions: "",
             sessionCustomInstructions: ""
         )
@@ -2593,10 +2630,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     nonisolated static func buildPromptForInteractionMode(
         _ userMessage: String,
         mode: ChatInteractionMode,
+        includeIDEContext: Bool = true,
         globalCustomInstructions: String,
         sessionCustomInstructions: String
     ) -> String {
-        let promptWithContext = buildPromptWithIDEContext(userMessage)
+        let promptWithContext = buildPromptWithIDEContext(
+            userMessage,
+            includeIDEContext: includeIDEContext
+        )
         let customInstructionsBlock = buildCustomInstructionsBlock(
             global: globalCustomInstructions,
             session: sessionCustomInstructions
@@ -2650,6 +2691,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     nonisolated static func buildTurnInputPayload(
         from items: [ChatInputItem],
         interactionMode: ChatInteractionMode,
+        includeIDEContext: Bool = true,
         globalCustomInstructions: String = "",
         sessionCustomInstructions: String = ""
     ) -> [[String: Any]] {
@@ -2660,6 +2702,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                     buildPromptForInteractionMode(
                         text,
                         mode: interactionMode,
+                        includeIDEContext: includeIDEContext,
                         globalCustomInstructions: globalCustomInstructions,
                         sessionCustomInstructions: sessionCustomInstructions
                     )
@@ -2749,6 +2792,11 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             globalText: globalCustomInstructionsText,
             sessionText: sessionCustomInstructionsText
         )
+    }
+    var chatSupportsIDEContextToggle: Bool { true }
+    var chatIncludesIDEContext: Bool {
+        get { includesIDEContext }
+        set { includesIDEContext = newValue }
     }
     var chatSupportsPlanMode: Bool { true }
     var chatSupportsReview: Bool { true }
@@ -2862,7 +2910,12 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             if let lastUser = messages.lastIndex(where: { $0.role == .user }) {
                 messages.removeSubrange(lastUser...)
             }
-            await sendUserMessage([.text(trimmed)], display: trimmed, interactionMode: chatInteractionMode)
+            await sendUserMessage(
+                [.text(trimmed)],
+                display: trimmed,
+                interactionMode: chatInteractionMode,
+                includeIDEContext: includesIDEContext
+            )
         }
     }
 
@@ -2872,7 +2925,12 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         Task {
             await disconnectAndReset()
             appendSystem("Nouvelle conversation")
-            await sendUserMessage([.text(trimmed)], display: trimmed, interactionMode: chatInteractionMode)
+            await sendUserMessage(
+                [.text(trimmed)],
+                display: trimmed,
+                interactionMode: chatInteractionMode,
+                includeIDEContext: includesIDEContext
+            )
         }
     }
 
@@ -2917,6 +2975,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
                 currentRunInputItems.isEmpty ? [.text(request.prompt)] : currentRunInputItems,
                 display: request.displayText,
                 interactionMode: .agent,
+                includeIDEContext: currentRunIncludesIDEContext,
                 appendUserMessage: false
             )
         }

@@ -74,6 +74,11 @@ extension AttachedFile {
 // MARK: - AI Chat View (Native headless chat panel)
 
 struct AIChatView<Provider: HeadlessChatProviding>: View {
+    private enum CodexAttachSubmenu: Equatable {
+        case speed
+        case plugins
+    }
+
     @ObservedObject var provider: Provider
     let fileRootURL: URL?
     @State private var inputText = ""
@@ -98,6 +103,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var showCustomInstructionsEditor = false
     @State private var globalCustomInstructionsDraft = ""
     @State private var sessionCustomInstructionsDraft = ""
+    @State private var showCodexAttachPopover = false
+    @State private var codexAttachSubmenu: CodexAttachSubmenu?
+    @State private var selectedCodexPlugins: Set<String> = []
 
     private var visibleMessages: [ChatMessage] {
         provider.messages.filter { !$0.isLegacyAcceptEditsApprovalNotice }
@@ -195,6 +203,35 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     private var chatFileRootURL: URL {
         fileRootURL ?? provider.chatWorkingDirectory
+    }
+
+    private var currentSelection: SelectionInfo? { cachedSelection }
+
+    private var visibleSelection: SelectionInfo? {
+        provider.chatIncludesIDEContext ? currentSelection : nil
+    }
+
+    private var includeIDEContextBinding: Binding<Bool> {
+        Binding(
+            get: { provider.chatIncludesIDEContext },
+            set: { provider.chatIncludesIDEContext = $0 }
+        )
+    }
+
+    private var planModeBinding: Binding<Bool> {
+        Binding(
+            get: { provider.chatInteractionMode == .plan },
+            set: { isEnabled in
+                let targetMode: ChatInteractionMode = isEnabled ? .plan : .agent
+                guard provider.chatInteractionMode != targetMode else { return }
+                provider.chatInteractionMode = targetMode
+                flashModeChange()
+            }
+        )
+    }
+
+    private var codexInstalledPlugins: [String] {
+        ["Build macOS Apps", "Canva", "Figma", "GitHub"]
     }
 
     // MARK: - Session Header
@@ -962,7 +999,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     private var standardInputBar: some View {
         VStack(spacing: 0) {
-            if let sel = currentSelection {
+            if let sel = visibleSelection {
                 HStack(spacing: 6) {
                     Image(systemName: "text.quote")
                         .font(.system(size: 9))
@@ -1064,7 +1101,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             }
 
             VStack(spacing: 0) {
-                if let sel = currentSelection {
+                if let sel = visibleSelection {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 10, weight: .semibold))
@@ -1091,12 +1128,12 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
                 if !attachedFiles.isEmpty {
                     attachedFilesStrip
-                        .padding(.top, currentSelection == nil ? 8 : 5)
+                        .padding(.top, visibleSelection == nil ? 8 : 5)
                 }
 
                 promptTextField
                     .padding(.horizontal, 18)
-                    .padding(.top, (currentSelection == nil && attachedFiles.isEmpty) ? 10 : 7)
+                    .padding(.top, (visibleSelection == nil && attachedFiles.isEmpty) ? 10 : 7)
                     .padding(.bottom, 8)
 
                 Rectangle()
@@ -1428,17 +1465,37 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
     }
 
+    @ViewBuilder
     private func attachButton(isCodexPrompt: Bool) -> some View {
-        Button {
-            openAttachmentPicker()
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: isCodexPrompt ? 14 : 13, weight: .medium))
-                .foregroundStyle(isCodexPrompt ? AppChromePalette.codexMutedText : .secondary)
-                .frame(width: isCodexPrompt ? 20 : 24, height: isCodexPrompt ? 20 : 24)
+        if isCodexPrompt {
+            Button {
+                showCodexAttachPopover.toggle()
+                if !showCodexAttachPopover {
+                    codexAttachSubmenu = nil
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppChromePalette.codexMutedText)
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help("Ajouter ou configurer le message")
+            .popover(isPresented: $showCodexAttachPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                codexAttachPopover
+            }
+        } else {
+            Button {
+                openAttachmentPicker()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Joindre un fichier")
         }
-        .buttonStyle(.plain)
-        .help("Joindre un fichier")
     }
 
     private func sendButton(isCodexPrompt: Bool) -> some View {
@@ -1570,7 +1627,249 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             Text("IDE context")
                 .font(.system(size: 9, weight: .semibold))
         }
-        .foregroundStyle((currentSelection != nil || !attachedFiles.isEmpty) ? AppChromePalette.codexIDEContext : AppChromePalette.codexMutedText)
+        .foregroundStyle((provider.chatIncludesIDEContext && currentSelection != nil) ? AppChromePalette.codexIDEContext : AppChromePalette.codexMutedText)
+    }
+
+    private var codexAttachPopover: some View {
+        HStack(alignment: .top, spacing: 14) {
+            codexAttachPrimaryPanel
+
+            if let submenu = codexAttachSubmenu {
+                codexAttachSecondaryPanel(for: submenu)
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
+        }
+        .padding(6)
+        .background(AppChromePalette.codexCanvas)
+        .onDisappear {
+            codexAttachSubmenu = nil
+        }
+    }
+
+    private var codexAttachPrimaryPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            codexAttachActionRow(
+                title: "Ajouter photos et fichiers",
+                systemName: "paperclip",
+                isSelected: false,
+                showsChevron: false
+            ) {
+                showCodexAttachPopover = false
+                codexAttachSubmenu = nil
+                openAttachmentPicker()
+            }
+
+            codexAttachDivider
+
+            if provider.chatSupportsIDEContextToggle {
+                codexAttachToggleRow(
+                    title: "Inclure le contexte IDE",
+                    systemName: "sparkles",
+                    isOn: includeIDEContextBinding
+                )
+            }
+
+            if provider.chatSupportsPlanMode {
+                codexAttachToggleRow(
+                    title: "Mode plan",
+                    systemName: "checklist",
+                    isOn: planModeBinding
+                )
+            }
+
+            codexAttachDivider
+
+            codexAttachActionRow(
+                title: "Vitesse",
+                systemName: "bolt.fill",
+                isSelected: codexAttachSubmenu == .speed,
+                showsChevron: true
+            ) {
+                codexAttachSubmenu = .speed
+            }
+
+            codexAttachDivider
+
+            codexAttachActionRow(
+                title: "Plugins",
+                systemName: "circle.grid.2x2",
+                isSelected: codexAttachSubmenu == .plugins,
+                showsChevron: true
+            ) {
+                codexAttachSubmenu = .plugins
+            }
+        }
+        .padding(5)
+        .frame(width: 196, alignment: .leading)
+        .background(codexAttachPanelBackground)
+    }
+
+    @ViewBuilder
+    private func codexAttachSecondaryPanel(for submenu: CodexAttachSubmenu) -> some View {
+        switch submenu {
+        case .speed:
+            VStack(alignment: .leading, spacing: 0) {
+                codexAttachSectionTitle("Vitesse")
+
+                codexAttachChoiceRow(title: "Standard", isSelected: true, isEnabled: true) {}
+                codexAttachChoiceRow(title: "Rapide", isSelected: false, isEnabled: false) {}
+
+                Text("Le mode rapide n'est pas encore branche au backend Codex de Canope.")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(AppChromePalette.codexMutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
+            }
+            .padding(.vertical, 6)
+            .frame(width: 156, alignment: .leading)
+            .background(codexAttachPanelBackground)
+
+        case .plugins:
+            VStack(alignment: .leading, spacing: 0) {
+                codexAttachSectionTitle("\(codexInstalledPlugins.count) plugins installes")
+
+                ForEach(codexInstalledPlugins, id: \.self) { plugin in
+                    codexAttachChoiceRow(
+                        title: plugin,
+                        isSelected: selectedCodexPlugins.contains(plugin),
+                        isEnabled: true
+                    ) {
+                        toggleCodexPlugin(plugin)
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 156, alignment: .leading)
+            .background(codexAttachPanelBackground)
+        }
+    }
+
+    private var codexAttachPanelBackground: some View {
+        RoundedRectangle(cornerRadius: 13, style: .continuous)
+            .fill(AppChromePalette.codexPromptShell)
+            .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(AppChromePalette.codexPromptStroke, lineWidth: 1)
+            )
+    }
+
+    private var codexAttachDivider: some View {
+        Rectangle()
+            .fill(AppChromePalette.codexPromptDivider.opacity(0.75))
+            .frame(height: 1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+    }
+
+    private func codexAttachSectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 9)
+            .padding(.bottom, 3)
+    }
+
+    private func codexAttachActionRow(
+        title: String,
+        systemName: String,
+        isSelected: Bool,
+        showsChevron: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppChromePalette.codexMutedText)
+                    .frame(width: 16)
+
+                Text(title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 0)
+
+                if showsChevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AppChromePalette.codexMutedText)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.88) : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func codexAttachToggleRow(
+        title: String,
+        systemName: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppChromePalette.codexMutedText)
+                .frame(width: 16)
+
+            Text(title)
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 0)
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+    }
+
+    private func codexAttachChoiceRow(
+        title: String,
+        isSelected: Bool,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "checkmark" : "circle")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isSelected ? .primary : Color.clear)
+                    .frame(width: 12)
+
+                Text(title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(isEnabled ? .primary : AppChromePalette.codexMutedText)
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+    }
+
+    private func toggleCodexPlugin(_ plugin: String) {
+        if selectedCodexPlugins.contains(plugin) {
+            selectedCodexPlugins.remove(plugin)
+        } else {
+            selectedCodexPlugins.insert(plugin)
+        }
     }
 
     private func codexSecondaryButtonLabel(
@@ -1996,8 +2295,6 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         let fileName: String
         let lineCount: Int
     }
-
-    private var currentSelection: SelectionInfo? { cachedSelection }
 
     private func selectionStateModificationDate(at path: String) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? nil

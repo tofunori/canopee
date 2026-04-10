@@ -60,6 +60,8 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     var chatPromptConfigurationLabel: String? { get }
     var chatSupportsCustomInstructions: Bool { get }
     var chatCustomInstructions: ChatCustomInstructions { get }
+    var chatSupportsIDEContextToggle: Bool { get }
+    var chatIncludesIDEContext: Bool { get set }
     var chatInteractionMode: ChatInteractionMode { get set }
     var chatSupportsPlanMode: Bool { get }
     var chatSupportsReview: Bool { get }
@@ -135,6 +137,11 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
         get { selectedEffort }
         set { selectedEffort = newValue }
     }
+    var chatSupportsIDEContextToggle: Bool { true }
+    var chatIncludesIDEContext: Bool {
+        get { includesIDEContext }
+        set { includesIDEContext = newValue }
+    }
 
     func newChatSession() { newSession() }
     func resumeLastChatSession(matchingDirectory: URL?) {
@@ -171,6 +178,11 @@ extension HeadlessChatProviding {
     var chatPromptConfigurationLabel: String? { nil }
     var chatSupportsCustomInstructions: Bool { false }
     var chatCustomInstructions: ChatCustomInstructions { ChatCustomInstructions() }
+    var chatSupportsIDEContextToggle: Bool { false }
+    var chatIncludesIDEContext: Bool {
+        get { true }
+        set { _ = newValue }
+    }
     var chatSupportsReview: Bool { false }
     var chatReviewStateDescription: String? { nil }
     var chatStatusBadges: [ChatStatusBadge] { [] }

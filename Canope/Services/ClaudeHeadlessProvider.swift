@@ -12,6 +12,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     @Published var session = SessionInfo()
     @Published var selectedModel: String = "opus"
     @Published var selectedEffort: String = "high"
+    @Published var includesIDEContext = true
     @Published var chatInteractionMode: ChatInteractionMode = .agent
     @Published var pendingApprovalRequest: ChatApprovalRequest?
 
@@ -35,6 +36,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     private var pendingMarkdownPreRenders: [(UUID, String)] = []
     private var markdownPreRenderTask: Task<Void, Never>?
     private var currentRunInteractionMode: ChatInteractionMode = .agent
+    private var currentRunIncludesIDEContext = true
     private var currentRunPrompt = ""
     private var currentRunDisplayText = ""
 
@@ -42,6 +44,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         let messageID: UUID
         let prompt: String
         let interactionMode: ChatInteractionMode
+        let includeIDEContext: Bool
     }
 
     private enum ClaudeLaunchMode {
@@ -271,7 +274,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             userPrompt: trimmed,
             displayText: trimmed,
             mode: .forkEdit(sessionId: sid),
-            interactionMode: chatInteractionMode
+            interactionMode: chatInteractionMode,
+            includeIDEContext: includesIDEContext
         )
     }
 
@@ -544,7 +548,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             userPrompt: trimmed,
             displayText: displayText,
             mode: .send,
-            interactionMode: chatInteractionMode
+            interactionMode: chatInteractionMode,
+            includeIDEContext: includesIDEContext
         )
     }
 
@@ -567,7 +572,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             userPrompt: trimmed,
             displayText: trimmed,
             mode: .send,
-            interactionMode: chatInteractionMode
+            interactionMode: chatInteractionMode,
+            includeIDEContext: includesIDEContext
         )
     }
 
@@ -592,7 +598,14 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             queuePosition: messageQueue.count + 1
         )
         messages.append(message)
-        messageQueue.append(QueuedMessage(messageID: message.id, prompt: prompt, interactionMode: interactionMode))
+        messageQueue.append(
+            QueuedMessage(
+                messageID: message.id,
+                prompt: prompt,
+                interactionMode: interactionMode,
+                includeIDEContext: includesIDEContext
+            )
+        )
         refreshQueuedMessagePositions()
     }
 
@@ -608,7 +621,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         userPrompt trimmed: String,
         displayText: String,
         mode: ClaudeLaunchMode,
-        interactionMode: ChatInteractionMode
+        interactionMode: ChatInteractionMode,
+        includeIDEContext: Bool
     ) {
         cancelInFlightWork()
 
@@ -616,6 +630,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         currentAssistantIndex = nil
         outputBuffer = ""
         currentRunInteractionMode = interactionMode
+        currentRunIncludesIDEContext = includeIDEContext
         currentRunPrompt = trimmed
         currentRunDisplayText = displayText
 
@@ -639,7 +654,11 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             let cliPath = Self.findCLI("claude")
             proc.executableURL = URL(fileURLWithPath: cliPath)
 
-            let prompt = Self.buildPromptForInteractionMode(trimmed, mode: interactionMode)
+            let prompt = Self.buildPromptForInteractionMode(
+                trimmed,
+                mode: interactionMode,
+                includeIDEContext: includeIDEContext
+            )
             var args = ["-p", prompt, "--output-format", "stream-json", "--verbose",
                         "--model", model, "--effort", effort]
             switch mode {
@@ -743,7 +762,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             userPrompt: next.prompt,
             displayText: queuedDisplayText(for: next.messageID, fallback: next.prompt),
             mode: .send,
-            interactionMode: next.interactionMode
+            interactionMode: next.interactionMode,
+            includeIDEContext: next.includeIDEContext
         )
     }
 
@@ -958,7 +978,8 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
             userPrompt: request.prompt,
             displayText: request.displayText,
             mode: .send,
-            interactionMode: .agent
+            interactionMode: .agent,
+            includeIDEContext: currentRunIncludesIDEContext
         )
     }
 
@@ -1089,7 +1110,13 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     }
 
     /// Reads the current IDE selection state and injects it as context before the user's message.
-    nonisolated static func buildPromptWithIDEContext(_ userMessage: String) -> String {
+    nonisolated static func buildPromptWithIDEContext(
+        _ userMessage: String,
+        includeIDEContext: Bool = true
+    ) -> String {
+        guard includeIDEContext else {
+            return userMessage
+        }
         let selectionPath = CanopeContextFiles.ideSelectionStatePaths[0]
         guard let data = FileManager.default.contents(atPath: selectionPath),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1135,8 +1162,15 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         return context
     }
 
-    nonisolated static func buildPromptForInteractionMode(_ userMessage: String, mode: ChatInteractionMode) -> String {
-        let promptWithContext = buildPromptWithIDEContext(userMessage)
+    nonisolated static func buildPromptForInteractionMode(
+        _ userMessage: String,
+        mode: ChatInteractionMode,
+        includeIDEContext: Bool = true
+    ) -> String {
+        let promptWithContext = buildPromptWithIDEContext(
+            userMessage,
+            includeIDEContext: includeIDEContext
+        )
         switch mode {
         case .agent:
             return promptWithContext
