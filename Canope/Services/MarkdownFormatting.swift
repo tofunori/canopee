@@ -294,13 +294,18 @@ enum MarkdownFormatter {
         theme: MarkdownTheme = .dark,
         baseFontSize: CGFloat = 13
     ) -> AttributedString {
-        let converted = text.contains("$") ? LaTeXUnicode.convert(text) : text
+        let converted = normalizedMarkdownForRendering(text)
         var attr = (try? AttributedString(markdown: converted, options: .init(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         ))) ?? AttributedString(converted)
         attr.font = .system(size: baseFontSize)
         attr.foregroundColor = Color(theme.primaryTextColor)
         return attr
+    }
+
+    static func normalizedMarkdownForRendering(_ text: String) -> String {
+        let converted = text.contains("$") ? LaTeXUnicode.convert(text) : text
+        return normalizeLocalFileLinks(in: converted)
     }
 
     static func parseBlocks(_ text: String) -> [MarkdownBlock] {
@@ -439,6 +444,45 @@ enum MarkdownFormatter {
         }
 
         return blocks
+    }
+
+    private static func normalizeLocalFileLinks(in text: String) -> String {
+        guard text.contains("](/") else { return text }
+
+        let pattern = #"\[(.*?)\]\((/[^)\n]+)\)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        let source = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: source.length))
+        guard !matches.isEmpty else { return text }
+
+        var output = text
+        for match in matches.reversed() {
+            guard match.numberOfRanges >= 3 else { continue }
+            let destinationRange = match.range(at: 2)
+            guard destinationRange.location != NSNotFound else { continue }
+            let destination = source.substring(with: destinationRange)
+            let encoded = percentEncodedLocalMarkdownDestination(destination)
+            guard encoded != destination else { continue }
+            if let swiftRange = Range(destinationRange, in: output) {
+                output.replaceSubrange(swiftRange, with: encoded)
+            }
+        }
+        return output
+    }
+
+    private static func percentEncodedLocalMarkdownDestination(_ destination: String) -> String {
+        let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"), !trimmed.hasPrefix("//") else { return destination }
+
+        let components = trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+        let pathComponent = String(components[0])
+        let fragmentComponent = components.count > 1 ? String(components[1]) : nil
+
+        let encodedPath = pathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? pathComponent
+        guard let fragmentComponent else { return encodedPath }
+
+        let encodedFragment = fragmentComponent.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? fragmentComponent
+        return "\(encodedPath)#\(encodedFragment)"
     }
 
     static func styleSource(

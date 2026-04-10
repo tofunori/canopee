@@ -851,6 +851,20 @@ final class ServiceParsingTests: XCTestCase {
         assertColorsEqual(codeBackground, theme.codeBackgroundColor)
     }
 
+    func testMarkdownInlineRenderingEncodesLocalFileLinksWithSpaces() {
+        let source = "Voir [Proposed Research Initiative v6.tex](/Users/tofunori/Documents/UTQR/Master/Research Proposal/Proposed Research Initiative v6.tex#L114)."
+        let attr = MarkdownFormatter.inlineMarkdown(source)
+        let nsAttr = NSAttributedString(attr)
+        let nsSource = nsAttr.string as NSString
+        let linkRange = nsSource.range(of: "Proposed Research Initiative v6.tex")
+        let linkValue = nsAttr.attribute(.link, at: linkRange.location, effectiveRange: nil) as? URL
+
+        XCTAssertEqual(
+            linkValue?.absoluteString,
+            "/Users/tofunori/Documents/UTQR/Master/Research%20Proposal/Proposed%20Research%20Initiative%20v6.tex#L114"
+        )
+    }
+
     func testMarkdownPreviewRendererPreviewURLRemainsSeparateFromInlineEditor() {
         let markdownURL = URL(fileURLWithPath: "/tmp/notes.md")
         XCTAssertEqual(MarkdownPreviewRenderer.previewURL(for: markdownURL).path, "/tmp/notes.pdf")

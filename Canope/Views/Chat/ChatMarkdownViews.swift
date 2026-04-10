@@ -14,7 +14,7 @@ final class InlineMarkdownCache {
             bump(text)
             return cached
         }
-        let converted = text.contains("$") ? LaTeXUnicode.convert(text) : text
+        let converted = MarkdownFormatter.normalizedMarkdownForRendering(text)
         let result = (try? AttributedString(markdown: converted, options: .init(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         ))) ?? AttributedString(converted)
