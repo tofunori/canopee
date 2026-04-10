@@ -1,11 +1,17 @@
 import Foundation
 
+enum ChatVisualStyle {
+    case standard
+    case codex
+}
+
 /// Capabilities of the native headless chat beyond [`AIHeadlessProvider`](AIHeadlessProvider.swift).
 @MainActor
 protocol HeadlessChatProviding: AIHeadlessProvider {
     var chatWorkingDirectory: URL { get }
     var chatSessionDisplayName: String { get }
     var chatCanRenameCurrentSession: Bool { get }
+    var chatVisualStyle: ChatVisualStyle { get }
     var chatUsesBottomPromptControls: Bool { get }
     var chatPromptEnvironmentLabel: String? { get }
     var chatPromptConfigurationLabel: String? { get }
@@ -28,6 +34,7 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     func resumeChatSession(id: String)
     func renameCurrentChatSession(to name: String)
     func editAndResendLastUser(newText: String)
+    func forkChatFromUserMessage(newText: String)
     func sendMessageWithDisplay(displayText: String, items: [ChatInputItem])
     func sendMessageWithDisplay(displayText: String, prompt: String)
     func startChatReview(command: String?)
@@ -89,6 +96,12 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
     func resumeChatSession(id: String) { resumeSession(id: id) }
     func renameCurrentChatSession(to name: String) { renameCurrentSession(to: name) }
     func editAndResendLastUser(newText: String) { editAndResend(newText: newText) }
+    func forkChatFromUserMessage(newText: String) {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        newSession()
+        sendMessageWithDisplay(displayText: trimmed, prompt: trimmed)
+    }
     func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem] {
         Self.listSessions(limit: limit, matchingDirectory: matchingDirectory ?? workingDirectory).map {
             ChatSessionListItem(id: $0.id, name: $0.name, project: $0.project, date: $0.date)
@@ -105,6 +118,7 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
 }
 
 extension HeadlessChatProviding {
+    var chatVisualStyle: ChatVisualStyle { .standard }
     var chatUsesBottomPromptControls: Bool { false }
     var chatPromptEnvironmentLabel: String? { nil }
     var chatPromptConfigurationLabel: String? { nil }

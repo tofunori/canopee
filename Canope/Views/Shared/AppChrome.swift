@@ -16,6 +16,13 @@ enum AppChromeMetrics {
     static let dividerThickness: CGFloat = 1
     static let statusCapsuleHeight: CGFloat = 18
     static let hoverHintDelay: TimeInterval = 0.02
+    static let codexHeaderHeight: CGFloat = 24
+    static let codexPromptCornerRadius: CGFloat = 20
+    static let codexPromptInnerCornerRadius: CGFloat = 14
+    static let codexPromptMinHeight: CGFloat = 96
+    static let codexEventCornerRadius: CGFloat = 12
+    static let codexUserBubbleCornerRadius: CGFloat = 16
+    static let codexFooterChipHeight: CGFloat = 22
 }
 
 enum AppChromeTabRole {
@@ -118,6 +125,58 @@ enum AppChromePalette {
         dark: NSColor(hex: "#fca5a5", fallback: .systemRed)
     )
     static let neutral = Color.secondary
+    static let codexCanvas = adaptive(
+        light: NSColor(hex: "#fafafa", fallback: .windowBackgroundColor),
+        dark: NSColor(hex: "#121113", fallback: NSColor(calibratedWhite: 0.07, alpha: 1))
+    )
+    static let codexHeaderFill = adaptive(
+        light: NSColor(hex: "#f4f4f5", fallback: .controlBackgroundColor),
+        dark: NSColor(hex: "#151418", fallback: NSColor(calibratedWhite: 0.09, alpha: 1))
+    )
+    static let codexPromptShell = adaptive(
+        light: NSColor(hex: "#f4f1f1", fallback: .controlBackgroundColor),
+        dark: NSColor(hex: "#232022", fallback: NSColor(calibratedWhite: 0.14, alpha: 1))
+    )
+    static let codexPromptInner = adaptive(
+        light: NSColor(hex: "#ffffff", fallback: .textBackgroundColor),
+        dark: NSColor(hex: "#2b282b", fallback: NSColor(calibratedWhite: 0.17, alpha: 1))
+    )
+    static let codexPromptStroke = adaptive(
+        light: NSColor(hex: "#d9d4d7", fallback: .separatorColor),
+        dark: NSColor(hex: "#3a3539", fallback: NSColor(calibratedWhite: 0.24, alpha: 1))
+    )
+    static let codexPromptDivider = adaptive(
+        light: NSColor(hex: "#d6d1d4", fallback: .separatorColor),
+        dark: NSColor(hex: "#3f3a3f", fallback: NSColor(calibratedWhite: 0.25, alpha: 1))
+    )
+    static let codexRequestFill = adaptive(
+        light: NSColor(hex: "#ece7ea", fallback: .selectedContentBackgroundColor),
+        dark: NSColor(hex: "#2a262b", fallback: NSColor(calibratedWhite: 0.17, alpha: 1))
+    )
+    static let codexRequestStroke = adaptive(
+        light: NSColor(hex: "#d9d4d7", fallback: .separatorColor),
+        dark: NSColor(hex: "#39343a", fallback: NSColor(calibratedWhite: 0.24, alpha: 1))
+    )
+    static let codexEventFill = adaptive(
+        light: NSColor(hex: "#f6f5f7", fallback: .controlBackgroundColor),
+        dark: NSColor(hex: "#1a181c", fallback: NSColor(calibratedWhite: 0.1, alpha: 1))
+    )
+    static let codexMutedText = adaptive(
+        light: NSColor(hex: "#71717a", fallback: .secondaryLabelColor),
+        dark: NSColor(hex: "#a1a1aa", fallback: NSColor(calibratedWhite: 0.65, alpha: 1))
+    )
+    static let codexIDEContext = adaptive(
+        light: NSColor(hex: "#b7791f", fallback: .systemOrange),
+        dark: NSColor(hex: "#f3d36b", fallback: .systemYellow)
+    )
+    static let codexSendFill = adaptive(
+        light: NSColor(hex: "#d6d1d4", fallback: .tertiaryLabelColor),
+        dark: NSColor(hex: "#b9b4b8", fallback: NSColor(calibratedWhite: 0.72, alpha: 1))
+    )
+    static let codexSendGlyph = adaptive(
+        light: NSColor(hex: "#2a262b", fallback: .windowBackgroundColor),
+        dark: NSColor(hex: "#2a262b", fallback: .black)
+    )
 
     static func divider(for role: AppChromeDividerRole) -> Color {
         switch role {

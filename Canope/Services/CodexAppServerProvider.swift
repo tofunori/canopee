@@ -2625,6 +2625,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
 extension CodexAppServerProvider: HeadlessChatProviding {
     var chatWorkingDirectory: URL { workingDirectoryURL }
+    var chatVisualStyle: ChatVisualStyle { .codex }
     var chatUsesBottomPromptControls: Bool { true }
     var chatPromptEnvironmentLabel: String? { "Local" }
     var chatPromptConfigurationLabel: String? { "Personnalise" }
@@ -2725,6 +2726,16 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             if let lastUser = messages.lastIndex(where: { $0.role == .user }) {
                 messages.removeSubrange(lastUser...)
             }
+            await sendUserMessage([.text(trimmed)], display: trimmed, interactionMode: chatInteractionMode)
+        }
+    }
+
+    func forkChatFromUserMessage(newText: String) {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Task {
+            await disconnectAndReset()
+            appendSystem("Nouvelle conversation")
             await sendUserMessage([.text(trimmed)], display: trimmed, interactionMode: chatInteractionMode)
         }
     }
@@ -3342,6 +3353,24 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         return message
     }
 
+    nonisolated static func cleanedResumedUserMessage(_ text: String) -> String {
+        let pattern = #"^\[Canope IDE Context[^\n]*\]\n.*?\n\[/Canope IDE Context\]\n*(.*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            return text
+        }
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        guard let match = regex.firstMatch(in: text, options: [], range: fullRange),
+              match.numberOfRanges >= 2
+        else {
+            return text
+        }
+
+        let contentRange = match.range(at: 1)
+        guard contentRange.location != NSNotFound else { return text }
+        return nsText.substring(with: contentRange).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func historyUserMessageText(from item: [String: Any]) -> String? {
         let content = item["content"] as? [[String: Any]] ?? []
         let fragments = content.compactMap { fragment -> String? in
@@ -3372,7 +3401,9 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             }
         }
 
-        return fragments.joined(separator: "\n\n").nilIfEmpty
+        let text = fragments.joined(separator: "\n\n").nilIfEmpty
+        let cleaned = text.map(cleanedResumedUserMessage(_:))
+        return cleaned?.nilIfEmpty
     }
 }
 

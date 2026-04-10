@@ -54,9 +54,15 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var cachedSelectionModifiedAt: Date?
     @State private var modeStatusFlash = false
     @State private var approvalFieldValues: [String: String] = [:]
+    @State private var hoveredUserMessageID: UUID?
+    @State private var hoveredUserMessageHideTask: Task<Void, Never>?
 
     private var visibleMessages: [ChatMessage] {
         provider.messages.filter { !$0.isLegacyAcceptEditsApprovalNotice }
+    }
+
+    private var usesCodexVisualStyle: Bool {
+        provider.chatVisualStyle == .codex
     }
 
     var body: some View {
@@ -68,7 +74,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             inputBar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(AppChromePalette.surfaceBar)
+        .background(usesCodexVisualStyle ? AppChromePalette.codexCanvas : AppChromePalette.surfaceBar)
         .onAppear {
             if !provider.isConnected {
                 provider.start()
@@ -79,6 +85,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         .onDisappear {
             fileListTask?.cancel()
             fileListTask = nil
+            hoveredUserMessageHideTask?.cancel()
+            hoveredUserMessageHideTask = nil
         }
         .onChange(of: provider.pendingApprovalRequest?.id) { _ in
             syncPendingApprovalFormState()
@@ -149,11 +157,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     private var sessionHeader: some View {
         HStack(spacing: 8) {
             Image(systemName: provider.providerIcon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .font(.system(size: usesCodexVisualStyle ? 9 : 10, weight: .semibold))
+                .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
 
             Text(provider.chatSessionDisplayName)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: usesCodexVisualStyle ? 10 : 11, weight: .semibold))
                 .lineLimit(1)
 
             if provider.chatCanRenameCurrentSession {
@@ -163,7 +171,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 } label: {
                     Image(systemName: "pencil")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
                 }
                 .buttonStyle(.plain)
                 .help("Renommer la conversation")
@@ -219,11 +227,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             if provider.session.turns > 0 {
                 if !provider.chatUsesBottomPromptControls {
                     Text("·")
-                        .foregroundStyle(.secondary.opacity(0.5))
+                        .foregroundStyle((usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary).opacity(0.5))
                 }
                 Text("\(provider.session.turns) échanges")
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
             }
 
             ForEach(provider.chatStatusBadges) { badge in
@@ -252,8 +260,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             .disabled(!provider.isProcessing)
         }
         .padding(.horizontal, 12)
-        .frame(height: 28)
-        .background(AppChromePalette.surfaceSubbar)
+        .frame(height: usesCodexVisualStyle ? AppChromeMetrics.codexHeaderHeight : 28)
+        .background(usesCodexVisualStyle ? AppChromePalette.codexHeaderFill : AppChromePalette.surfaceSubbar)
     }
 
     // MARK: - Message List
@@ -263,7 +271,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             ScrollView {
                 // `LazyVStack` re-estimates off-screen row heights for rich markdown,
                 // which makes the scrollbar thumb resize and causes visible jumps.
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: usesCodexVisualStyle ? 8 : 4) {
                     ForEach(visibleMessages) { message in
                         messageRow(message)
                     }
@@ -280,7 +288,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .id("bottom_anchor")
                 }
                 .padding(.vertical, 8)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, usesCodexVisualStyle ? 16 : 12)
             }
             .id(listResetID)
             .onAppear {
@@ -321,85 +329,243 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     private func userBubble(_ message: ChatMessage) -> some View {
         HStack {
-            Spacer(minLength: 60)
-            if editingMessageID == message.id {
-                // Inline editor
-                VStack(alignment: .trailing, spacing: 6) {
-                    TextField("", text: $editingText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.accentColor.opacity(0.3))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .strokeBorder(Color.accentColor, lineWidth: 1)
-                        )
-                    HStack(spacing: 8) {
-                        Button("Annuler") { editingMessageID = nil }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Button("Renvoyer") {
-                            let newText = editingText
-                            editingMessageID = nil
-                            provider.editAndResendLastUser(newText: newText)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .font(.system(size: 11))
-                    }
-                }
-            } else {
-                VStack(alignment: .trailing, spacing: 4) {
-                    if let queuePosition = message.queuePosition {
-                        HStack(spacing: 5) {
-                            Image(systemName: "clock.fill")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text(queuePosition == 1 ? "En attente" : "En attente · #\(queuePosition)")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .foregroundStyle(.white.opacity(0.8))
-                    }
+            Spacer(minLength: usesCodexVisualStyle ? 88 : 60)
+            VStack(alignment: .trailing, spacing: usesCodexVisualStyle ? 6 : 4) {
+                if editingMessageID == message.id {
+                    VStack(alignment: .trailing, spacing: usesCodexVisualStyle ? 10 : 6) {
+                        TextField("", text: $editingText, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13))
+                            .padding(.horizontal, usesCodexVisualStyle ? 16 : 12)
+                            .padding(.vertical, usesCodexVisualStyle ? 14 : 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(usesCodexVisualStyle ? AppChromePalette.codexPromptInner : Color.accentColor.opacity(0.3))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .strokeBorder(usesCodexVisualStyle ? AppChromePalette.codexPromptStroke : Color.accentColor, lineWidth: 1)
+                            )
+                        HStack(spacing: 8) {
+                            if usesCodexVisualStyle {
+                                Button("Annuler") {
+                                    editingMessageID = nil
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.regular)
+                                .font(.system(size: 11, weight: .medium))
+                            } else {
+                                Button("Annuler") {
+                                    editingMessageID = nil
+                                }
+                                .buttonStyle(.plain)
+                                .controlSize(.regular)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            }
 
-                    Text(message.content)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white)
-                }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                            Button(isLatestEditableUserMessage(message) ? "Renvoyer" : "Fork & renvoyer") {
+                                commitEditedUserMessage(message)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(usesCodexVisualStyle ? .regular : .small)
+                            .font(.system(size: 11))
+                        }
+                    }
+                    .padding(usesCodexVisualStyle ? 12 : 0)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.accentColor.opacity(message.isQueued ? 0.42 : 0.85))
+                        RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexPromptCornerRadius : 14, style: .continuous)
+                            .fill(usesCodexVisualStyle ? AppChromePalette.codexPromptShell : Color.clear)
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.accentColor.opacity(message.isQueued ? 0.45 : 0), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexPromptCornerRadius : 14, style: .continuous)
+                            .strokeBorder(usesCodexVisualStyle ? AppChromePalette.codexPromptStroke : Color.clear, lineWidth: usesCodexVisualStyle ? 1 : 0)
+                    )
+                } else {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if let queuePosition = message.queuePosition {
+                            HStack(spacing: 5) {
+                                Image(systemName: "clock.fill")
+                                    .font(.system(size: 9, weight: .semibold))
+                                Text(queuePosition == 1 ? "En attente" : "En attente · #\(queuePosition)")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundStyle(.white.opacity(0.8))
+                        }
+
+                        Text(message.content)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, usesCodexVisualStyle ? 16 : 12)
+                    .padding(.vertical, usesCodexVisualStyle ? 11 : 8)
+                    .frame(maxWidth: codexUserBubbleMaxWidth(for: message), alignment: .trailing)
+                    .background(
+                        RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexUserBubbleCornerRadius : 14, style: .continuous)
+                            .fill(
+                                usesCodexVisualStyle
+                                    ? AppChromePalette.codexRequestFill.opacity(message.isQueued ? 0.88 : 1)
+                                    : Color.accentColor.opacity(message.isQueued ? 0.42 : 0.85)
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexUserBubbleCornerRadius : 14, style: .continuous)
+                            .strokeBorder(
+                                usesCodexVisualStyle
+                                    ? AppChromePalette.codexRequestStroke.opacity(message.isQueued ? 0.65 : 1)
+                                    : Color.accentColor.opacity(message.isQueued ? 0.45 : 0),
+                                lineWidth: 1
+                            )
                     )
                     .opacity(message.isQueued ? 0.92 : 1)
                     .textSelection(.enabled)
                     .contextMenu {
                         Button("Copier") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(message.content, forType: .string)
+                            copyUserMessage(message)
                         }
                         if !message.isQueued {
-                            Button("Éditer & renvoyer") {
+                            Button("Fork") {
+                                forkUserMessage(message)
+                            }
+                            Button(isLatestEditableUserMessage(message) ? "Éditer & renvoyer" : "Éditer & forker") {
                                 editingMessageID = message.id
                                 editingText = message.content
                             }
                         }
                     }
+                }
+
+                userMessageActionBar(message)
+                    .opacity(shouldShowUserMessageActions(for: message) ? 1 : 0)
+                    .allowsHitTesting(shouldShowUserMessageActions(for: message))
+            }
+            .frame(maxWidth: usesCodexVisualStyle ? 540 : .infinity, alignment: .trailing)
+            .contentShape(Rectangle())
+            .onHover { isHovering in
+                setUserMessageHover(isHovering, for: message.id)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, usesCodexVisualStyle ? 4 : 2)
+    }
+
+    private func userMessageActionBar(_ message: ChatMessage) -> some View {
+        HStack(spacing: 12) {
+            Text(formattedUserMessageTime(message.timestamp))
+                .font(.system(size: usesCodexVisualStyle ? 10 : 10, weight: .medium))
+                .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
+
+            Button {
+                copyUserMessage(message)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
+            .help("Copier")
+
+            Button {
+                forkUserMessage(message)
+            } label: {
+                Image(systemName: "point.3.connected.trianglepath")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
+            .help("Fork")
+
+            Button {
+                editingMessageID = message.id
+                editingText = message.content
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
+            .help("Éditer")
+        }
+        .padding(.horizontal, usesCodexVisualStyle ? 6 : 0)
+        .padding(.top, 2)
+        .frame(height: 18)
+        .onHover { isHovering in
+            setUserMessageHover(isHovering, for: message.id)
+        }
+    }
+
+    private func codexUserBubbleMaxWidth(for message: ChatMessage) -> CGFloat? {
+        guard usesCodexVisualStyle else { return nil }
+        let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count <= 42 && !trimmed.contains("\n") {
+            return nil
+        }
+        return 460
+    }
+
+    private func shouldShowUserMessageActions(for message: ChatMessage) -> Bool {
+        !message.isQueued && hoveredUserMessageID == message.id && editingMessageID != message.id
+    }
+
+    private func setUserMessageHover(_ isHovering: Bool, for messageID: UUID) {
+        hoveredUserMessageHideTask?.cancel()
+        if isHovering {
+            hoveredUserMessageID = messageID
+            return
+        }
+
+        guard hoveredUserMessageID == messageID else { return }
+        hoveredUserMessageHideTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled, hoveredUserMessageID == messageID else { return }
+            hoveredUserMessageID = nil
+        }
+    }
+
+    private func isLatestEditableUserMessage(_ message: ChatMessage) -> Bool {
+        provider.messages.last(where: { $0.role == .user && !$0.isQueued })?.id == message.id
+    }
+
+    private func commitEditedUserMessage(_ message: ChatMessage) {
+        let newText = editingText
+        editingMessageID = nil
+        if isLatestEditableUserMessage(message) {
+            provider.editAndResendLastUser(newText: newText)
+        } else {
+            provider.forkChatFromUserMessage(newText: newText)
+        }
+    }
+
+    private func copyUserMessage(_ message: ChatMessage) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message.content, forType: .string)
+    }
+
+    private func forkUserMessage(_ message: ChatMessage) {
+        provider.forkChatFromUserMessage(newText: message.content)
+    }
+
+    private func formattedUserMessageTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
     }
 
     private var thinkingIndicator: some View {
         SpinnerVerbView()
+    }
+
+    private func codexTimelineGlyph(_ systemName: String, tint: Color = AppChromePalette.codexMutedText) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 16, alignment: .center)
+            .padding(.top, 2)
+    }
+
+    private func codexToolStatus(for message: ChatMessage) -> String? {
+        if message.isStreaming { return "running" }
+        if message.toolOutput != nil { return "completed" }
+        return nil
     }
 
     @ViewBuilder
@@ -409,77 +575,85 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         } else if message.presentationKind == .reviewFinding {
             reviewFindingCard(message)
         } else {
-        let needsBlockMarkdown = messageNeedsBlockMarkdown(message.content)
-        let shouldUseRichMarkdown = !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content)
-        HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(Color.orange.opacity(0.15))
-                .frame(width: 20, height: 20)
-                .overlay {
-                    Image(systemName: "sparkle")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.orange)
+            let needsBlockMarkdown = messageNeedsBlockMarkdown(message.content)
+            let shouldUseRichMarkdown = !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content)
+            HStack(alignment: .top, spacing: usesCodexVisualStyle ? 10 : 8) {
+                if usesCodexVisualStyle {
+                    codexTimelineGlyph("sparkles")
+                } else {
+                    Circle()
+                        .fill(Color.orange.opacity(0.15))
+                        .frame(width: 20, height: 20)
+                        .overlay {
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(.top, 2)
                 }
-                .padding(.top, 2)
 
-            VStack(alignment: .leading, spacing: 0) {
-                if message.isStreaming {
-                    Text(message.content)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                    streamingCursor
-                } else if shouldUseRichMarkdown {
-                    if message.isFromHistory {
-                        DeferredRichMarkdownView(
-                            text: message.content,
-                            promotionDelayNanoseconds: 0
-                        )
-                    } else {
-                        RichMarkdownView(text: message.content)
-                    }
-                } else if message.isFromHistory {
-                    if needsBlockMarkdown {
-                        DeferredMarkdownView(
-                            text: message.content,
-                            skipFullRender: ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content),
-                            allowPromoteToFullBlock: true,
-                            promotionDelayNanoseconds: 0
-                        )
-                    } else {
+                VStack(alignment: .leading, spacing: usesCodexVisualStyle ? 4 : 0) {
+                    if message.isStreaming {
                         Text(message.content)
                             .font(.system(size: 13))
-                            .foregroundStyle(.primary.opacity(0.7))
+                            .foregroundStyle(.primary)
                             .textSelection(.enabled)
+                        streamingCursor
+                    } else if shouldUseRichMarkdown {
+                        if message.isFromHistory {
+                            DeferredRichMarkdownView(
+                                text: message.content,
+                                promotionDelayNanoseconds: 0
+                            )
+                        } else {
+                            RichMarkdownView(text: message.content)
+                        }
+                    } else if message.isFromHistory {
+                        if needsBlockMarkdown {
+                            DeferredMarkdownView(
+                                text: message.content,
+                                skipFullRender: ChatMarkdownPolicy.shouldSkipFullMarkdown(for: message.content),
+                                allowPromoteToFullBlock: true,
+                                promotionDelayNanoseconds: 0
+                            )
+                        } else {
+                            Text(message.content)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.primary.opacity(usesCodexVisualStyle ? 0.9 : 0.7))
+                                .textSelection(.enabled)
+                        }
+                    } else if let preRenderedMarkdown = message.preRenderedMarkdown,
+                              !needsBlockMarkdown {
+                        Text(preRenderedMarkdown)
+                            .font(.system(size: 13))
+                            .textSelection(.enabled)
+                    } else {
+                        assistantMarkdownStable(message, needsBlockMarkdown: needsBlockMarkdown)
                     }
-                } else if let preRenderedMarkdown = message.preRenderedMarkdown,
-                          !needsBlockMarkdown {
-                    // Pre-rendered in background — instant display with markdown
-                    Text(preRenderedMarkdown)
-                        .font(.system(size: 13))
-                        .textSelection(.enabled)
-                } else {
-                    assistantMarkdownStable(message, needsBlockMarkdown: needsBlockMarkdown)
                 }
-            }
+                .frame(maxWidth: usesCodexVisualStyle ? 680 : .infinity, alignment: .leading)
 
-            Spacer(minLength: 20)
-        }
-        .padding(.vertical, 4)
+                Spacer(minLength: 20)
+            }
+            .padding(.vertical, usesCodexVisualStyle ? 3 : 4)
         }
     }
 
     private func planAssistantCard(_ message: ChatMessage) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(Color.blue.opacity(0.14))
-                .frame(width: 20, height: 20)
-                .overlay {
-                    Image(systemName: "list.bullet.clipboard")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.blue)
-                }
-                .padding(.top, 2)
+        HStack(alignment: .top, spacing: usesCodexVisualStyle ? 10 : 8) {
+            if usesCodexVisualStyle {
+                codexTimelineGlyph("list.bullet.clipboard", tint: .blue)
+            } else {
+                Circle()
+                    .fill(Color.blue.opacity(0.14))
+                    .frame(width: 20, height: 20)
+                    .overlay {
+                        Image(systemName: "list.bullet.clipboard")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.blue)
+                    }
+                    .padding(.top, 2)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
@@ -488,7 +662,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .foregroundStyle(.blue)
                     Text("Aucune action appliquee")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
                 }
 
                 if message.isStreaming {
@@ -506,19 +680,20 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     MarkdownBlockView(text: message.content)
                 }
             }
-            .padding(10)
+            .padding(usesCodexVisualStyle ? 0 : 10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.blue.opacity(0.06))
+                    .fill(usesCodexVisualStyle ? Color.clear : Color.blue.opacity(0.06))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.blue.opacity(0.18), lineWidth: 0.8)
+                    .strokeBorder(usesCodexVisualStyle ? Color.clear : Color.blue.opacity(0.18), lineWidth: 0.8)
             )
+            .frame(maxWidth: usesCodexVisualStyle ? 680 : .infinity, alignment: .leading)
 
             Spacer(minLength: 20)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, usesCodexVisualStyle ? 3 : 4)
     }
 
     private var streamingCursor: some View {
@@ -603,10 +778,14 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             .padding(.top, 4)
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: iconName)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(toolAccentColor(toolName))
-                    .frame(width: 14)
+                if usesCodexVisualStyle {
+                    codexTimelineGlyph(iconName, tint: toolAccentColor(toolName))
+                } else {
+                    Image(systemName: iconName)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(toolAccentColor(toolName))
+                        .frame(width: 14)
+                }
 
                 Text(toolName)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -622,56 +801,103 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
                 Spacer()
 
-                if message.toolOutput != nil {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.green.opacity(0.7))
+                if let status = codexToolStatus(for: message) {
+                    if usesCodexVisualStyle {
+                        Text(status)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(AppChromePalette.codexMutedText)
+                    } else if message.toolOutput != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.green.opacity(0.7))
+                    }
                 }
             }
         }
         .disclosureGroupStyle(ToolCardDisclosureStyle())
-        .padding(.leading, 28) // Align with assistant text
-        .padding(.vertical, 1)
+        .padding(.leading, usesCodexVisualStyle ? 0 : 28)
+        .padding(.horizontal, usesCodexVisualStyle ? 10 : 0)
+        .padding(.vertical, usesCodexVisualStyle ? 6 : 1)
+        .background(
+            RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexEventCornerRadius : 0, style: .continuous)
+                .fill(usesCodexVisualStyle ? AppChromePalette.codexEventFill : Color.clear)
+        )
     }
 
     private func toolResultCard(_ message: ChatMessage) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "arrow.turn.down.right")
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
+            if usesCodexVisualStyle {
+                codexTimelineGlyph("arrow.turn.down.right", tint: AppChromePalette.codexMutedText)
+            } else {
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
 
             Text(message.content)
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
                 .lineLimit(3)
                 .truncationMode(.tail)
+
+            Spacer(minLength: 0)
         }
-        .padding(.leading, 28)
-        .padding(.vertical, 1)
+        .padding(.leading, usesCodexVisualStyle ? 0 : 28)
+        .padding(.horizontal, usesCodexVisualStyle ? 10 : 0)
+        .padding(.vertical, usesCodexVisualStyle ? 6 : 1)
     }
 
+    @ViewBuilder
     private func systemRow(_ message: ChatMessage) -> some View {
-        HStack {
-            Spacer()
-            Text(message.content)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(AppChromePalette.surfaceSubbar)
-                )
-            Spacer()
+        if usesCodexVisualStyle {
+            HStack(spacing: 6) {
+                codexTimelineGlyph("point.topleft.down.curvedto.point.bottomright.up")
+                Text(message.content)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(AppChromePalette.codexMutedText)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+        } else {
+            HStack {
+                Spacer()
+                Text(message.content)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(AppChromePalette.surfaceSubbar)
+                    )
+                Spacer()
+            }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
     }
 
     // MARK: - Input Bar
 
     private var inputBar: some View {
+        Group {
+            if usesCodexVisualStyle {
+                codexInputBar
+            } else {
+                standardInputBar
+            }
+        }
+        .onAppear { installPasteMonitor() }
+        .onDisappear { removePasteMonitor() }
+        .onExitCommand {
+            if provider.isProcessing {
+                provider.stop()
+            }
+        }
+    }
+
+    private var standardInputBar: some View {
         VStack(spacing: 0) {
-            // Selection context indicator
             if let sel = currentSelection {
                 HStack(spacing: 6) {
                     Image(systemName: "text.quote")
@@ -702,166 +928,31 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
             if let approval = provider.pendingApprovalRequest {
                 approvalRequestCard(approval)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.green.opacity(0.08))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.green.opacity(0.08))
 
                 Divider()
             }
 
-            // @ file suggestions
             if !fileListItems.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(fileListItems, id: \.self) { item in
-                            Button {
-                                selectFile(item)
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: item.hasSuffix("/") ? "folder" : "doc.text")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(item.hasSuffix("/") ? .blue : .orange)
-                                        .frame(width: 14)
-                                    Text(item)
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .frame(maxHeight: 200)
-                .background(AppChromePalette.surfaceSubbar)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(AppChromePalette.dividerSoft, lineWidth: 0.5)
-                )
-                .padding(.horizontal, 12)
+                promptFileSuggestionsList
             }
 
-            // Slash command suggestions
             if showSlashSuggestions, !filteredSlashCommands.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(filteredSlashCommands, id: \.self) { cmd in
-                            Button {
-                                inputText = "/\(cmd) "
-                                selectedSlashIndex = nil
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Text("/")
-                                        .foregroundStyle(.orange)
-                                    Text(cmd)
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                }
-                                .font(.system(size: 12, design: .monospaced))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    selectedSlashIndex == filteredSlashCommands.firstIndex(of: cmd)
-                                        ? AppChromePalette.tabSelectedFill
-                                        : Color.clear
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .frame(maxHeight: 180)
-                .background(AppChromePalette.surfaceSubbar)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(AppChromePalette.dividerSoft, lineWidth: 0.5)
-                )
-                .padding(.horizontal, 12)
+                promptSlashSuggestionsList
             }
 
-            // Attached files indicator
             if !attachedFiles.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(attachedFiles) { file in
-                            HStack(spacing: 4) {
-                                Image(systemName: file.kind == .image ? "camera" : "doc.text")
-                                    .font(.system(size: 9))
-                                    .symbolRenderingMode(.monochrome)
-                                    .foregroundColor(file.kind == .image ? .secondary : .orange)
-                                Text(file.name)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                Button {
-                                    attachedFiles.removeAll { $0.id == file.id }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 7, weight: .bold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .fill(AppChromePalette.surfaceSubbar)
-                            )
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 4)
-                }
+                attachedFilesStrip
             }
 
             HStack(spacing: 8) {
-                Button {
-                    openAttachmentPicker()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24, height: 24)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(AppChromePalette.surfaceSubbar)
-                        )
-                }
-                .buttonStyle(.plain)
-                .help("Joindre un fichier")
+                attachButton(isCodexPrompt: false)
 
-                TextField(chatInputPlaceholder, text: $inputText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .lineLimit(1...6)
-                    .focused($isInputFocused)
-                    .onSubmit {
-                        if NSApp.currentEvent?.modifierFlags.contains(.shift) != true {
-                            send()
-                        }
-                    }
-                    .onChange(of: inputText) {
-                        updateSlashSuggestions()
-                        updateFileList()
-                    }
+                promptTextField
 
-                Button {
-                    send()
-                } label: {
-                    Image(systemName: provider.chatInteractionMode.sendButtonSymbolName)
-                        .font(.system(size: 22))
-                        .foregroundStyle(canSend ? provider.chatInteractionMode.tint : Color.secondary.opacity(0.4))
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .help(sendButtonHelp)
-                .frame(width: 28, height: 28)
+                sendButton(isCodexPrompt: false)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -872,48 +963,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     effortPromptMenu
                 }
 
-                Menu {
-                    ForEach(ChatInteractionMode.allCases, id: \.self) { mode in
-                        Button {
-                            provider.chatInteractionMode = mode
-                            flashModeChange()
-                        } label: {
-                            HStack {
-                                Text(mode.badgeLabel)
-                                if provider.chatInteractionMode == mode {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: provider.chatInteractionMode.iconName)
-                            .font(.system(size: 10, weight: .semibold))
-                            .frame(width: 12, height: 12)
-
-                        Text(provider.chatInteractionMode.badgeLabel)
-                            .font(.system(size: 10, weight: .semibold))
-                            .lineLimit(1)
-
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                            .frame(width: 8, height: 8)
-                    }
-                        .foregroundStyle(provider.chatInteractionMode.tint)
-                        .padding(.horizontal, 8)
-                        .frame(height: 22)
-                        .background(provider.chatInteractionMode.tint.opacity(0.12))
-                        .clipShape(Capsule())
-                        .overlay {
-                            if modeStatusFlash {
-                                Capsule()
-                                    .strokeBorder(provider.chatInteractionMode.tint.opacity(0.45), lineWidth: 1)
-                            }
-                        }
-                }
-                .menuStyle(.borderlessButton)
-                .help("Mode courant · Shift+Tab pour cycler")
+                interactionModePromptMenu(style: .standard)
 
                 if let environmentLabel = provider.chatPromptEnvironmentLabel {
                     environmentPromptMenu(environmentLabel)
@@ -930,13 +980,543 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             .padding(.bottom, 8)
         }
         .background(AppChromePalette.surfaceSubbar)
-        .onAppear { installPasteMonitor() }
-        .onDisappear { removePasteMonitor() }
-        .onExitCommand {
-            if provider.isProcessing {
-                provider.stop()
+    }
+
+    private var codexInputBar: some View {
+        VStack(spacing: 6) {
+            if let approval = provider.pendingApprovalRequest {
+                approvalRequestCard(approval)
+                    .padding(.horizontal, 14)
+            }
+
+            if !fileListItems.isEmpty {
+                promptFileSuggestionsList
+                    .padding(.horizontal, 8)
+            }
+
+            if showSlashSuggestions, !filteredSlashCommands.isEmpty {
+                promptSlashSuggestionsList
+                    .padding(.horizontal, 8)
+            }
+
+            VStack(spacing: 0) {
+                if let sel = currentSelection {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(AppChromePalette.codexIDEContext)
+
+                        Text(sel.fileName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AppChromePalette.codexMutedText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Text("·")
+                            .foregroundStyle(AppChromePalette.codexMutedText.opacity(0.4))
+
+                        Text("\(sel.lineCount) ligne\(sel.lineCount > 1 ? "s" : "")")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AppChromePalette.codexMutedText)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 8)
+                }
+
+                if !attachedFiles.isEmpty {
+                    attachedFilesStrip
+                        .padding(.top, currentSelection == nil ? 8 : 5)
+                }
+
+                promptTextField
+                    .padding(.horizontal, 18)
+                    .padding(.top, (currentSelection == nil && attachedFiles.isEmpty) ? 10 : 7)
+                    .padding(.bottom, 8)
+
+                Rectangle()
+                    .fill(AppChromePalette.codexPromptDivider.opacity(0.55))
+                    .frame(height: 1)
+                    .padding(.horizontal, 16)
+
+                HStack(spacing: 8) {
+                    attachButton(isCodexPrompt: true)
+
+                    if provider.chatUsesBottomPromptControls {
+                        codexPrimaryMenuLabel(title: provider.chatSelectedModel, iconName: nil) {
+                            ForEach(provider.chatAvailableModels, id: \.self) { model in
+                                Button {
+                                    provider.chatSelectedModel = model
+                                } label: {
+                                    HStack {
+                                        Text(model)
+                                        if provider.chatSelectedModel == model {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        codexPromptFooterDivider
+                        codexPrimaryMenuLabel(title: effortDisplayLabel(provider.chatSelectedEffort), iconName: nil) {
+                            ForEach(provider.chatAvailableEfforts, id: \.self) { effort in
+                                Button {
+                                    provider.chatSelectedEffort = effort
+                                } label: {
+                                    HStack {
+                                        Text(effortDisplayLabel(effort))
+                                        if provider.chatSelectedEffort == effort {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        codexPromptFooterDivider
+                    }
+
+                    codexIDEContextControl
+
+                    Spacer(minLength: 6)
+
+                    sendButton(isCodexPrompt: true)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 4)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(AppChromePalette.codexPromptShell)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(AppChromePalette.codexPromptStroke, lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 6)
+
+            HStack(spacing: 16) {
+                interactionModePromptMenu(style: .codexSecondary)
+
+                if let environmentLabel = provider.chatPromptEnvironmentLabel {
+                    codexSecondaryMenuLabel(title: environmentLabel, iconName: "laptopcomputer") {
+                        Button {} label: {
+                            HStack {
+                                Text(environmentLabel)
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                        .disabled(true)
+
+                        Divider()
+
+                        Button {} label: {
+                            Text(environmentExecutionLabel)
+                        }
+                        .disabled(true)
+
+                        Button {} label: {
+                            Text("Reseau actif")
+                        }
+                        .disabled(true)
+
+                        Button {} label: {
+                            Text(provider.chatWorkingDirectory.path)
+                                .lineLimit(1)
+                        }
+                        .disabled(true)
+                    }
+                }
+
+                if let configurationLabel = provider.chatPromptConfigurationLabel {
+                    codexSecondaryMenuLabel(title: configurationLabel, iconName: "gearshape") {
+                        Button {} label: {
+                            HStack {
+                                Text(configurationLabel)
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                        .disabled(true)
+
+                        Divider()
+
+                        Button {} label: {
+                            Text("Modele: \(provider.chatSelectedModel.uppercased())")
+                        }
+                        .disabled(true)
+
+                        Button {} label: {
+                            Text("Raisonnement: \(effortDisplayLabel(provider.chatSelectedEffort))")
+                        }
+                        .disabled(true)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if provider.isProcessing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(AppChromePalette.codexMutedText)
+                        .scaleEffect(0.7)
+                } else {
+                    Circle()
+                        .strokeBorder(AppChromePalette.codexPromptDivider.opacity(0.65), lineWidth: 2)
+                        .frame(width: 14, height: 14)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 0)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 0)
+        .padding(.vertical, 6)
+        .background(AppChromePalette.codexCanvas)
+    }
+
+    private var promptFileSuggestionsList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(fileListItems, id: \.self) { item in
+                    Button {
+                        selectFile(item)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: item.hasSuffix("/") ? "folder" : "doc.text")
+                                .font(.system(size: 10))
+                                .foregroundStyle(item.hasSuffix("/") ? .blue : .orange)
+                                .frame(width: 14)
+                            Text(item)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
+        .frame(maxHeight: 200)
+        .background(AppChromePalette.surfaceSubbar)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(AppChromePalette.dividerSoft, lineWidth: 0.5)
+        )
+        .padding(.horizontal, 12)
+    }
+
+    private var promptSlashSuggestionsList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(filteredSlashCommands, id: \.self) { cmd in
+                    Button {
+                        inputText = "/\(cmd) "
+                        selectedSlashIndex = nil
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("/")
+                                .foregroundStyle(.orange)
+                            Text(cmd)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                        }
+                        .font(.system(size: 12, design: .monospaced))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            selectedSlashIndex == filteredSlashCommands.firstIndex(of: cmd)
+                                ? AppChromePalette.tabSelectedFill
+                                : Color.clear
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxHeight: 180)
+        .background(AppChromePalette.surfaceSubbar)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(AppChromePalette.dividerSoft, lineWidth: 0.5)
+        )
+        .padding(.horizontal, 12)
+    }
+
+    private var attachedFilesStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(attachedFiles) { file in
+                    HStack(spacing: 4) {
+                        Image(systemName: file.kind == .image ? "camera" : "doc.text")
+                            .font(.system(size: 9))
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundColor(file.kind == .image ? .secondary : .orange)
+                        Text(file.name)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Button {
+                            attachedFiles.removeAll { $0.id == file.id }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(usesCodexVisualStyle ? AppChromePalette.codexPromptInner.opacity(0.95) : AppChromePalette.surfaceSubbar)
+                    )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 2)
+        }
+    }
+
+    @ViewBuilder
+    private var promptTextField: some View {
+        if usesCodexVisualStyle {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $inputText)
+                    .scrollContentBackground(.hidden)
+                    .font(.system(size: 14))
+                    .focused($isInputFocused)
+                    .onChange(of: inputText) {
+                        updateSlashSuggestions()
+                        updateFileList()
+                    }
+                    .onKeyPress(phases: .down) { press in
+                        if press.key == .return && !press.modifiers.contains(.shift) {
+                            send()
+                            return .handled
+                        }
+                        return .ignored
+                    }
+
+                if inputText.isEmpty {
+                    Text(chatInputPlaceholder)
+                        .font(.system(size: 14))
+                        .foregroundStyle(AppChromePalette.codexMutedText.opacity(0.72))
+                        .padding(.top, 6)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(height: codexPromptEditorHeight, alignment: .topLeading)
+        } else {
+            TextField(chatInputPlaceholder, text: $inputText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .lineLimit(1...6)
+                .focused($isInputFocused)
+                .onSubmit {
+                    if NSApp.currentEvent?.modifierFlags.contains(.shift) != true {
+                        send()
+                    }
+                }
+                .onChange(of: inputText) {
+                    updateSlashSuggestions()
+                    updateFileList()
+                }
+                .foregroundStyle(.primary)
+        }
+    }
+
+    private var codexPromptEditorHeight: CGFloat {
+        let lineBreaks = inputText.reduce(into: 1) { count, character in
+            if character == "\n" { count += 1 }
+        }
+        let wrappedLines = max(1, Int(ceil(Double(max(inputText.count, 1)) / 72.0)))
+        let estimatedLines = max(lineBreaks, wrappedLines)
+
+        switch estimatedLines {
+        case ...1:
+            return 34
+        case 2:
+            return 52
+        case 3:
+            return 70
+        default:
+            return min(110, 70 + CGFloat(estimatedLines - 3) * 18)
+        }
+    }
+
+    private func attachButton(isCodexPrompt: Bool) -> some View {
+        Button {
+            openAttachmentPicker()
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: isCodexPrompt ? 14 : 13, weight: .medium))
+                .foregroundStyle(isCodexPrompt ? AppChromePalette.codexMutedText : .secondary)
+                .frame(width: isCodexPrompt ? 20 : 24, height: isCodexPrompt ? 20 : 24)
+        }
+        .buttonStyle(.plain)
+        .help("Joindre un fichier")
+    }
+
+    private func sendButton(isCodexPrompt: Bool) -> some View {
+        Button {
+            send()
+        } label: {
+            Image(systemName: provider.chatInteractionMode.sendButtonSymbolName)
+                .font(.system(size: isCodexPrompt ? 16 : 22, weight: .semibold))
+                .foregroundStyle(
+                    canSend
+                        ? (isCodexPrompt ? AppChromePalette.codexSendGlyph : provider.chatInteractionMode.tint)
+                        : Color.secondary.opacity(0.45)
+                )
+                .frame(width: isCodexPrompt ? 30 : 24, height: isCodexPrompt ? 30 : 24)
+                .background(
+                    Circle()
+                        .fill(canSend
+                              ? (isCodexPrompt ? AppChromePalette.codexSendFill : .clear)
+                              : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+        .help(sendButtonHelp)
+        .frame(width: isCodexPrompt ? 32 : 28, height: isCodexPrompt ? 32 : 28)
+    }
+
+    private enum PromptControlStyle {
+        case standard
+        case codexSecondary
+    }
+
+    private func interactionModePromptMenu(style: PromptControlStyle) -> some View {
+        Menu {
+            ForEach(ChatInteractionMode.allCases, id: \.self) { mode in
+                Button {
+                    provider.chatInteractionMode = mode
+                    flashModeChange()
+                } label: {
+                    HStack {
+                        Text(mode.badgeLabel)
+                        if provider.chatInteractionMode == mode {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            switch style {
+            case .standard:
+                HStack(spacing: 5) {
+                    Image(systemName: provider.chatInteractionMode.iconName)
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 12, height: 12)
+
+                    Text(provider.chatInteractionMode.badgeLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .frame(width: 8, height: 8)
+                }
+                .foregroundStyle(provider.chatInteractionMode.tint)
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(provider.chatInteractionMode.tint.opacity(0.12))
+                .clipShape(Capsule())
+                .overlay {
+                    if modeStatusFlash {
+                        Capsule()
+                            .strokeBorder(provider.chatInteractionMode.tint.opacity(0.45), lineWidth: 1)
+                    }
+                }
+
+            case .codexSecondary:
+                HStack(spacing: 4) {
+                    Image(systemName: provider.chatInteractionMode.iconName)
+                        .font(.system(size: 10, weight: .medium))
+                    Text(provider.chatInteractionMode.badgeLabel)
+                        .font(.system(size: 8.5, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(AppChromePalette.codexMutedText)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .help("Mode courant · Shift+Tab pour cycler")
+    }
+
+    @ViewBuilder
+    private func codexPrimaryMenuLabel<Content: View>(
+        title: String,
+        iconName: String?,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Menu {
+            content()
+        } label: {
+            HStack(spacing: 5) {
+                if let iconName {
+                    Image(systemName: iconName)
+                        .font(.system(size: 9, weight: .medium))
+                }
+                Text(title)
+                    .font(.system(size: 9, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+            }
+            .foregroundStyle(AppChromePalette.codexMutedText)
+            .frame(minWidth: 52, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    private var codexPromptFooterDivider: some View {
+        Rectangle()
+            .fill(AppChromePalette.codexPromptDivider.opacity(0.75))
+            .frame(width: 1, height: 14)
+    }
+
+    private var codexIDEContextControl: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 9, weight: .semibold))
+            Text("IDE context")
+                .font(.system(size: 9, weight: .semibold))
+        }
+        .foregroundStyle((currentSelection != nil || !attachedFiles.isEmpty) ? AppChromePalette.codexIDEContext : AppChromePalette.codexMutedText)
+    }
+
+    @ViewBuilder
+    private func codexSecondaryMenuLabel<Content: View>(
+        title: String,
+        iconName: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Menu {
+            content()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: iconName)
+                    .font(.system(size: 10, weight: .medium))
+                Text(title)
+                    .font(.system(size: 8.5, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+            }
+            .foregroundStyle(AppChromePalette.codexMutedText)
+            .frame(minWidth: 68, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
     }
 
     @ViewBuilder
@@ -1012,7 +1592,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .padding(.vertical, 7)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.white.opacity(0.05))
+                                .fill(usesCodexVisualStyle ? AppChromePalette.codexPromptInner.opacity(0.85) : Color.white.opacity(0.05))
                         )
                     }
                 }
@@ -1030,7 +1610,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                                 .padding(.vertical, 5)
                                 .background(
                                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .fill(Color.white.opacity(0.04))
+                                        .fill(usesCodexVisualStyle ? AppChromePalette.codexPromptInner.opacity(0.7) : Color.white.opacity(0.04))
                                 )
                         }
                     }
@@ -1044,7 +1624,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
 
                     Button("Autoriser") {
                         provider.approvePendingApprovalRequest()
@@ -1055,6 +1635,15 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 }
             }
         }
+        .padding(usesCodexVisualStyle ? 10 : 0)
+        .background(
+            RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexEventCornerRadius : 0, style: .continuous)
+                .fill(usesCodexVisualStyle ? AppChromePalette.codexEventFill : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexEventCornerRadius : 0, style: .continuous)
+                .strokeBorder(usesCodexVisualStyle ? AppChromePalette.codexPromptStroke.opacity(0.75) : Color.clear, lineWidth: usesCodexVisualStyle ? 0.8 : 0)
+        )
     }
 
     @ViewBuilder
@@ -1670,8 +2259,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(AppChromePalette.surfaceSubbar)
+        .frame(height: usesCodexVisualStyle ? AppChromeMetrics.codexFooterChipHeight : 22)
+        .background(usesCodexVisualStyle ? AppChromePalette.codexPromptInner : AppChromePalette.surfaceSubbar)
         .clipShape(Capsule())
     }
 
@@ -1923,23 +2512,40 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         .padding(.vertical, 3)
         .background(
             Capsule()
-                .fill(statusBadgeColor(badge.kind).opacity(0.12))
+                .fill(
+                    usesCodexVisualStyle
+                        ? AppChromePalette.codexPromptInner.opacity(0.9)
+                        : statusBadgeColor(badge.kind).opacity(0.12)
+                )
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(
+                    usesCodexVisualStyle
+                        ? AppChromePalette.codexPromptStroke.opacity(0.8)
+                        : Color.clear,
+                    lineWidth: usesCodexVisualStyle ? 0.8 : 0
+                )
         )
     }
 
     @ViewBuilder
     private func reviewFindingCard(_ message: ChatMessage) -> some View {
         let finding = message.reviewFinding
-        HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(reviewFindingColor(finding?.priority).opacity(0.18))
-                .frame(width: 20, height: 20)
-                .overlay {
-                    Image(systemName: "exclamationmark.bubble")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(reviewFindingColor(finding?.priority))
-                }
-                .padding(.top, 2)
+        HStack(alignment: .top, spacing: usesCodexVisualStyle ? 10 : 8) {
+            if usesCodexVisualStyle {
+                codexTimelineGlyph("exclamationmark.bubble", tint: reviewFindingColor(finding?.priority))
+            } else {
+                Circle()
+                    .fill(reviewFindingColor(finding?.priority).opacity(0.18))
+                    .frame(width: 20, height: 20)
+                    .overlay {
+                        Image(systemName: "exclamationmark.bubble")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(reviewFindingColor(finding?.priority))
+                    }
+                    .padding(.top, 2)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .center, spacing: 6) {
@@ -1985,23 +2591,26 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         }
                         .buttonStyle(.borderless)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
                     }
                 }
             }
-            .padding(10)
+            .padding(usesCodexVisualStyle ? 10 : 10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.orange.opacity(0.05))
+                    .fill(usesCodexVisualStyle ? AppChromePalette.codexEventFill : Color.orange.opacity(0.05))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(reviewFindingColor(finding?.priority).opacity(0.18), lineWidth: 0.8)
+                    .strokeBorder(
+                        usesCodexVisualStyle ? AppChromePalette.codexPromptStroke.opacity(0.8) : reviewFindingColor(finding?.priority).opacity(0.18),
+                        lineWidth: 0.8
+                    )
             )
 
             Spacer(minLength: 20)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, usesCodexVisualStyle ? 3 : 4)
     }
 
     private func statusBadgeIconName(_ kind: ChatStatusBadgeKind) -> String {

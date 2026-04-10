@@ -44,6 +44,15 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertEqual(ChatInteractionMode.plan.next, .agent)
     }
 
+    @MainActor
+    func testProvidersExposeExpectedChatVisualStyles() {
+        let claude = ClaudeHeadlessProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        let codex = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+
+        XCTAssertEqual(claude.chatVisualStyle, .standard)
+        XCTAssertEqual(codex.chatVisualStyle, .codex)
+    }
+
     func testBuildPromptWithIDEContext_appendsSelection() throws {
         let path = CanopeContextFiles.ideSelectionStatePaths[0]
         let payload: [String: Any] = [
@@ -153,6 +162,49 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertEqual(snapshot?.messages[2].toolName, "Bash")
         XCTAssertEqual(snapshot?.messages[2].toolOutput, "Commande terminee (code 0) · /bin/echo hi\nhi")
         XCTAssertTrue(snapshot?.messages.allSatisfy(\.isFromHistory) ?? false)
+    }
+
+    @MainActor
+    func testCodexThreadReadHistorySnapshotStripsInjectedIDEContextFromUserMessage() {
+        let result: [String: Any] = [
+            "thread": [
+                "name": "Session test",
+                "turns": [
+                    [
+                        "id": "turn-1",
+                        "items": [
+                            [
+                                "type": "userMessage",
+                                "id": "item-user",
+                                "content": [[
+                                    "type": "text",
+                                    "text": """
+                                    [Canope IDE Context — current selection in "Proposed Research Initiative v6.tex")]
+                                    \\vfill
+
+                                    [Selected line context]
+                                    foo[[bar]]
+                                    [/Selected line context]
+                                    [/Canope IDE Context]
+
+                                    ui, globalement je le trouve bon pour approcher des partenaires.
+                                    """
+                                ]]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        let snapshot = CodexAppServerProvider.historySnapshot(fromThreadReadResult: result)
+
+        XCTAssertEqual(snapshot?.messages.count, 1)
+        XCTAssertEqual(snapshot?.messages.first?.role, .user)
+        XCTAssertEqual(
+            snapshot?.messages.first?.content,
+            "ui, globalement je le trouve bon pour approcher des partenaires."
+        )
     }
 
     func testClaudeMutatingToolDetectionFlagsEditsAndBash() {
