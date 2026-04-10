@@ -1182,7 +1182,6 @@ struct UnifiedEditorView: View {
                     fileToolbarClusterView
                     documentActionsCluster
                     markdownFormattingToolbarClusterView
-                    referencePickerToolbarClusterView
                     if documentMode.isRunnableCode {
                         codeActiveReferenceToolbarView
                     } else {
@@ -1403,7 +1402,7 @@ struct UnifiedEditorView: View {
     }
 
     private var fileToolbarClusterView: some View {
-        toolbarCluster(zone: .leading, title: "Fichier") {
+        toolbarCluster(zone: .leading, title: "Dossier") {
             Button(action: openFolderPicker) {
                 Image(systemName: "folder.badge.plus")
                     .foregroundStyle(.secondary)
@@ -1412,12 +1411,6 @@ struct UnifiedEditorView: View {
             .appChromeQuickHelp("Ouvrir un dossier (⇧⌘O)")
 
             if !hasNoFile {
-                Image(systemName: "doc.plaintext")
-                    .foregroundStyle(documentMode.fileIconTint)
-                Text(fileURL.lastPathComponent)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
                 AppChromeStatusCapsule(status: toolbarStatus)
             }
 
