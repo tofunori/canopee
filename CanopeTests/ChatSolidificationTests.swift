@@ -963,6 +963,38 @@ final class ChatSolidificationTests: XCTestCase {
     }
 
     @MainActor
+    func testCodexStatusBadgeActionsExposeUsefulMcpAndAuthOperations() {
+        let mcpActions = CodexAppServerProvider.testStatusActions(
+            for: ChatStatusBadge(kind: .mcpWarning, text: "MCP reload")
+        )
+        XCTAssertEqual(mcpActions.map(\.id), ["mcpReload", "mcpStatusList"])
+
+        let authActions = CodexAppServerProvider.testStatusActions(
+            for: ChatStatusBadge(kind: .authRequired, text: "ChatGPT login")
+        )
+        XCTAssertEqual(authActions.map(\.id), ["chatgptAuthRefresh"])
+    }
+
+    @MainActor
+    func testCodexMCPStatusResultBadgeHighlightsAttentionAndHealthyStates() {
+        let warningBadge = CodexAppServerProvider.testBadgeFromMCPStatusResult([
+            "servers": [
+                ["name": "canope", "status": "error"],
+            ],
+        ])
+        XCTAssertEqual(warningBadge.kind, .mcpWarning)
+        XCTAssertEqual(warningBadge.text, "MCP attention")
+
+        let okayBadge = CodexAppServerProvider.testBadgeFromMCPStatusResult([
+            "servers": [
+                ["name": "canope", "status": "connected"],
+            ],
+        ])
+        XCTAssertEqual(okayBadge.kind, .mcpOkay)
+        XCTAssertEqual(okayBadge.text, "MCP OK")
+    }
+
+    @MainActor
     func testCodexSuppressesDirectEditFailureBoilerplateFromAssistantDisplay() {
         let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
         provider.testBeginAssistantMessage()

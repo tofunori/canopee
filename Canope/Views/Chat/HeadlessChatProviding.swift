@@ -6,11 +6,16 @@ protocol HeadlessChatProviding: AIHeadlessProvider {
     var chatWorkingDirectory: URL { get }
     var chatSessionDisplayName: String { get }
     var chatCanRenameCurrentSession: Bool { get }
+    var chatUsesBottomPromptControls: Bool { get }
+    var chatPromptEnvironmentLabel: String? { get }
+    var chatPromptConfigurationLabel: String? { get }
     var chatInteractionMode: ChatInteractionMode { get set }
     var chatSupportsPlanMode: Bool { get }
     var chatSupportsReview: Bool { get }
     var chatReviewStateDescription: String? { get }
     var chatStatusBadges: [ChatStatusBadge] { get }
+    func chatStatusActions(for badge: ChatStatusBadge) -> [ChatStatusAction]
+    func performChatStatusAction(_ action: ChatStatusAction)
     var pendingApprovalRequest: ChatApprovalRequest? { get }
 
     var chatAvailableModels: [String] { get }
@@ -100,9 +105,19 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
 }
 
 extension HeadlessChatProviding {
+    var chatUsesBottomPromptControls: Bool { false }
+    var chatPromptEnvironmentLabel: String? { nil }
+    var chatPromptConfigurationLabel: String? { nil }
     var chatSupportsReview: Bool { false }
     var chatReviewStateDescription: String? { nil }
     var chatStatusBadges: [ChatStatusBadge] { [] }
+    func chatStatusActions(for badge: ChatStatusBadge) -> [ChatStatusAction] {
+        _ = badge
+        return []
+    }
+    func performChatStatusAction(_ action: ChatStatusAction) {
+        _ = action
+    }
 
     func startChatReview(command: String?) {
         _ = command

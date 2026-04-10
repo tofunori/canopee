@@ -1633,6 +1633,61 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return (auth, mcp, review)
     }
 
+    private static func statusActions(for badge: ChatStatusBadge) -> [ChatStatusAction] {
+        switch badge.kind {
+        case .authRequired:
+            if badge.text == "ChatGPT login" {
+                return [
+                    ChatStatusAction(
+                        id: "chatgptAuthRefresh",
+                        label: "Rafraichir l'auth ChatGPT",
+                        systemImage: "arrow.clockwise"
+                    ),
+                ]
+            }
+            return [
+                ChatStatusAction(
+                    id: "mcpOAuthLogin",
+                    label: "Relancer le login MCP",
+                    systemImage: "person.crop.circle.badge.exclamationmark"
+                ),
+                ChatStatusAction(
+                    id: "mcpStatusList",
+                    label: "Verifier l'etat MCP",
+                    systemImage: "server.rack"
+                ),
+            ]
+        case .mcpOkay:
+            return [
+                ChatStatusAction(
+                    id: "mcpStatusList",
+                    label: "Verifier l'etat MCP",
+                    systemImage: "server.rack"
+                ),
+                ChatStatusAction(
+                    id: "mcpReload",
+                    label: "Recharger la config MCP",
+                    systemImage: "arrow.triangle.2.circlepath"
+                ),
+            ]
+        case .mcpWarning:
+            return [
+                ChatStatusAction(
+                    id: "mcpReload",
+                    label: "Recharger la config MCP",
+                    systemImage: "arrow.triangle.2.circlepath"
+                ),
+                ChatStatusAction(
+                    id: "mcpStatusList",
+                    label: "Verifier l'etat MCP",
+                    systemImage: "server.rack"
+                ),
+            ]
+        default:
+            return []
+        }
+    }
+
     private static func reviewStateDescription(_ item: [String: Any]) -> String {
         let review = (item["review"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let review, !review.isEmpty {
@@ -2570,6 +2625,9 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
 extension CodexAppServerProvider: HeadlessChatProviding {
     var chatWorkingDirectory: URL { workingDirectoryURL }
+    var chatUsesBottomPromptControls: Bool { true }
+    var chatPromptEnvironmentLabel: String? { "Local" }
+    var chatPromptConfigurationLabel: String? { "Personnalise" }
     var chatSupportsPlanMode: Bool { true }
     var chatSupportsReview: Bool { true }
     var chatStatusBadges: [ChatStatusBadge] {
@@ -2592,6 +2650,16 @@ extension CodexAppServerProvider: HeadlessChatProviding {
             badges.append(reviewStatusBadge)
         }
         return badges
+    }
+
+    func chatStatusActions(for badge: ChatStatusBadge) -> [ChatStatusAction] {
+        Self.statusActions(for: badge)
+    }
+
+    func performChatStatusAction(_ action: ChatStatusAction) {
+        Task { [weak self] in
+            await self?.runStatusAction(action)
+        }
     }
 
     var chatSessionDisplayName: String {
@@ -2768,6 +2836,88 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     }
 
     // MARK: - Private session helpers
+
+    private func runStatusAction(_ action: ChatStatusAction) async {
+        await ensureConnected()
+        guard initialized, let rpc else {
+            appendSystem("Codex n'est pas connecte.")
+            return
+        }
+
+        switch action.id {
+        case "mcpReload":
+            mcpStatusBadge = ChatStatusBadge(kind: .connecting, text: "MCP recharge…")
+            do {
+                _ = try await rpc.call(method: "config/mcpServer/reload", params: [:])
+                mcpStatusBadge = ChatStatusBadge(kind: .mcpOkay, text: "MCP recharge")
+            } catch {
+                updateStatusForErrorMessage(error.localizedDescription)
+                appendSystem("Reload MCP impossible : \(error.localizedDescription)")
+            }
+        case "mcpStatusList":
+            mcpStatusBadge = ChatStatusBadge(kind: .connecting, text: "MCP status…")
+            do {
+                let result = try await rpc.call(method: "mcpServerStatus/list", params: [:])
+                mcpStatusBadge = Self.badgeFromMCPStatusResult(result)
+            } catch {
+                updateStatusForErrorMessage(error.localizedDescription)
+                appendSystem("Verification MCP impossible : \(error.localizedDescription)")
+            }
+        case "chatgptAuthRefresh":
+            authStatusBadge = ChatStatusBadge(kind: .connecting, text: "Auth ChatGPT…")
+            do {
+                _ = try await rpc.call(method: "account/chatgptAuthTokens/refresh", params: [:])
+                authStatusBadge = nil
+            } catch {
+                updateStatusForErrorMessage(error.localizedDescription)
+                appendSystem("Rafraichissement ChatGPT impossible : \(error.localizedDescription)")
+            }
+        case "mcpOAuthLogin":
+            authStatusBadge = ChatStatusBadge(kind: .connecting, text: "Login MCP…")
+            do {
+                _ = try await rpc.call(
+                    method: "mcpServer/oauth/login",
+                    params: ["serverName": "canope"]
+                )
+                authStatusBadge = nil
+                mcpStatusBadge = ChatStatusBadge(kind: .mcpOkay, text: "MCP login")
+            } catch {
+                updateStatusForErrorMessage(error.localizedDescription)
+                appendSystem("Login MCP impossible : \(error.localizedDescription)")
+            }
+        default:
+            break
+        }
+    }
+
+    private static func badgeFromMCPStatusResult(_ result: Any?) -> ChatStatusBadge {
+        guard let result else {
+            return ChatStatusBadge(kind: .mcpOkay, text: "MCP OK")
+        }
+
+        let statusStrings = collectLowercasedStatusStrings(from: result)
+        if statusStrings.contains(where: { $0.contains("error") || $0.contains("failed") || $0.contains("disconnected") }) {
+            return ChatStatusBadge(kind: .mcpWarning, text: "MCP attention")
+        }
+        if statusStrings.contains(where: { $0.contains("auth") || $0.contains("login") || $0.contains("oauth") }) {
+            return ChatStatusBadge(kind: .mcpWarning, text: "MCP login")
+        }
+        return ChatStatusBadge(kind: .mcpOkay, text: "MCP OK")
+    }
+
+    private static func collectLowercasedStatusStrings(from value: Any) -> [String] {
+        switch value {
+        case let string as String:
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? [] : [trimmed.lowercased()]
+        case let dict as [String: Any]:
+            return dict.values.flatMap { collectLowercasedStatusStrings(from: $0) }
+        case let array as [Any]:
+            return array.flatMap { collectLowercasedStatusStrings(from: $0) }
+        default:
+            return []
+        }
+    }
 
     private func disconnectAndReset() async {
         connectTask?.cancel()
@@ -3344,6 +3494,14 @@ extension CodexAppServerProvider {
         _ text: String
     ) -> (auth: ChatStatusBadge?, mcp: ChatStatusBadge?, review: ChatStatusBadge?) {
         derivedStatusBadges(forErrorText: text)
+    }
+
+    static func testStatusActions(for badge: ChatStatusBadge) -> [ChatStatusAction] {
+        statusActions(for: badge)
+    }
+
+    static func testBadgeFromMCPStatusResult(_ result: Any?) -> ChatStatusBadge {
+        badgeFromMCPStatusResult(result)
     }
 
     func testSetStatusBadges(review: ChatStatusBadge? = nil, auth: ChatStatusBadge? = nil, mcp: ChatStatusBadge? = nil) {

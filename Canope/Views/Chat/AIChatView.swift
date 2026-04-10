@@ -169,56 +169,58 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 .help("Renommer la conversation")
             }
 
-            // Model picker
-            Menu {
-                ForEach(provider.chatAvailableModels, id: \.self) { model in
-                    Button {
-                        provider.chatSelectedModel = model
-                    } label: {
-                        HStack {
-                            Text(model)
-                            if provider.chatSelectedModel == model {
-                                Image(systemName: "checkmark")
+            if !provider.chatUsesBottomPromptControls {
+                Menu {
+                    ForEach(provider.chatAvailableModels, id: \.self) { model in
+                        Button {
+                            provider.chatSelectedModel = model
+                        } label: {
+                            HStack {
+                                Text(model)
+                                if provider.chatSelectedModel == model {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
+                } label: {
+                    Text(provider.chatSelectedModel)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.orange)
                 }
-            } label: {
-                Text(provider.chatSelectedModel)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.orange)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+                .menuStyle(.borderlessButton)
+                .fixedSize()
 
-            Text("·")
-                .foregroundStyle(.secondary.opacity(0.5))
-
-            // Effort picker
-            Menu {
-                ForEach(provider.chatAvailableEfforts, id: \.self) { effort in
-                    Button {
-                        provider.chatSelectedEffort = effort
-                    } label: {
-                        HStack {
-                            Text(effort)
-                            if provider.chatSelectedEffort == effort {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                Text(provider.chatSelectedEffort)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-
-            if provider.session.turns > 0 {
                 Text("·")
                     .foregroundStyle(.secondary.opacity(0.5))
+
+                Menu {
+                    ForEach(provider.chatAvailableEfforts, id: \.self) { effort in
+                        Button {
+                            provider.chatSelectedEffort = effort
+                        } label: {
+                            HStack {
+                                Text(effortDisplayLabel(effort))
+                                if provider.chatSelectedEffort == effort {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text(effortDisplayLabel(provider.chatSelectedEffort))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+
+            if provider.session.turns > 0 {
+                if !provider.chatUsesBottomPromptControls {
+                    Text("·")
+                        .foregroundStyle(.secondary.opacity(0.5))
+                }
                 Text("\(provider.session.turns) échanges")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -865,6 +867,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             .padding(.vertical, 8)
 
             HStack(spacing: 8) {
+                if provider.chatUsesBottomPromptControls {
+                    modelPromptMenu
+                    effortPromptMenu
+                }
+
                 Menu {
                     ForEach(ChatInteractionMode.allCases, id: \.self) { mode in
                         Button {
@@ -907,6 +914,14 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 }
                 .menuStyle(.borderlessButton)
                 .help("Mode courant · Shift+Tab pour cycler")
+
+                if let environmentLabel = provider.chatPromptEnvironmentLabel {
+                    environmentPromptMenu(environmentLabel)
+                }
+
+                if let configurationLabel = provider.chatPromptConfigurationLabel {
+                    configurationPromptMenu(configurationLabel)
+                }
 
                 Spacer()
             }
@@ -1583,6 +1598,182 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         provider.chatInteractionMode == .plan ? "Envoyer une demande de plan" : "Envoyer"
     }
 
+    private var modelPromptMenu: some View {
+        Menu {
+            ForEach(provider.chatAvailableModels, id: \.self) { model in
+                Button {
+                    provider.chatSelectedModel = model
+                } label: {
+                    HStack {
+                        Text(model)
+                        if provider.chatSelectedModel == model {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            promptFooterChip(
+                title: provider.chatSelectedModel.uppercased(),
+                iconName: "cpu",
+                tint: .orange,
+                useMonospacedText: true
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .help("Modèle Codex")
+    }
+
+    private var effortPromptMenu: some View {
+        Menu {
+            ForEach(provider.chatAvailableEfforts, id: \.self) { effort in
+                Button {
+                    provider.chatSelectedEffort = effort
+                } label: {
+                    HStack {
+                        Text(effortDisplayLabel(effort))
+                        if provider.chatSelectedEffort == effort {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            promptFooterChip(
+                title: effortDisplayLabel(provider.chatSelectedEffort),
+                iconName: "brain",
+                tint: .secondary
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .help("Niveau de raisonnement")
+    }
+
+    private func promptFooterChip(
+        title: String,
+        iconName: String,
+        tint: Color,
+        useMonospacedText: Bool = false
+    ) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: iconName)
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 12, height: 12)
+
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: useMonospacedText ? .monospaced : .default))
+                .lineLimit(1)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .semibold))
+                .frame(width: 8, height: 8)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(AppChromePalette.surfaceSubbar)
+        .clipShape(Capsule())
+    }
+
+    private func environmentPromptMenu(_ title: String) -> some View {
+        Menu {
+            Button {} label: {
+                HStack {
+                    Text(title)
+                    Image(systemName: "checkmark")
+                }
+            }
+            .disabled(true)
+
+            Divider()
+
+            Button {} label: {
+                Text(environmentExecutionLabel)
+            }
+            .disabled(true)
+
+            Button {} label: {
+                Text("Réseau actif")
+            }
+            .disabled(true)
+
+            Button {} label: {
+                Text(provider.chatWorkingDirectory.path)
+                    .lineLimit(1)
+            }
+            .disabled(true)
+        } label: {
+            promptFooterChip(
+                title: title,
+                iconName: "laptopcomputer",
+                tint: .secondary
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .help("Contexte d’exécution Codex")
+    }
+
+    private func configurationPromptMenu(_ title: String) -> some View {
+        Menu {
+            Button {} label: {
+                HStack {
+                    Text(title)
+                    Image(systemName: "checkmark")
+                }
+            }
+            .disabled(true)
+
+            Divider()
+
+            Button {} label: {
+                Text("Modèle: \(provider.chatSelectedModel.uppercased())")
+            }
+            .disabled(true)
+
+            Button {} label: {
+                Text("Raisonnement: \(effortDisplayLabel(provider.chatSelectedEffort))")
+            }
+            .disabled(true)
+
+            Button {} label: {
+                Text("Mode: \(provider.chatInteractionMode.badgeLabel)")
+            }
+            .disabled(true)
+        } label: {
+            promptFooterChip(
+                title: title,
+                iconName: "gearshape",
+                tint: .secondary
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .help("Preset actif du chat Codex")
+    }
+
+    private var environmentExecutionLabel: String {
+        switch provider.chatInteractionMode {
+        case .plan:
+            return "Lecture seule"
+        case .agent, .acceptEdits:
+            return "Écriture locale"
+        }
+    }
+
+    private func effortDisplayLabel(_ effort: String) -> String {
+        switch effort.lowercased() {
+        case "low":
+            return "Bas"
+        case "medium":
+            return "Moyen"
+        case "high":
+            return "Eleve"
+        case "xhigh":
+            return "Tres approfondi"
+        default:
+            return effort
+        }
+    }
+
     private var canSend: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedFiles.isEmpty
     }
@@ -1688,12 +1879,43 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         return path
     }
 
+    @ViewBuilder
     private func statusBadgeView(_ badge: ChatStatusBadge) -> some View {
+        let actions = provider.chatStatusActions(for: badge)
+        if actions.isEmpty {
+            statusBadgeChip(badge)
+        } else {
+            Menu {
+                ForEach(actions) { action in
+                    Button {
+                        provider.performChatStatusAction(action)
+                    } label: {
+                        if let systemImage = action.systemImage {
+                            Label(action.label, systemImage: systemImage)
+                        } else {
+                            Text(action.label)
+                        }
+                    }
+                }
+            } label: {
+                statusBadgeChip(badge, isActionable: true)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+    }
+
+    private func statusBadgeChip(_ badge: ChatStatusBadge, isActionable: Bool = false) -> some View {
         HStack(spacing: 4) {
             Image(systemName: statusBadgeIconName(badge.kind))
                 .font(.system(size: 9, weight: .semibold))
             Text(badge.text)
                 .lineLimit(1)
+            if isActionable {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .opacity(0.8)
+            }
         }
         .font(.system(size: 10, weight: .medium))
         .foregroundStyle(statusBadgeColor(badge.kind))

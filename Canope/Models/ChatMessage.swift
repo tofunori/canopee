@@ -161,6 +161,12 @@ struct ChatStatusBadge: Identifiable, Equatable {
     }
 }
 
+struct ChatStatusAction: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let systemImage: String?
+}
+
 struct ChatReviewFinding: Equatable {
     let title: String
     let body: String
