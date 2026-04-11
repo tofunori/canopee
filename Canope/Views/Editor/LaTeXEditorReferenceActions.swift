@@ -36,6 +36,7 @@ extension UnifiedEditorView {
     func selectPdfTab(_ tab: LaTeXEditorPdfPaneTab) {
         switch tab {
         case .compiled:
+            workspaceState.isCompiledPDFTabVisible = true
             AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
                 workspaceState.selectedReferencePaperID = nil
             }
@@ -51,25 +52,57 @@ extension UnifiedEditorView {
         }
     }
 
-    func closePdfTab(_ tab: LaTeXEditorPdfPaneTab) {
-        guard case .reference(let id) = tab else { return }
-        let pendingSave = workspaceState.referencePDFUIStates[id]?.hasUnsavedChanges == true
-        let documentToSave = workspaceState.referencePDFs[id]
-        let fileURLToSave = paperFor(id)?.fileURL
-        let remainingReferenceIDs = workspaceState.referencePaperIDs.filter { $0 != id }
+    func reopenCompiledPDFTab() {
+        workspaceState.isCompiledPDFTabVisible = true
+        AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+            workspaceState.selectedReferencePaperID = nil
+        }
+        invalidateReferencePaperContextWrites()
+    }
 
-        workspaceState.removeReference(id: id)
-        if selectedPdfTab == tab || workspaceState.selectedReferencePaperID == id {
-            AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
-                workspaceState.selectedReferencePaperID = remainingReferenceIDs.first
+    func closePdfTab(_ tab: LaTeXEditorPdfPaneTab) {
+        switch tab {
+        case .compiled:
+            guard !documentMode.isRunnableCode,
+                  workspaceState.referencePaperIDs.isEmpty == false else { return }
+            workspaceState.isCompiledPDFTabVisible = false
+            if workspaceState.selectedReferencePaperID == nil {
+                AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                    workspaceState.selectedReferencePaperID = workspaceState.referencePaperIDs.first
+                }
             }
-            if let nextID = remainingReferenceIDs.first {
+            if let nextID = workspaceState.selectedReferencePaperID {
                 writeReferencePaperContext(for: nextID)
             } else {
                 invalidateReferencePaperContextWrites()
             }
+            return
+        case .reference(let id):
+            closeReferencePdfTab(id: id)
         }
-        if pdfPaneTabs == [.compiled],
+    }
+
+    private func closeReferencePdfTab(id: UUID) {
+        let pendingSave = workspaceState.referencePDFUIStates[id]?.hasUnsavedChanges == true
+        let documentToSave = workspaceState.referencePDFs[id]
+        let fileURLToSave = paperFor(id)?.fileURL
+        let remainingReferenceIDs = workspaceState.referencePaperIDs.filter { $0 != id }
+        let wasSelectedReference = workspaceState.selectedReferencePaperID == id
+
+        workspaceState.removeReference(id: id)
+        if wasSelectedReference,
+           workspaceState.selectedReferencePaperID == nil,
+           !remainingReferenceIDs.isEmpty {
+            AppChromeMotion.performSelection(reduceMotion: reduceMotion) {
+                workspaceState.selectedReferencePaperID = remainingReferenceIDs.first
+            }
+        }
+        if let nextID = workspaceState.selectedReferencePaperID {
+            writeReferencePaperContext(for: nextID)
+        } else {
+            invalidateReferencePaperContextWrites()
+        }
+        if pdfPaneTabs.isEmpty,
            let previous = layoutBeforeReference,
            compiledPDF == nil {
             AppChromeMotion.performPanel(reduceMotion: reduceMotion) {

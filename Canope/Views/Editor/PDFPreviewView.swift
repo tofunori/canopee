@@ -2,6 +2,56 @@ import AppKit
 import SwiftUI
 import PDFKit
 
+enum PDFWidthFitSupport {
+    static func scaleFactor(
+        pageWidth: CGFloat,
+        availableWidth: CGFloat,
+        horizontalPadding: CGFloat = 16,
+        minScaleFactor: CGFloat,
+        maxScaleFactor: CGFloat
+    ) -> CGFloat? {
+        guard pageWidth > 0 else { return nil }
+        let usableWidth = availableWidth - horizontalPadding
+        guard usableWidth > 0 else { return nil }
+
+        let unclampedScale = usableWidth / pageWidth
+        guard unclampedScale.isFinite, unclampedScale > 0 else { return nil }
+
+        let lowerBound = minScaleFactor > 0 ? minScaleFactor : 0.01
+        let upperBound = maxScaleFactor > 0 ? maxScaleFactor : .greatestFiniteMagnitude
+        return min(max(unclampedScale, lowerBound), upperBound)
+    }
+}
+
+extension PDFView {
+    @discardableResult
+    func canopeFitCurrentPageToWidth(horizontalPadding: CGFloat = 16) -> Bool {
+        layoutSubtreeIfNeeded()
+        enclosingScrollView?.layoutSubtreeIfNeeded()
+        documentView?.layoutSubtreeIfNeeded()
+
+        guard let document,
+              let page = currentPage ?? document.page(at: 0) else {
+            return false
+        }
+
+        let availableWidth = enclosingScrollView?.contentView.bounds.width ?? bounds.width
+        guard let scale = PDFWidthFitSupport.scaleFactor(
+            pageWidth: page.bounds(for: displayBox).width,
+            availableWidth: availableWidth,
+            horizontalPadding: horizontalPadding,
+            minScaleFactor: minScaleFactor,
+            maxScaleFactor: maxScaleFactor
+        ) else {
+            return false
+        }
+
+        scaleFactor = scale
+        layoutDocumentView()
+        return true
+    }
+}
+
 // MARK: - PDF Preview with SyncTeX inverse sync
 
 struct PDFPreviewView: NSViewRepresentable {
@@ -68,6 +118,7 @@ struct PDFPreviewView: NSViewRepresentable {
         context.coordinator.onCurrentPageChanged = onCurrentPageChanged
         context.coordinator.configureSelectionObservation(for: pdfView)
         context.coordinator.configurePageObservation(for: pdfView)
+        context.coordinator.configureFrameObservation(for: pdfView)
         context.coordinator.configureSearchState(for: pdfView)
         context.coordinator.syncSearchQuery(in: pdfView, force: true)
 
@@ -88,6 +139,7 @@ struct PDFPreviewView: NSViewRepresentable {
                    let restoredPage = document.page(at: restoredPageIndex) {
                     pdfView.go(to: restoredPage)
                 }
+                context.coordinator.scheduleFitToWidth(in: pdfView)
             }
         }
         context.coordinator.onInverseSync = onInverseSync
@@ -96,15 +148,13 @@ struct PDFPreviewView: NSViewRepresentable {
         context.coordinator.onCurrentPageChanged = onCurrentPageChanged
         context.coordinator.configureSelectionObservation(for: pdfView)
         context.coordinator.configurePageObservation(for: pdfView)
+        context.coordinator.configureFrameObservation(for: pdfView)
         context.coordinator.configureSearchState(for: pdfView)
 
         // Fit to width
         if fitToWidthTrigger != context.coordinator.lastFitTrigger {
             context.coordinator.lastFitTrigger = fitToWidthTrigger
-            pdfView.autoScales = true
-            DispatchQueue.main.async {
-                pdfView.autoScales = false
-            }
+            context.coordinator.scheduleFitToWidth(in: pdfView)
         }
 
         // Forward sync: scroll to target
@@ -139,11 +189,14 @@ struct PDFPreviewView: NSViewRepresentable {
         weak var pdfView: PDFView?
         weak var observedSelectionPDFView: PDFView?
         weak var observedPagePDFView: PDFView?
+        weak var observedFramePDFView: PDFView?
         var searchState: PDFSearchUIState?
         var onInverseSync: ((SyncTeXInverseResult) -> Void)?
         var onCurrentPageChanged: ((Int) -> Void)?
         var allowsInverseSync = true
         var lastFitTrigger: Bool = false
+        private var shouldMaintainFitToWidth = true
+        private var pendingFitWorkItem: DispatchWorkItem?
         private var hadSelectionAtMouseDown = false
         private var clickedInsideSelectionAtMouseDown = false
         private var searchMatches: [PDFSelection] = []
@@ -214,6 +267,29 @@ struct PDFPreviewView: NSViewRepresentable {
             reportCurrentPage(in: pdfView)
         }
 
+        func configureFrameObservation(for pdfView: PDFView) {
+            self.pdfView = pdfView
+            guard observedFramePDFView !== pdfView else { return }
+
+            if let observedFramePDFView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: NSView.frameDidChangeNotification,
+                    object: observedFramePDFView
+                )
+            }
+
+            pdfView.postsFrameChangedNotifications = true
+            observedFramePDFView = pdfView
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleFrameChangedNotification(_:)),
+                name: NSView.frameDidChangeNotification,
+                object: pdfView
+            )
+            scheduleFitToWidth(in: pdfView)
+        }
+
         func configureSearchState(for pdfView: PDFView) {
             self.pdfView = pdfView
             searchState?.configureActions(
@@ -244,6 +320,8 @@ struct PDFPreviewView: NSViewRepresentable {
         }
 
         func cleanup() {
+            pendingFitWorkItem?.cancel()
+            pendingFitWorkItem = nil
             if let observedSelectionPDFView {
                 NotificationCenter.default.removeObserver(
                     self,
@@ -258,10 +336,32 @@ struct PDFPreviewView: NSViewRepresentable {
                     object: observedPagePDFView
                 )
             }
+            if let observedFramePDFView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: NSView.frameDidChangeNotification,
+                    object: observedFramePDFView
+                )
+            }
             observedSelectionPDFView = nil
             observedPagePDFView = nil
+            observedFramePDFView = nil
             pdfView = nil
             searchState?.configureActions(next: nil, previous: nil, clear: nil)
+        }
+
+        func scheduleFitToWidth(in pdfView: PDFView, retriesRemaining: Int = 5) {
+            guard shouldMaintainFitToWidth else { return }
+
+            pendingFitWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self, weak pdfView] in
+                guard let self, let pdfView else { return }
+                if pdfView.canopeFitCurrentPageToWidth() == false, retriesRemaining > 0 {
+                    self.scheduleFitToWidth(in: pdfView, retriesRemaining: retriesRemaining - 1)
+                }
+            }
+            pendingFitWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
         }
 
         @objc func handleClick(_ gesture: NSClickGestureRecognizer) {
@@ -344,6 +444,12 @@ struct PDFPreviewView: NSViewRepresentable {
         private func handlePageChangedNotification(_ notification: Notification) {
             guard let pdfView else { return }
             reportCurrentPage(in: pdfView)
+        }
+
+        @objc
+        private func handleFrameChangedNotification(_ notification: Notification) {
+            guard let pdfView else { return }
+            scheduleFitToWidth(in: pdfView)
         }
 
         func handlePreMouseDown(event: NSEvent, at locationInView: NSPoint, in pdfView: SelectablePDFPreviewView) -> Bool {

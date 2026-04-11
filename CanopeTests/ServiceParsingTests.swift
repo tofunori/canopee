@@ -938,6 +938,7 @@ final class ServiceParsingTests: XCTestCase {
             editorFontSize: 14,
             editorTheme: 1,
             markdownEditorMode: .source,
+            isCompiledPDFTabVisible: false,
             referencePaperIDs: [],
             selectedReferencePaperID: nil,
             layoutBeforeReference: nil,
@@ -950,6 +951,7 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(decoded.markdownEditorMode, .source)
         XCTAssertEqual(decoded.selectedSidebarSection, .files)
         XCTAssertEqual(decoded.splitLayout, .editorOnly)
+        XCTAssertFalse(decoded.isCompiledPDFTabVisible)
         XCTAssertEqual(decoded.workspaceRootPath, "/tmp")
     }
 
@@ -980,8 +982,38 @@ final class ServiceParsingTests: XCTestCase {
         XCTAssertEqual(decoded.selectedSidebarSection, .annotations)
         XCTAssertEqual(decoded.splitLayout, .horizontal)
         XCTAssertEqual(decoded.panelArrangement, .terminalEditorContent)
+        XCTAssertTrue(decoded.isCompiledPDFTabVisible)
         XCTAssertEqual(decoded.layoutBeforeReference, .editorOnly)
         XCTAssertEqual(decoded.workspaceRootPath, "/tmp/project")
+    }
+
+    func testPDFWidthFitSupportComputesScaleFactorFromAvailableWidth() {
+        let scale = PDFWidthFitSupport.scaleFactor(
+            pageWidth: 500,
+            availableWidth: 816,
+            minScaleFactor: 0.25,
+            maxScaleFactor: 4
+        )
+
+        XCTAssertEqual(scale ?? 0, 1.6, accuracy: 0.0001)
+    }
+
+    func testPDFWidthFitSupportClampsScaleFactorToConfiguredBounds() {
+        let minimumScale = PDFWidthFitSupport.scaleFactor(
+            pageWidth: 500,
+            availableWidth: 40,
+            minScaleFactor: 0.5,
+            maxScaleFactor: 4
+        )
+        let maximumScale = PDFWidthFitSupport.scaleFactor(
+            pageWidth: 200,
+            availableWidth: 2016,
+            minScaleFactor: 0.5,
+            maxScaleFactor: 2
+        )
+
+        XCTAssertEqual(minimumScale ?? 0, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(maximumScale ?? 0, 2, accuracy: 0.0001)
     }
 
     @MainActor

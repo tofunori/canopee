@@ -131,6 +131,7 @@ final class LaTeXWorkspaceUIState: ObservableObject {
     @Published var editorFontSize: Double = 14
     @Published var editorTheme = 0
     @Published var markdownEditorMode: MarkdownEditorDisplayMode = .livePreview
+    @Published var isCompiledPDFTabVisible = true
     @Published var referencePaperIDs: [UUID] = []
     @Published var selectedReferencePaperID: UUID?
     @Published var layoutBeforeReference: LaTeXEditorSplitLayout?

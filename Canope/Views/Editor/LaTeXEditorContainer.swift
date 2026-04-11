@@ -72,6 +72,7 @@ struct LaTeXEditorContainer: View {
             editorFontSize: workspaceState.editorFontSize,
             editorTheme: workspaceState.editorTheme,
             markdownEditorMode: workspaceState.markdownEditorMode,
+            isCompiledPDFTabVisible: workspaceState.isCompiledPDFTabVisible,
             referencePaperIDs: workspaceState.referencePaperIDs,
             selectedReferencePaperID: workspaceState.selectedReferencePaperID,
             layoutBeforeReference: workspaceState.layoutBeforeReference,
@@ -103,6 +104,7 @@ struct LaTeXEditorContainer: View {
         workspaceState.editorFontSize = snapshot.editorFontSize
         workspaceState.editorTheme = snapshot.editorTheme
         workspaceState.markdownEditorMode = snapshot.markdownEditorMode
+        workspaceState.isCompiledPDFTabVisible = snapshot.isCompiledPDFTabVisible
         workspaceState.layoutBeforeReference = snapshot.layoutBeforeReference
         workspaceState.workspaceRoot = snapshot.workspaceRootPath.map { URL(fileURLWithPath: $0) }
 

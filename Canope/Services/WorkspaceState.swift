@@ -165,6 +165,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
     var editorFontSize: Double
     var editorTheme: Int
     var markdownEditorMode: MarkdownEditorDisplayMode
+    var isCompiledPDFTabVisible: Bool
     var referencePaperIDs: [UUID]
     var selectedReferencePaperID: UUID?
     var layoutBeforeReference: LaTeXEditorSplitLayout?
@@ -184,6 +185,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         case editorFontSize
         case editorTheme
         case markdownEditorMode
+        case isCompiledPDFTabVisible
         case referencePaperIDs
         case selectedReferencePaperID
         case layoutBeforeReference
@@ -204,6 +206,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         editorFontSize: Double,
         editorTheme: Int,
         markdownEditorMode: MarkdownEditorDisplayMode,
+        isCompiledPDFTabVisible: Bool,
         referencePaperIDs: [UUID],
         selectedReferencePaperID: UUID?,
         layoutBeforeReference: LaTeXEditorSplitLayout?,
@@ -222,6 +225,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         self.editorFontSize = editorFontSize
         self.editorTheme = editorTheme
         self.markdownEditorMode = markdownEditorMode
+        self.isCompiledPDFTabVisible = isCompiledPDFTabVisible
         self.referencePaperIDs = referencePaperIDs
         self.selectedReferencePaperID = selectedReferencePaperID
         self.layoutBeforeReference = layoutBeforeReference
@@ -245,6 +249,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         editorFontSize = try container.decode(Double.self, forKey: .editorFontSize)
         editorTheme = try container.decode(Int.self, forKey: .editorTheme)
         markdownEditorMode = try container.decodeIfPresent(MarkdownEditorDisplayMode.self, forKey: .markdownEditorMode) ?? .livePreview
+        isCompiledPDFTabVisible = try container.decodeIfPresent(Bool.self, forKey: .isCompiledPDFTabVisible) ?? true
         referencePaperIDs = try container.decode([UUID].self, forKey: .referencePaperIDs)
         selectedReferencePaperID = try container.decodeIfPresent(UUID.self, forKey: .selectedReferencePaperID)
         layoutBeforeReference = try container.decodeIfPresent(LaTeXEditorSplitLayout.self, forKey: .layoutBeforeReference)
@@ -266,6 +271,7 @@ struct LaTeXEditorWorkspaceState: Codable, Equatable {
         try container.encode(editorFontSize, forKey: .editorFontSize)
         try container.encode(editorTheme, forKey: .editorTheme)
         try container.encode(markdownEditorMode, forKey: .markdownEditorMode)
+        try container.encode(isCompiledPDFTabVisible, forKey: .isCompiledPDFTabVisible)
         try container.encode(referencePaperIDs, forKey: .referencePaperIDs)
         try container.encodeIfPresent(selectedReferencePaperID, forKey: .selectedReferencePaperID)
         try container.encodeIfPresent(layoutBeforeReference, forKey: .layoutBeforeReference)

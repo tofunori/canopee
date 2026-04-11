@@ -94,6 +94,7 @@ struct PDFKitView: NSViewRepresentable {
         context.coordinator.updateCursor(for: currentTool)
         context.coordinator.setupDrawingCallbacks()
         context.coordinator.setupResizeCallback()
+        context.coordinator.installFrameObservation()
         context.coordinator.searchState = searchState
         context.coordinator.configureSearchState()
         context.coordinator.syncSearchQuery(force: true)
@@ -112,11 +113,6 @@ struct PDFKitView: NSViewRepresentable {
             self.applyBridgeAnnotation = { [weak coordinator = context.coordinator] selection, type, color in
                 coordinator?.applyBridgeAnnotation(selection: selection, type: type, color: color)
             }
-        }
-
-        // Auto fit-to-width once the view has its layout size
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            context.coordinator.fitToWidth()
         }
 
         NotificationCenter.default.addObserver(
@@ -177,6 +173,7 @@ struct PDFKitView: NSViewRepresentable {
             context.coordinator.restoreViewState(viewState)
             context.coordinator.resetSearchQueryCache()
             context.coordinator.assignControllerViews()
+            context.coordinator.scheduleFitToWidth(for: pdfView)
         }
 
         context.coordinator.pdfView?.selectionPreviewTool = currentTool
@@ -222,6 +219,9 @@ struct PDFKitView: NSViewRepresentable {
         private var isDragging = false
         private var mouseUpMonitor: Any?
         private var magnifyMonitor: Any?
+        private var frameChangeObserver: NSObjectProtocol?
+        private var pendingFitWorkItem: DispatchWorkItem?
+        private var shouldMaintainFitToWidth = true
         private let searchController: PDFSearchController
         private let annotationController: PDFAnnotationController
         private let textBoxController: PDFTextBoxEditingController
@@ -382,6 +382,26 @@ struct PDFKitView: NSViewRepresentable {
             overlay?.onResizeComplete = { [weak self] newOverlayRect in
                 self?.textBoxController.handleResizeComplete(newOverlayRect)
             }
+        }
+
+        func installFrameObservation() {
+            guard let pdfView else { return }
+            pdfView.postsFrameChangedNotifications = true
+            if let frameChangeObserver {
+                NotificationCenter.default.removeObserver(frameChangeObserver)
+                self.frameChangeObserver = nil
+            }
+            frameChangeObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: pdfView,
+                queue: .main
+            ) { [weak self, weak pdfView] _ in
+                guard let self, let pdfView else { return }
+                Task { @MainActor in
+                    self.scheduleFitToWidth(for: pdfView)
+                }
+            }
+            scheduleFitToWidth(for: pdfView)
         }
 
         private func handleRectDragComplete(start: NSPoint, end: NSPoint) {
@@ -614,11 +634,21 @@ struct PDFKitView: NSViewRepresentable {
 
         func fitToWidth() {
             guard let pdfView,
-                  let page = pdfView.currentPage else { return }
-            let pageWidth = page.bounds(for: pdfView.displayBox).width
-            guard pageWidth > 0 else { return }
-            let viewWidth = pdfView.bounds.width - pdfView.safeAreaInsets.left - pdfView.safeAreaInsets.right
-            pdfView.scaleFactor = viewWidth / pageWidth
+                  pdfView.canopeFitCurrentPageToWidth() else { return }
+        }
+
+        func scheduleFitToWidth(for pdfView: PDFView, retriesRemaining: Int = 5) {
+            guard shouldMaintainFitToWidth else { return }
+
+            pendingFitWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self, weak pdfView] in
+                guard let self, let pdfView else { return }
+                if pdfView.canopeFitCurrentPageToWidth() == false, retriesRemaining > 0 {
+                    self.scheduleFitToWidth(for: pdfView, retriesRemaining: retriesRemaining - 1)
+                }
+            }
+            pendingFitWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
         }
 
         private func updateSelectionDismissInterception() {
@@ -812,8 +842,14 @@ struct PDFKitView: NSViewRepresentable {
         }
 
         func teardown() {
+            pendingFitWorkItem?.cancel()
+            pendingFitWorkItem = nil
             removeMouseUpMonitor()
             removeMagnifyMonitor()
+            if let frameChangeObserver {
+                NotificationCenter.default.removeObserver(frameChangeObserver)
+                self.frameChangeObserver = nil
+            }
             NotificationCenter.default.removeObserver(self)
             dismissTextBoxEditing()
             searchController.pdfView = nil

@@ -210,6 +210,17 @@ extension UnifiedEditorView {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+            } else if case .compiled = tab,
+                      !documentMode.isRunnableCode,
+                      !workspaceState.referencePaperIDs.isEmpty {
+                Button {
+                    closePdfTab(tab)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 10)

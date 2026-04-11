@@ -445,7 +445,8 @@ struct UnifiedEditorView: View {
     private var isDocumentPreviewVisible: Bool {
         let hasReferences = !workspaceState.referencePaperIDs.isEmpty
         if documentMode == .latex {
-            return showPDFPreview && (compiledPDF != nil || hasReferences)
+            let hasVisibleCompiledTab = workspaceState.isCompiledPDFTabVisible && compiledPDF != nil
+            return showPDFPreview && (hasVisibleCompiledTab || hasReferences)
         }
         // Markdown & other modes: show whenever toggled (for reference PDFs)
         return showPDFPreview
@@ -454,12 +455,25 @@ struct UnifiedEditorView: View {
     // MARK: - PDF pane tabs (shared for both modes)
 
     var pdfPaneTabs: [LaTeXEditorPdfPaneTab] {
-        [.compiled] + workspaceState.referencePaperIDs.map { .reference($0) }
+        let compiledTabs: [LaTeXEditorPdfPaneTab]
+        if documentMode.isRunnableCode || workspaceState.isCompiledPDFTabVisible {
+            compiledTabs = [.compiled]
+        } else {
+            compiledTabs = []
+        }
+        return compiledTabs + workspaceState.referencePaperIDs.map { .reference($0) }
     }
 
     var selectedPdfTab: LaTeXEditorPdfPaneTab {
-        if let id = workspaceState.selectedReferencePaperID {
+        if let id = workspaceState.selectedReferencePaperID,
+           workspaceState.referencePaperIDs.contains(id) {
             return .reference(id)
+        }
+        if documentMode.isRunnableCode || workspaceState.isCompiledPDFTabVisible || workspaceState.referencePaperIDs.isEmpty {
+            return .compiled
+        }
+        if let firstReferenceID = workspaceState.referencePaperIDs.first {
+            return .reference(firstReferenceID)
         }
         return .compiled
     }
@@ -1447,6 +1461,17 @@ struct UnifiedEditorView: View {
             }
             .buttonStyle(.plain)
             .appChromeQuickHelp(AppStrings.openReferencePaper)
+
+            if !documentMode.isRunnableCode,
+               !workspaceState.isCompiledPDFTabVisible,
+               compiledPDF != nil {
+                Button(action: reopenCompiledPDFTab) {
+                    Image(systemName: "doc.badge.plus")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .appChromeQuickHelp("Rouvrir le PDF compilé")
+            }
         }
     }
 
