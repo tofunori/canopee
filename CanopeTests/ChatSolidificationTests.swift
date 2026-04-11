@@ -594,6 +594,164 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertTrue((payload[2]["text"] as? String)?.contains("Explique ce contenu") == true)
     }
 
+    func testChatCommandRouterRoutesLocalCommands() {
+        XCTAssertEqual(
+            ChatCommandRouter.route(
+                inputText: "/plan",
+                attachedFiles: [],
+                supportsReview: true,
+                chatFileRootURL: URL(fileURLWithPath: "/tmp/chat")
+            ),
+            .setMode(.plan)
+        )
+
+        XCTAssertEqual(
+            ChatCommandRouter.route(
+                inputText: "/resume",
+                attachedFiles: [],
+                supportsReview: true,
+                chatFileRootURL: URL(fileURLWithPath: "/tmp/chat")
+            ),
+            .showSessionPicker
+        )
+
+        XCTAssertEqual(
+            ChatCommandRouter.route(
+                inputText: "/continue",
+                attachedFiles: [],
+                supportsReview: true,
+                chatFileRootURL: URL(fileURLWithPath: "/tmp/chat")
+            ),
+            .resumeLastChatSession(matchingDirectory: URL(fileURLWithPath: "/tmp/chat"))
+        )
+    }
+
+    func testChatCommandRouterRoutesReviewOnlyWhenSupported() {
+        XCTAssertEqual(
+            ChatCommandRouter.route(
+                inputText: "/review HEAD~1",
+                attachedFiles: [],
+                supportsReview: true,
+                chatFileRootURL: URL(fileURLWithPath: "/tmp/chat")
+            ),
+            .startReview(command: "HEAD~1")
+        )
+
+        XCTAssertEqual(
+            ChatCommandRouter.route(
+                inputText: "/review HEAD~1",
+                attachedFiles: [],
+                supportsReview: false,
+                chatFileRootURL: URL(fileURLWithPath: "/tmp/chat")
+            ),
+            .sendText("/review HEAD~1")
+        )
+    }
+
+    func testChatCommandRouterBuildsStructuredInputItemsForAttachments() {
+        let attachment = AttachedFile(
+            name: "notes.txt",
+            path: "/tmp/notes.txt",
+            content: "Hydrology notes",
+            kind: .textFile
+        )
+
+        XCTAssertEqual(
+            ChatCommandRouter.route(
+                inputText: "Regarde ca",
+                attachedFiles: [attachment],
+                supportsReview: true,
+                chatFileRootURL: URL(fileURLWithPath: "/tmp/chat")
+            ),
+            .sendItems(
+                displayText: "Regarde ca\n📎 1 fichier joint",
+                items: [
+                    .textFile(name: "notes.txt", path: "/tmp/notes.txt", content: "Hydrology notes"),
+                    .text("Regarde ca"),
+                ]
+            )
+        )
+    }
+
+    @MainActor
+    func testChatApprovalFormModelValidatesRequiredIntegerAndNumberFields() {
+        let model = ChatApprovalFormModel()
+        let approval = ChatApprovalRequest(
+            toolName: "request_user_input",
+            prompt: "Prompt",
+            displayText: "Prompt",
+            fields: [
+                ChatInteractiveField(
+                    id: "count",
+                    title: "Count",
+                    prompt: nil,
+                    kind: .integer,
+                    options: [],
+                    isRequired: true,
+                    allowsCustomValue: false,
+                    placeholder: nil,
+                    defaultValue: ""
+                ),
+                ChatInteractiveField(
+                    id: "ratio",
+                    title: "Ratio",
+                    prompt: nil,
+                    kind: .number,
+                    options: [],
+                    isRequired: false,
+                    allowsCustomValue: false,
+                    placeholder: nil,
+                    defaultValue: ""
+                ),
+            ]
+        )
+
+        model.sync(with: approval)
+        XCTAssertFalse(model.canSubmit(approval))
+
+        model.setValue("abc", for: "count")
+        XCTAssertFalse(model.canSubmit(approval))
+
+        model.setValue("3", for: "count")
+        model.setValue("oops", for: "ratio")
+        XCTAssertFalse(model.canSubmit(approval))
+
+        model.setValue("0.75", for: "ratio")
+        XCTAssertTrue(model.canSubmit(approval))
+    }
+
+    @MainActor
+    func testChatApprovalFormModelResolvesOtherChoiceValue() {
+        let model = ChatApprovalFormModel()
+        let field = ChatInteractiveField(
+            id: "format",
+            title: "Format",
+            prompt: nil,
+            kind: .singleChoice,
+            options: [
+                ChatInteractiveOption(label: "PDF", description: ""),
+                ChatInteractiveOption(label: "DOCX", description: ""),
+            ],
+            isRequired: true,
+            allowsCustomValue: true,
+            placeholder: nil,
+            defaultValue: "PDF"
+        )
+        let approval = ChatApprovalRequest(
+            toolName: "request_user_input",
+            prompt: "Prompt",
+            displayText: "Prompt",
+            fields: [field]
+        )
+
+        model.sync(with: approval)
+        model.setValue("__other__", for: "format")
+        model.setOtherValue("Markdown", for: "format")
+
+        XCTAssertEqual(model.resolvedValue(for: field), "Markdown")
+        XCTAssertTrue(model.canSubmit(approval))
+    }
+
     @MainActor
     func testCodexAcceptEditsServerApprovalCreatesPendingApproval() {
         let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))

@@ -39,7 +39,7 @@ private enum CodexTraceLog {
 }
 
 /// Single-session JSON-RPC client for `codex app-server --listen stdio://`.
-private final class CodexAppServerRPCSession: @unchecked Sendable {
+final class CodexAppServerRPCSession: @unchecked Sendable {
     private let lock = NSLock()
     private let ioQueue = DispatchQueue(label: "CodexAppServerRPCSession.io")
     private var nextRequestID = 1
@@ -287,23 +287,6 @@ private func decodeJSONRPCResult(_ data: Data?) throws -> Any? {
 
 @MainActor
 final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
-    enum ServerRequestDisposition: Equatable {
-        case autoApprove
-        case inlineApproval
-        case reject
-        case denyPermissions
-        case unsupported
-    }
-
-    private struct PendingServerRequest {
-        let id: Int
-        let method: String
-        let itemID: String?
-        let threadID: String?
-        let turnID: String?
-        let params: [String: Any]
-    }
-
     @Published var messages: [ChatMessage] = []
     @Published var isProcessing = false
     @Published var isConnected = false
@@ -325,16 +308,16 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
     static let defaultModels = ["gpt-5.4", "gpt-5.3-codex", "gpt-5.2"]
     static let defaultEfforts = ["low", "medium", "high", "xhigh"]
-    static let globalCustomInstructionsDefaultsKey = "Canope.CodexChatCustomInstructions.Global"
-    static let sessionCustomInstructionsDefaultsKey = "Canope.CodexChatCustomInstructions.ByThread"
+    static let globalCustomInstructionsDefaultsKey = CodexCustomInstructionsStore.globalDefaultsKey
+    static let sessionCustomInstructionsDefaultsKey = CodexCustomInstructionsStore.sessionDefaultsKey
 
     private var workingDirectory: URL
-    private var resumeWorkingDirectory: URL?
     private var rpc: CodexAppServerRPCSession?
     private var initialized = false
     private var connectTask: Task<Void, Never>?
-    private var currentThreadId: String?
-    private var currentTurnId: String?
+    private let threadCoordinator = CodexThreadCoordinator()
+    private let approvalCoordinator = CodexApprovalCoordinator()
+    private var currentRun = CodexCurrentRunState()
     private var currentAssistantMessageIndex: Int?
     private var currentAgentItemId: String?
     private var lastRetryStatusMessage: String?
@@ -342,12 +325,6 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private var assistantDeltaFlushTask: Task<Void, Never>?
     private var pendingMarkdown: [(UUID, String)] = []
     private var markdownTask: Task<Void, Never>?
-    private var currentRunInteractionMode: ChatInteractionMode = .agent
-    private var currentRunIncludesIDEContext = true
-    private var currentRunInputItems: [ChatInputItem] = []
-    private var currentRunPrompt = ""
-    private var currentRunDisplayText = ""
-    private var pendingServerRequests: [Int: PendingServerRequest] = [:]
     private var itemToolUseMessageIndex: [String: Int] = [:]
     private var itemOutputBuffers: [String: String] = [:]
 
@@ -355,7 +332,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private static let markdownPreRenderDelayNanoseconds: UInt64 = 80_000_000
 
     init(workingDirectory: URL? = nil) {
-        self.globalCustomInstructionsText = Self.loadGlobalCustomInstructions()
+        self.globalCustomInstructionsText = CodexCustomInstructionsStore.loadGlobalText()
         if let wd = workingDirectory {
             self.workingDirectory = wd
         } else {
@@ -370,7 +347,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         workingDirectory = url
     }
 
-    var workingDirectoryURL: URL { resumeWorkingDirectory ?? workingDirectory }
+    var workingDirectoryURL: URL { threadCoordinator.workingDirectoryURL(base: workingDirectory) }
 
     deinit {
         connectTask?.cancel()
@@ -389,7 +366,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         flushPendingAssistantDelta()
         clearAssistantDeltaWork()
         clearMarkdownPreRenderWork()
-        pendingServerRequests.removeAll()
+        approvalCoordinator.reset()
         itemToolUseMessageIndex.removeAll()
         itemOutputBuffers.removeAll()
         isProcessing = false
@@ -547,11 +524,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private static var cachedModelList: [String]?
 
     private func interruptIfNeeded() async {
-        guard let rpc, let tid = currentThreadId, let turn = currentTurnId else { return }
-        _ = try? await rpc.call(
-            method: "turn/interrupt",
-            params: ["threadId": tid, "turnId": turn]
-        )
+        await threadCoordinator.interruptIfNeeded(rpc: rpc)
     }
 
     // MARK: - Send flow
@@ -577,11 +550,13 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
 
         isProcessing = true
-        currentRunInteractionMode = interactionMode
-        currentRunIncludesIDEContext = includeIDEContext
-        currentRunInputItems = items
-        currentRunPrompt = prompt
-        currentRunDisplayText = display
+        currentRun.configure(
+            interactionMode: interactionMode,
+            includesIDEContext: includeIDEContext,
+            inputItems: items,
+            prompt: prompt,
+            displayText: display
+        )
         currentAssistantMessageIndex = nil
         currentAgentItemId = nil
         lastRetryStatusMessage = nil
@@ -597,51 +572,39 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
 
         do {
-            if currentThreadId == nil {
+            if threadCoordinator.currentThreadId == nil {
                 let cwd = workingDirectoryURL.path
-                CodexTraceLog.write("thread/start cwd=\(cwd) model=\(self.selectedModel) approval=\(Self.approvalPolicy(for: interactionMode)) sandbox=\(Self.threadSandboxMode(for: interactionMode))")
-                let result = try await rpc.call(
-                    method: "thread/start",
-                    params: [
-                        "model": selectedModel,
-                        "cwd": cwd,
-                        "approvalPolicy": Self.approvalPolicy(for: interactionMode),
-                        "sandbox": Self.threadSandboxMode(for: interactionMode),
-                        "serviceName": "canope",
-                    ]
-                ) as? [String: Any]
-                if let thread = result?["thread"] as? [String: Any],
-                   let id = thread["id"] as? String {
-                    currentThreadId = id
-                    session.id = id
-                    session.name = thread["name"] as? String
+                CodexTraceLog.write("thread/start cwd=\(cwd) model=\(self.selectedModel) approval=\(CodexApprovalCoordinator.approvalPolicy(for: interactionMode)) sandbox=\(CodexApprovalCoordinator.threadSandboxMode(for: interactionMode))")
+                if let thread = try await threadCoordinator.startThreadIfNeeded(
+                    rpc: rpc,
+                    model: selectedModel,
+                    interactionMode: interactionMode,
+                    workingDirectory: workingDirectoryURL
+                ) {
+                    session.id = thread.id
+                    session.name = thread.name
                     session.turns = 0
-                    Self.saveSessionCustomInstructions(sessionCustomInstructionsText, threadId: id)
-                    CodexTraceLog.write("thread/start result threadId=\(id)")
+                    CodexCustomInstructionsStore.saveSessionText(sessionCustomInstructionsText, threadId: thread.id)
+                    CodexTraceLog.write("thread/start result threadId=\(thread.id)")
                 }
             }
 
-            guard let threadId = currentThreadId else {
+            guard let threadId = threadCoordinator.currentThreadId else {
                 throw NSError(domain: "CodexAppServer", code: 10, userInfo: [NSLocalizedDescriptionKey: "No thread"])
             }
 
-            let turnParams: [String: Any] = [
-                "threadId": threadId,
-                "input": Self.buildTurnInputPayload(
-                    from: items,
-                    interactionMode: interactionMode,
-                    includeIDEContext: includeIDEContext,
-                    globalCustomInstructions: globalCustomInstructionsText,
-                    sessionCustomInstructions: sessionCustomInstructionsText
-                ),
-                "cwd": workingDirectoryURL.path,
-                "model": selectedModel,
-                "effort": selectedEffort,
-                "approvalPolicy": Self.approvalPolicy(for: interactionMode),
-                "sandboxPolicy": Self.sandboxPolicy(for: interactionMode, workingDirectory: workingDirectoryURL),
-            ]
             CodexTraceLog.write("turn/start threadId=\(threadId) effort=\(self.selectedEffort) model=\(self.selectedModel)")
-            _ = try await rpc.call(method: "turn/start", params: turnParams)
+            try await threadCoordinator.startTurn(
+                rpc: rpc,
+                items: items,
+                interactionMode: interactionMode,
+                includeIDEContext: includeIDEContext,
+                globalCustomInstructions: globalCustomInstructionsText,
+                sessionCustomInstructions: sessionCustomInstructionsText,
+                workingDirectory: workingDirectoryURL,
+                model: selectedModel,
+                effort: selectedEffort
+            )
             CodexTraceLog.write("turn/start returned")
             session.turns += 1
         } catch {
@@ -659,7 +622,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         case "turn/started":
             if let turn = params["turn"] as? [String: Any],
                let tid = turn["id"] as? String {
-                currentTurnId = tid
+                threadCoordinator.setCurrentTurnId(tid)
             }
         case "item/started":
             if let item = params["item"] as? [String: Any] {
@@ -697,14 +660,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 currentAssistantMessageIndex = nil
             }
             isProcessing = false
-            currentTurnId = nil
+            threadCoordinator.setCurrentTurnId(nil)
             lastRetryStatusMessage = nil
-            pendingServerRequests.removeAll()
+            approvalCoordinator.reset()
         case "turn/plan/updated":
             handleTurnPlanUpdated(params)
         case "serverRequest/resolved":
             if let requestId = jsonInt(params["requestId"]) {
-                pendingServerRequests.removeValue(forKey: requestId)
+                approvalCoordinator.removeRequest(id: requestId)
                 if pendingApprovalRequest?.rpcRequestID == requestId {
                     pendingApprovalRequest = nil
                 }
@@ -739,7 +702,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             } else {
                 lastRetryStatusMessage = nil
                 isProcessing = false
-                currentTurnId = nil
+                threadCoordinator.setCurrentTurnId(nil)
             }
         default:
             break
@@ -749,16 +712,12 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private func handleServerRequest(id: Int, method: String, params: [String: Any]) {
         let paramsSummary = Self.jsonString(params) ?? "{}"
         CodexTraceLog.write("serverRequest id=\(id) method=\(method) params=\(paramsSummary)")
-        let request = PendingServerRequest(
-            id: id,
-            method: method,
-            itemID: params["itemId"] as? String,
-            threadID: params["threadId"] as? String,
-            turnID: params["turnId"] as? String,
+        let request = approvalCoordinator.registerRequest(id: id, method: method, params: params)
+        let disposition = CodexApprovalCoordinator.serverRequestDisposition(
+            for: method,
+            mode: currentRun.interactionMode,
             params: params
         )
-        pendingServerRequests[id] = request
-        let disposition = Self.serverRequestDisposition(for: method, mode: currentRunInteractionMode, params: params)
         updateStatusForServerRequest(method: method, disposition: disposition)
         switch disposition {
         case .autoApprove:
@@ -767,36 +726,34 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 await self?.replyToServerRequest(id: id, method: method, approved: true)
             }
         case .inlineApproval:
-            pendingApprovalRequest = ChatApprovalRequest(
-                toolName: Self.serverRequestToolName(method: method, params: params),
-                actionLabel: Self.serverRequestActionLabel(method: method),
-                prompt: currentRunPrompt,
-                displayText: currentRunDisplayText,
-                message: Self.serverRequestMessage(method: method, params: params),
-                details: Self.serverRequestDetails(method: method, params: params),
-                preview: Self.serverRequestPreview(method: method, params: params),
-                fields: Self.serverRequestFields(method: method, params: params),
-                rpcRequestID: id,
-                rpcMethod: method,
-                itemID: request.itemID,
-                threadID: request.threadID,
-                turnID: request.turnID
+            pendingApprovalRequest = approvalCoordinator.makeApprovalRequest(
+                from: request,
+                prompt: currentRun.prompt,
+                displayText: currentRun.displayText
             )
             isProcessing = false
         case .reject:
-            appendSystem(Self.blockedServerRequestMessage(method: method, mode: currentRunInteractionMode, params: params))
+            appendSystem(CodexApprovalCoordinator.blockedServerRequestMessage(
+                method: method,
+                mode: currentRun.interactionMode,
+                params: params
+            ))
             Task { [weak self] in
                 await self?.replyToServerRequest(id: id, method: method, approved: false)
             }
             isProcessing = false
         case .denyPermissions:
-            appendSystem(Self.blockedServerRequestMessage(method: method, mode: currentRunInteractionMode, params: params))
+            appendSystem(CodexApprovalCoordinator.blockedServerRequestMessage(
+                method: method,
+                mode: currentRun.interactionMode,
+                params: params
+            ))
             Task { [weak self] in
                 await self?.replyToPermissionsRequest(id: id, grant: false)
             }
             isProcessing = false
         case .unsupported:
-            let message = Self.unsupportedServerRequestMessage(for: method)
+            let message = CodexApprovalCoordinator.unsupportedServerRequestMessage(for: method)
             appendSystem(message)
             Task { [weak self] in
                 await self?.replyUnsupportedServerRequest(id: id, method: method, message: message)
@@ -871,7 +828,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         let itemID = (item["id"] as? String) ?? UUID().uuidString
         currentAgentItemId = itemID
         let text = (item["text"] as? String) ?? ""
-        let presentationKind: ChatMessage.PresentationKind = type == "plan" ? .plan : (currentRunInteractionMode == .plan ? .plan : .standard)
+        let presentationKind: ChatMessage.PresentationKind = type == "plan" ? .plan : (currentRun.interactionMode == .plan ? .plan : .standard)
         let message = ChatMessage(
             role: .assistant,
             content: text,
@@ -899,28 +856,28 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         if ClaudeHeadlessProvider.shouldBlockTool(
             name: name,
             input: item["arguments"] as? [String: Any],
-            mode: currentRunInteractionMode
+            mode: currentRun.interactionMode
         ) {
-            if currentRunInteractionMode == .acceptEdits {
+            if currentRun.interactionMode == .acceptEdits {
                 pendingApprovalRequest = ChatApprovalRequest(
                     toolName: name,
                     actionLabel: "MCP",
-                    prompt: currentRunPrompt,
-                    displayText: currentRunDisplayText,
+                    prompt: currentRun.prompt,
+                    displayText: currentRun.displayText,
                     details: [summary],
                     itemID: item["id"] as? String,
-                    threadID: currentThreadId,
-                    turnID: currentTurnId
+                    threadID: threadCoordinator.currentThreadId,
+                    turnID: threadCoordinator.currentTurnId
                 )
             } else {
                 appendSystem(ClaudeHeadlessProvider.blockedToolMessage(
                     toolName: name,
-                    mode: currentRunInteractionMode
+                    mode: currentRun.interactionMode
                 ))
             }
             Task { await interruptIfNeeded() }
             isProcessing = false
-            currentTurnId = nil
+            threadCoordinator.setCurrentTurnId(nil)
             return
         }
         appendToolUseItem(
@@ -1048,7 +1005,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         )
     }
 
-    private func updateStatusForServerRequest(method: String, disposition: ServerRequestDisposition) {
+    private func updateStatusForServerRequest(method: String, disposition: CodexServerRequestDisposition) {
         let badges = Self.derivedStatusBadges(forServerRequestMethod: method, disposition: disposition)
         if let auth = badges.auth {
             authStatusBadge = auth
@@ -1096,13 +1053,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     }
 
     private func clearResolvedApproval(for itemID: String?) {
-        guard let itemID else { return }
-        if pendingApprovalRequest?.itemID == itemID {
-            pendingApprovalRequest = nil
-        }
-        pendingServerRequests = pendingServerRequests.filter { _, value in
-            value.itemID != itemID
-        }
+        approvalCoordinator.clearResolvedApproval(for: itemID, pendingApprovalRequest: &pendingApprovalRequest)
     }
 
     private func extractDeltaText(_ params: [String: Any]) -> String? {
@@ -1276,7 +1227,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                     id: id,
                     result: [
                         "permissions": Self.grantedPermissions(
-                            from: pendingServerRequests[id]?.params ?? [:],
+                            from: approvalCoordinator.request(for: id)?.params ?? [:],
                             grant: approved,
                             workingDirectory: workingDirectoryURL
                         ),
@@ -1287,7 +1238,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 try rpc.respond(
                     id: id,
                     result: Self.elicitationResponseResult(
-                        from: pendingServerRequests[id]?.params ?? [:],
+                        from: approvalCoordinator.request(for: id)?.params ?? [:],
                         approved: approved,
                         fieldValues: fieldValues
                     )
@@ -1300,14 +1251,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 try rpc.respond(
                     id: id,
                     result: Self.toolRequestUserInputResponseResult(
-                        from: pendingServerRequests[id]?.params ?? [:],
+                        from: approvalCoordinator.request(for: id)?.params ?? [:],
                         fieldValues: fieldValues
                     )
                 )
             default:
                 try rpc.respondError(id: id, message: Self.unsupportedServerRequestMessage(for: method))
             }
-            pendingServerRequests.removeValue(forKey: id)
+            approvalCoordinator.removeRequest(id: id)
         } catch {
             appendSystem("Codex: \(error.localizedDescription)")
             isProcessing = false
@@ -1322,14 +1273,14 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 id: id,
                 result: [
                     "permissions": Self.grantedPermissions(
-                        from: pendingServerRequests[id]?.params ?? [:],
+                        from: approvalCoordinator.request(for: id)?.params ?? [:],
                         grant: grant,
                         workingDirectory: workingDirectoryURL
                     ),
                     "scope": "turn",
                 ]
             )
-            pendingServerRequests.removeValue(forKey: id)
+            approvalCoordinator.removeRequest(id: id)
         } catch {
             appendSystem("Codex: \(error.localizedDescription)")
         }
@@ -1354,7 +1305,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             default:
                 try rpc.respondError(id: id, message: message)
             }
-            pendingServerRequests.removeValue(forKey: id)
+            approvalCoordinator.removeRequest(id: id)
         } catch {
             appendSystem("Codex: \(error.localizedDescription)")
         }
@@ -1386,11 +1337,11 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         if let changes = item["changes"] as? [[String: Any]], !changes.isEmpty {
             let firstPath = (changes.first?["path"] as? String) ?? (changes.first?["newPath"] as? String)
             if let firstPath, !firstPath.isEmpty {
-                return "Proposed change · \((firstPath as NSString).lastPathComponent)"
+                return "Modification proposee · \((firstPath as NSString).lastPathComponent)"
             }
-            return "Proposed change · \(changes.count) file(s)"
+            return "Modification proposee · \(changes.count) fichier(s)"
         }
-        return "Proposed change"
+        return "Modification proposee"
     }
 
     private static func completedCommandExecutionSummary(_ item: [String: Any], bufferedOutput: String?) -> String? {
@@ -2414,9 +2365,9 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             case .plan:
                 return AppStrings.permissionRequestBlocked
             case .acceptEdits:
-                return "Accept edits mode: the additional permission request was blocked while waiting for your approval."
+                return "Mode accept edits: la demande de permission additionnelle a ete bloquee en attendant ton approbation."
             case .agent:
-                return "Additional permission request."
+                return "Demande de permission additionnelle."
             }
         default:
             return unsupportedServerRequestMessage(for: method)
@@ -2570,47 +2521,10 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         _ userMessage: String,
         includeIDEContext: Bool = true
     ) -> String {
-        guard includeIDEContext else {
-            return userMessage
-        }
-        let path = CanopeContextFiles.ideSelectionStatePaths[0]
-        guard let data = FileManager.default.contents(atPath: path),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let text = json["text"] as? String,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return userMessage
-        }
-        let filePath = json["filePath"] as? String ?? ""
-        let fileName = (filePath as NSString).lastPathComponent
-        let lineText = (json["lineText"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        let selectionLineContext = (json["selectionLineContext"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        let contextSuffix: String
-        if let selectionLineContext {
-            contextSuffix = """
-
-            [Selected line context]
-            \(selectionLineContext)
-            [/Selected line context]
-            """
-        } else if let lineText {
-            contextSuffix = """
-
-            [Current line]
-            \(lineText)
-            [/Current line]
-            """
-        } else {
-            contextSuffix = ""
-        }
-        return """
-        [Canope IDE Context — current selection in "\(fileName)")]
-        \(text)
-        \(contextSuffix)
-        [/Canope IDE Context]
-
-        \(userMessage)
-        """
+        CodexPromptComposer.buildPromptWithIDEContext(
+            userMessage,
+            includeIDEContext: includeIDEContext
+        )
     }
 
     nonisolated static func buildPromptForInteractionMode(
@@ -2634,58 +2548,13 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         globalCustomInstructions: String,
         sessionCustomInstructions: String
     ) -> String {
-        let promptWithContext = buildPromptWithIDEContext(
+        CodexPromptComposer.buildPromptForInteractionMode(
             userMessage,
-            includeIDEContext: includeIDEContext
+            mode: mode,
+            includeIDEContext: includeIDEContext,
+            globalCustomInstructions: globalCustomInstructions,
+            sessionCustomInstructions: sessionCustomInstructions
         )
-        let customInstructionsBlock = buildCustomInstructionsBlock(
-            global: globalCustomInstructions,
-            session: sessionCustomInstructions
-        )
-
-        func joinSections(_ sections: [String]) -> String {
-            sections
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n\n")
-        }
-
-        switch mode {
-        case .agent:
-            return joinSections([customInstructionsBlock, promptWithContext])
-        case .acceptEdits:
-            return joinSections([
-                """
-                [Canope Accept Edits Mode]
-                Tu es en mode accept edits.
-                - N'applique aucune edition de fichier sans approbation explicite.
-                - N'utilise pas Bash ni aucune commande shell.
-                - N'utilise aucune action de terminal, d'execution ou avec effets de bord.
-                - Propose les changements de facon concrete et ciblee.
-                - Si une edition est appropriee et que la demande est claire, tente directement l'outil d'edition: le client demandera l'approbation inline.
-                - N'ecris pas de message du type "j'attends ton approbation" ou "si tu veux, j'applique"; laisse l'UI d'approbation faire ce travail.
-                - Une fois l'approbation accordee, applique seulement le changement valide, sans redemander la permission dans le chat.
-                [/Canope Accept Edits Mode]
-                """,
-                customInstructionsBlock,
-                promptWithContext,
-            ])
-        case .plan:
-            return joinSections([
-                """
-                [Canope Plan Mode]
-                Tu es en mode plan strict.
-                - N'execute aucune edition de fichier.
-                - N'utilise aucune commande mutante.
-                - Ne lance aucune action avec effets de bord.
-                - Produis seulement un plan structure avec: Objectif, Changements proposes, Validation, Risques.
-                - Si une information manque, formule des hypotheses explicites au lieu d'agir.
-                [/Canope Plan Mode]
-                """,
-                customInstructionsBlock,
-                promptWithContext,
-            ])
-        }
     }
 
     nonisolated static func buildTurnInputPayload(
@@ -2695,22 +2564,13 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         globalCustomInstructions: String = "",
         sessionCustomInstructions: String = ""
     ) -> [[String: Any]] {
-        items.flatMap { item in
-            switch item {
-            case .text(let text):
-                return ChatInputItem.text(
-                    buildPromptForInteractionMode(
-                        text,
-                        mode: interactionMode,
-                        includeIDEContext: includeIDEContext,
-                        globalCustomInstructions: globalCustomInstructions,
-                        sessionCustomInstructions: sessionCustomInstructions
-                    )
-                ).codexPayloads
-            default:
-                return item.codexPayloads
-            }
-        }
+        CodexPromptComposer.buildTurnInputPayload(
+            from: items,
+            interactionMode: interactionMode,
+            includeIDEContext: includeIDEContext,
+            globalCustomInstructions: globalCustomInstructions,
+            sessionCustomInstructions: sessionCustomInstructions
+        )
     }
 
     private nonisolated static func buildCustomInstructionsBlock(
@@ -2742,39 +2602,19 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     }
 
     private static func loadGlobalCustomInstructions() -> String {
-        UserDefaults.standard.string(forKey: globalCustomInstructionsDefaultsKey) ?? ""
+        CodexCustomInstructionsStore.loadGlobalText()
     }
 
     private static func saveGlobalCustomInstructions(_ text: String) {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalized.isEmpty {
-            UserDefaults.standard.removeObject(forKey: globalCustomInstructionsDefaultsKey)
-        } else {
-            UserDefaults.standard.set(normalized, forKey: globalCustomInstructionsDefaultsKey)
-        }
-    }
-
-    private static func loadSessionInstructionStore() -> [String: String] {
-        UserDefaults.standard.dictionary(forKey: sessionCustomInstructionsDefaultsKey) as? [String: String] ?? [:]
+        CodexCustomInstructionsStore.saveGlobalText(text)
     }
 
     private static func loadSessionCustomInstructions(threadId: String) -> String {
-        loadSessionInstructionStore()[threadId] ?? ""
+        CodexCustomInstructionsStore.loadSessionText(threadId: threadId)
     }
 
     private static func saveSessionCustomInstructions(_ text: String, threadId: String) {
-        var store = loadSessionInstructionStore()
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalized.isEmpty {
-            store.removeValue(forKey: threadId)
-        } else {
-            store[threadId] = normalized
-        }
-        if store.isEmpty {
-            UserDefaults.standard.removeObject(forKey: sessionCustomInstructionsDefaultsKey)
-        } else {
-            UserDefaults.standard.set(store, forKey: sessionCustomInstructionsDefaultsKey)
-        }
+        CodexCustomInstructionsStore.saveSessionText(text, threadId: threadId)
     }
 }
 
@@ -2862,9 +2702,9 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         let normalizedSession = session.trimmingCharacters(in: .whitespacesAndNewlines)
         globalCustomInstructionsText = normalizedGlobal
         sessionCustomInstructionsText = normalizedSession
-        Self.saveGlobalCustomInstructions(normalizedGlobal)
-        if let threadId = currentThreadId {
-            Self.saveSessionCustomInstructions(normalizedSession, threadId: threadId)
+        CodexCustomInstructionsStore.saveGlobalText(normalizedGlobal)
+        if let threadId = threadCoordinator.currentThreadId {
+            CodexCustomInstructionsStore.saveSessionText(normalizedSession, threadId: threadId)
         }
     }
 
@@ -2892,21 +2732,21 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         session.name = trimmed.isEmpty ? nil : trimmed
         Task {
-            _ = try? await rpc?.call(
-                method: "thread/name/set",
-                params: ["threadId": tid, "name": trimmed]
-            )
+            if threadCoordinator.currentThreadId == nil {
+                threadCoordinator.setCurrentThreadId(tid)
+            }
+            await threadCoordinator.renameCurrentThread(rpc: rpc, name: trimmed)
         }
     }
 
     func editAndResendLastUser(newText: String) {
         let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let tid = currentThreadId else {
+        guard !trimmed.isEmpty, threadCoordinator.currentThreadId != nil else {
             sendMessage(trimmed)
             return
         }
         Task {
-            _ = try? await rpc?.call(method: "thread/rollback", params: ["threadId": tid, "numTurns": 1])
+            try? await threadCoordinator.rollbackLastTurn(rpc: rpc)
             if let lastUser = messages.lastIndex(where: { $0.role == .user }) {
                 messages.removeSubrange(lastUser...)
             }
@@ -2935,7 +2775,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     }
 
     func startChatReview(command: String?) {
-        guard let tid = currentThreadId else {
+        guard let tid = threadCoordinator.currentThreadId else {
             appendSystem("Codex: lance d’abord une conversation avant /review.")
             return
         }
@@ -2972,10 +2812,10 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         }
         Task {
             await sendUserMessage(
-                currentRunInputItems.isEmpty ? [.text(request.prompt)] : currentRunInputItems,
+                currentRun.inputItems.isEmpty ? [.text(request.prompt)] : currentRun.inputItems,
                 display: request.displayText,
                 interactionMode: .agent,
-                includeIDEContext: currentRunIncludesIDEContext,
+                includeIDEContext: currentRun.includesIDEContext,
                 appendUserMessage: false
             )
         }
@@ -3033,7 +2873,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     static func renameChatSession(id: String, name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
-            try? await Self.ephemeralRename(threadId: id, name: trimmed)
+            try? await CodexThreadCoordinator.ephemeralRename(threadId: id, name: trimmed)
         }
     }
 
@@ -3133,8 +2973,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         rpc?.terminate()
         rpc = nil
         initialized = false
-        currentThreadId = nil
-        currentTurnId = nil
+        threadCoordinator.clearRuntimeState()
         currentAssistantMessageIndex = nil
         lastRetryStatusMessage = nil
         session = SessionInfo()
@@ -3145,7 +2984,8 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         mcpStatusBadge = nil
         messages.removeAll()
         pendingApprovalRequest = nil
-        pendingServerRequests.removeAll()
+        approvalCoordinator.reset()
+        currentRun.reset()
         itemToolUseMessageIndex.removeAll()
         itemOutputBuffers.removeAll()
     }
@@ -3155,21 +2995,19 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         await connectAndHandshake()
         guard let rpc else { return }
         do {
-            if let threadRead = try await rpc.call(
-                method: "thread/read",
-                params: ["threadId": id, "includeTurns": true]
-            ) as? [String: Any],
-               let snapshot = Self.historySnapshot(fromThreadReadResult: threadRead) {
+            if let snapshot = try await threadCoordinator.resumeThread(
+                id: id,
+                rpc: rpc,
+                historyReader: Self.historySnapshot(fromThreadReadResult:)
+            ) {
                 messages = snapshot.messages
                 session.name = snapshot.name
                 session.turns = snapshot.turns
                 chatReviewStateDescription = snapshot.reviewStateDescription
                 reviewStatusBadge = snapshot.reviewStatusBadge
             }
-            _ = try await rpc.call(method: "thread/resume", params: ["threadId": id])
-            currentThreadId = id
             session.id = id
-            sessionCustomInstructionsText = Self.loadSessionCustomInstructions(threadId: id)
+            sessionCustomInstructionsText = CodexCustomInstructionsStore.loadSessionText(threadId: id)
             appendSystem("Session resumed: \(id.prefix(12))…")
         } catch {
             appendSystem("Could not resume session: \(error.localizedDescription)")
@@ -3181,33 +3019,22 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         await connectAndHandshake()
         guard let rpc else { return }
         do {
-            let params: [String: Any] = [
-                "limit": 1,
-                "sortKey": "updated_at",
-                "cwd": matchingDirectory.path,
-                "sourceKinds": ["appServer", "cli", "vscode", "exec"],
-            ]
-            if let res = try await rpc.call(method: "thread/list", params: params) as? [String: Any],
-               let data = res["data"] as? [[String: Any]],
-               let first = data.first,
-               let id = first["id"] as? String {
-                if let threadRead = try await rpc.call(
-                    method: "thread/read",
-                    params: ["threadId": id, "includeTurns": true]
-                ) as? [String: Any],
-                   let snapshot = Self.historySnapshot(fromThreadReadResult: threadRead) {
+            if let result = try await threadCoordinator.resumeLatestThread(
+                matchingDirectory: matchingDirectory,
+                rpc: rpc,
+                historyReader: Self.historySnapshot(fromThreadReadResult:)
+            ) {
+                if let snapshot = result.snapshot {
                     messages = snapshot.messages
-                    session.name = snapshot.name ?? (first["name"] as? String)
+                    session.name = snapshot.name ?? result.name
                     session.turns = snapshot.turns
                     chatReviewStateDescription = snapshot.reviewStateDescription
                     reviewStatusBadge = snapshot.reviewStatusBadge
                 }
-                _ = try await rpc.call(method: "thread/resume", params: ["threadId": id])
-                currentThreadId = id
-                session.id = id
-                sessionCustomInstructionsText = Self.loadSessionCustomInstructions(threadId: id)
+                session.id = result.id
+                sessionCustomInstructionsText = CodexCustomInstructionsStore.loadSessionText(threadId: result.id)
                 if session.name == nil {
-                    session.name = first["name"] as? String
+                    session.name = result.name
                 }
                 appendSystem("Session resumed")
             } else {
@@ -3641,10 +3468,13 @@ extension CodexAppServerProvider {
         prompt: String = "",
         displayText: String = ""
     ) {
-        currentRunInteractionMode = interactionMode
-        currentRunInputItems = prompt.isEmpty ? [] : [.text(prompt)]
-        currentRunPrompt = prompt
-        currentRunDisplayText = displayText
+        currentRun.configure(
+            interactionMode: interactionMode,
+            includesIDEContext: currentRun.includesIDEContext,
+            inputItems: prompt.isEmpty ? [] : [.text(prompt)],
+            prompt: prompt,
+            displayText: displayText
+        )
     }
 
     func testResolvePendingMarkdownSynchronously() {
@@ -3745,17 +3575,16 @@ extension CodexAppServerProvider {
     }
 
     func testSetCurrentThreadId(_ id: String?) {
-        currentThreadId = id
+        threadCoordinator.setCurrentThreadId(id)
         session.id = id
     }
 
     static func testStoredSessionCustomInstructions(threadId: String) -> String {
-        loadSessionCustomInstructions(threadId: threadId)
+        CodexCustomInstructionsStore.loadSessionText(threadId: threadId)
     }
 
     static func testClearStoredCustomInstructions() {
-        UserDefaults.standard.removeObject(forKey: globalCustomInstructionsDefaultsKey)
-        UserDefaults.standard.removeObject(forKey: sessionCustomInstructionsDefaultsKey)
+        CodexCustomInstructionsStore.clearAll()
     }
 }
 #endif

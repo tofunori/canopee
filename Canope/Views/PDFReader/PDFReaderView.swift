@@ -32,6 +32,7 @@ struct PDFReaderView: View {
     @State private var requestedRestorePageIndex: Int?
     @State private var pendingSaveWorkItem: DispatchWorkItem?
     @StateObject private var searchState = PDFSearchUIState()
+    @StateObject private var paperContextWriter = PaperContextWriter()
 
     private var paper: Paper? {
         try? modelContext.fetch(
@@ -141,11 +142,20 @@ struct PDFReaderView: View {
             refreshBridgeCommandTarget()
         }
         .onChange(of: isActive) {
-            if isActive { writePaperContext() }
+            if isActive {
+                writePaperContext()
+            } else {
+                contextWriteID = UUID()
+                paperContextWriter.cancelPendingWrites()
+            }
             refreshBridgeCommandTarget()
         }
         .onChange(of: document?.documentURL) { refreshBridgeCommandTarget() }
         .onChange(of: applyBridgeAnnotation != nil) { refreshBridgeCommandTarget() }
+        .onDisappear {
+            contextWriteID = UUID()
+            paperContextWriter.cancelPendingWrites()
+        }
         .onDisappear { BridgeCommandRouter.shared.removeActiveHandler(id: bridgeCommandTargetID) }
         .onDisappear { autoSave() }
         .onChange(of: selectedAnnotation) {
@@ -216,12 +226,17 @@ struct PDFReaderView: View {
         selectedAnnotation = nil
         if !paper.isRead { paper.isRead = true }
         let fileURL = paper.fileURL
+        let loadID = UUID()
+        contextWriteID = loadID
         Task {
             let loadedDocument = await PDFDocumentRepository.shared.loadDocument(
                 forKey: "paper:\(fileURL.path)",
                 from: fileURL
             )
-            guard self.paper?.fileURL == fileURL else { return }
+            let shouldApply = await MainActor.run {
+                contextWriteID == loadID && self.paper?.fileURL == fileURL
+            }
+            guard shouldApply else { return }
             document = loadedDocument
             if isActive {
                 writePaperContext()
@@ -232,46 +247,20 @@ struct PDFReaderView: View {
     private func writePaperContext() {
         guard document != nil, let paper else { return }
         selectedText = ""
-        CanopeContextFiles.writeIDESelectionState(
-            ClaudeIDESelectionState.makeSnapshot(selectedText: "", fileURL: paper.fileURL)
+        let metadata = PaperContextMetadata(
+            fileURL: paper.fileURL,
+            title: paper.title,
+            authors: paper.authors,
+            year: paper.year.map(String.init) ?? "unknown",
+            journal: paper.journal ?? "unknown",
+            doi: paper.doi ?? "unknown"
         )
-        CanopeContextFiles.clearLegacySelectionMirror()
-
-        let paperURL = paper.fileURL
-        let title = paper.title
-        let authors = paper.authors
-        let year = paper.year.map(String.init) ?? "unknown"
-        let journal = paper.journal ?? "unknown"
-        let doi = paper.doi ?? "unknown"
-        let writeID = UUID()
-        contextWriteID = writeID
-
-        DispatchQueue.global(qos: .utility).async {
-            guard let snapshotDocument = PDFDocument(url: paperURL) else { return }
-
-            var fullText = """
-            ========================================
-            CURRENTLY OPEN PAPER IN CANOPÉE
-            ========================================
-            Title: \(title)
-            Authors: \(authors)
-            Year: \(year)
-            Journal: \(journal)
-            DOI: \(doi)
-            Pages: \(snapshotDocument.pageCount)
-            ========================================
-
-            """
-            for i in 0..<snapshotDocument.pageCount {
-                if let page = snapshotDocument.page(at: i), let text = page.string {
-                    fullText += "--- Page \(i + 1) ---\n\(text)\n\n"
-                }
-            }
-
-            let shouldWrite = DispatchQueue.main.sync { contextWriteID == writeID }
-            guard shouldWrite else { return }
-            CanopeContextFiles.writePaper(fullText)
-        }
+        let documentKey = "paper:\(paper.fileURL.path)"
+        paperContextWriter.writeContext(
+            metadata: metadata,
+            document: document,
+            documentKey: documentKey
+        )
     }
 
     private func savePDF() {

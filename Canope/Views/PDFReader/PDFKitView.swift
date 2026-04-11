@@ -71,6 +71,9 @@ struct PDFKitView: NSViewRepresentable {
         context.coordinator.pdfView = pdfView
         context.coordinator.overlay = overlay
         context.coordinator.cursorView = cursorView
+        context.coordinator.currentTool = currentTool
+        context.coordinator.currentColor = currentColor
+        context.coordinator.assignControllerViews()
         cursorView.onMouseDownAction = { [weak coordinator = context.coordinator] event, location in
             coordinator?.handleInteractiveMouseDown(event: event, at: location) ?? .passThrough
         }
@@ -163,6 +166,7 @@ struct PDFKitView: NSViewRepresentable {
         context.coordinator.currentTool = currentTool
         context.coordinator.currentColor = currentColor
         context.coordinator.searchState = searchState
+        context.coordinator.assignControllerViews()
 
         if let pdfView = context.coordinator.pdfView, pdfView.document !== document {
             let viewState = context.coordinator.captureViewState()
@@ -172,6 +176,7 @@ struct PDFKitView: NSViewRepresentable {
             pdfView.layoutDocumentView()
             context.coordinator.restoreViewState(viewState)
             context.coordinator.resetSearchQueryCache()
+            context.coordinator.assignControllerViews()
         }
 
         context.coordinator.pdfView?.selectionPreviewTool = currentTool
@@ -199,7 +204,7 @@ struct PDFKitView: NSViewRepresentable {
     // MARK: - Coordinator
 
     @MainActor
-    class Coordinator: NSObject, NSGestureRecognizerDelegate, NSTextViewDelegate {
+    class Coordinator: NSObject, NSGestureRecognizerDelegate {
         private static let selectionFileQueue = DispatchQueue(label: "canope.selection-file", qos: .utility)
 
         struct ViewState {
@@ -217,52 +222,36 @@ struct PDFKitView: NSViewRepresentable {
         var currentColor: NSColor = AnnotationColor.loadFavorites().first ?? AnnotationColor.yellow
         private var hasActiveSelection = false
         private var isDragging = false
-        private var isApplyingTextMarkup = false
         private var mouseUpMonitor: Any?
         private var magnifyMonitor: Any?
-        private var searchMatches: [PDFSelection] = []
-        private var lastSearchQuery = ""
-        private var isUpdatingSearchSelection = false
-
-        // Undo support
-        private var undoStack: [(page: PDFPage, annotation: PDFAnnotation)] = []
-
-        // TextBox editing state
-        private var editingEditorView: TextNoteEditorView? = nil
-        private var editingTextView: NSTextView? = nil
-        private var editingAnnotation: PDFAnnotation? = nil
-        private var shouldRestoreTextEditingAfterResize = false
-        private var cursorDragOriginOverlayRect: NSRect?
-        private var isManipulatingSelectedTextAnnotation = false
+        private let searchController: PDFSearchController
+        private let annotationController: PDFAnnotationController
+        private let textBoxController: PDFTextBoxEditingController
 
         init(parent: PDFKitView) {
             self.parent = parent
             self.searchState = parent.searchState
+            self.currentTool = parent.currentTool
+            self.currentColor = parent.currentColor
+            self.searchController = PDFSearchController(searchState: parent.searchState)
+            self.annotationController = PDFAnnotationController()
+            self.textBoxController = PDFTextBoxEditingController()
+            super.init()
+            configureControllers()
         }
 
         func configureSearchState() {
-            searchState?.configureActions(
-                next: { [weak self] in
-                    self?.navigateSearch(step: 1)
-                },
-                previous: { [weak self] in
-                    self?.navigateSearch(step: -1)
-                },
-                clear: { [weak self] in
-                    self?.clearSearchResults()
-                }
-            )
+            searchController.searchState = searchState
+            searchController.configureSearchState()
         }
 
         func resetSearchQueryCache() {
-            lastSearchQuery = ""
+            searchController.resetSearchQueryCache()
         }
 
         func syncSearchQuery(force: Bool) {
-            let query = searchState?.query ?? ""
-            guard force || query != lastSearchQuery else { return }
-            lastSearchQuery = query
-            updateSearchResults(for: query)
+            searchController.searchState = searchState
+            searchController.syncSearchQuery(force: force)
         }
 
         // MARK: - Cursor
@@ -302,6 +291,8 @@ struct PDFKitView: NSViewRepresentable {
         func updateCursor(for tool: AnnotationTool) {
             pdfView?.selectionPreviewTool = tool
             pdfView?.selectionPreviewColor = currentColor
+            annotationController.currentTool = tool
+            annotationController.currentColor = currentColor
             let cursor: NSCursor
             switch tool {
             case .highlight:
@@ -330,7 +321,7 @@ struct PDFKitView: NSViewRepresentable {
         }
 
         private func shouldEnableCursorInteraction(for tool: AnnotationTool) -> Bool {
-            guard tool.needsDragInteraction, editingTextView == nil else { return false }
+            guard tool.needsDragInteraction, textBoxController.isEditing == false else { return false }
 
             if tool == .textBox,
                let selectedAnnotation = parent.selectedAnnotation,
@@ -342,83 +333,26 @@ struct PDFKitView: NSViewRepresentable {
         }
 
         func shouldCursorViewIntercept(pointInCursorView: NSPoint) -> Bool {
-            guard let cursorView = cursorView else { return true }
-
-            if let overlay = overlay {
-                let pointInOverlay = overlay.convert(pointInCursorView, from: cursorView)
-                if currentTool == .textBox,
-                   editingTextView == nil,
-                   let selectedAnnotation = parent.selectedAnnotation,
-                   selectedAnnotation.isTextBoxAnnotation,
-                   let overlayRect = overlay.annotationBorderRect {
-                    let interactionRect = overlayRect.insetBy(dx: -(overlay.handleSize + 10), dy: -(overlay.handleSize + 10))
-                    if interactionRect.contains(pointInOverlay) {
-                        return false
-                    }
-                }
-            }
-
-            guard currentTool == .textBox,
-                  editingTextView == nil,
-                  let selectedAnnotation = parent.selectedAnnotation,
-                  selectedAnnotation.isTextBoxAnnotation,
-                  let pdfView = pdfView,
-                  let page = selectedAnnotation.page else {
-                return true
-            }
-
-            let pointInPDFView = cursorView.convert(pointInCursorView, to: pdfView)
-            let pointInPage = pdfView.convert(pointInPDFView, to: page)
-            return selectedAnnotation.bounds.contains(pointInPage) == false
-        }
-
-        // MARK: - Undo
-
-        func recordForUndo(page: PDFPage, annotation: PDFAnnotation) {
-            undoStack.append((page: page, annotation: annotation))
-            // Keep max 50 undo steps
-            if undoStack.count > 50 { undoStack.removeFirst() }
+            guard currentTool == .textBox else { return true }
+            return textBoxController.shouldCursorViewIntercept(pointInCursorView: pointInCursorView)
         }
 
         func undo() {
-            guard let last = undoStack.popLast() else { return }
-            last.page.removeAnnotation(last.annotation)
-            if parent.selectedAnnotation === last.annotation {
-                parent.selectedAnnotation = nil
-            }
-            updateAnnotationBorder()
-            parent.onDocumentChanged()
+            annotationController.undo()
         }
 
-        // MARK: - Bridge Annotation
-
         func applyBridgeAnnotation(selection: PDFSelection, type: PDFAnnotationSubtype, color: NSColor) {
-            guard let pdfView = pdfView else { return }
-
-            let annotations = AnnotationService.createMarkupAnnotation(
-                selection: selection,
-                type: type,
-                color: color,
-                on: pdfView
-            )
-
-            for (page, annotation) in annotations {
-                recordForUndo(page: page, annotation: annotation)
-            }
-
-            pdfView.documentView?.needsDisplay = true
-            pdfView.needsDisplay = true
-            parent.onDocumentChanged()
+            annotationController.applyBridgeAnnotation(selection: selection, type: type, color: color)
         }
 
         // MARK: - TextBox Drag-to-Create (via CursorTrackingView)
 
         func setupDrawingCallbacks() {
             cursorView?.onCustomDragChanged = { [weak self] start, current in
-                self?.handleCursorDragChanged(start: start, current: current)
+                self?.textBoxController.handleCursorDragChanged(start: start, current: current)
             }
             cursorView?.onCustomDragComplete = { [weak self] start, end in
-                self?.handleCursorDragComplete(start: start, end: end)
+                self?.textBoxController.handleCursorDragComplete(start: start, end: end)
             }
             cursorView?.onRectDragComplete = { [weak self] start, end in
                 self?.handleRectDragComplete(start: start, end: end)
@@ -430,412 +364,39 @@ struct PDFKitView: NSViewRepresentable {
 
         func setupResizeCallback() {
             overlay?.onInteriorDoubleClick = { [weak self] in
-                self?.beginEditingSelectedTextBoxIfNeeded()
+                self?.textBoxController.beginEditingSelectedTextBoxIfNeeded()
             }
             overlay?.onMoveBegan = { [weak self] in
-                self?.beginSelectedTextAnnotationManipulation()
+                self?.textBoxController.beginSelectedTextAnnotationManipulationIfNeeded()
             }
             overlay?.onResizeBegan = { [weak self] in
-                self?.beginSelectedTextAnnotationManipulation()
+                self?.textBoxController.beginSelectedTextAnnotationManipulationIfNeeded()
             }
             overlay?.onMoveChanged = { [weak self] newOverlayRect in
-                self?.handleMoveChanged(newOverlayRect)
+                self?.textBoxController.handleMoveChanged(newOverlayRect)
             }
             overlay?.onMoveComplete = { [weak self] newOverlayRect in
-                self?.handleMoveComplete(newOverlayRect)
+                self?.textBoxController.handleMoveComplete(newOverlayRect)
             }
             overlay?.onResizeChanged = { [weak self] newOverlayRect in
-                self?.handleResizeChanged(newOverlayRect)
+                self?.textBoxController.handleResizeChanged(newOverlayRect)
             }
             overlay?.onResizeComplete = { [weak self] newOverlayRect in
-                self?.handleResizeComplete(newOverlayRect)
+                self?.textBoxController.handleResizeComplete(newOverlayRect)
             }
-        }
-
-        private func beginEditingSelectedTextBoxIfNeeded() {
-            guard let annotation = parent.selectedAnnotation,
-                  annotation.isTextBoxAnnotation,
-                  let page = annotation.page else { return }
-            beginEditingTextBox(annotation, on: page)
-        }
-
-        private func pageRect(fromOverlayRect overlayRect: NSRect) -> CGRect? {
-            guard let pdfView = pdfView,
-                  let overlay = overlay,
-                  let annotation = parent.selectedAnnotation,
-                  let page = annotation.page else { return nil }
-
-            // Convert overlay rect → pdfView rect → page rect
-            let viewRect = pdfView.convert(overlayRect, from: overlay)
-            return pdfView.convert(viewRect, to: page)
-        }
-
-        private func editorFrameInDocumentView(for annotation: PDFAnnotation, on page: PDFPage) -> NSRect? {
-            guard let pdfView = pdfView,
-                  let documentView = pdfView.documentView else { return nil }
-            let viewRect = pdfView.convert(annotation.bounds, from: page)
-            let alignedRect = pdfView.backingAlignedRect(viewRect, options: .alignAllEdgesNearest)
-            return documentView.convert(alignedRect, from: pdfView)
-        }
-
-        private func syncEditingViewFrame(with annotation: PDFAnnotation, on page: PDFPage) {
-            guard let editorView = editingEditorView,
-                  let editorFrame = editorFrameInDocumentView(for: annotation, on: page) else { return }
-            editorView.syncFrame(editorFrame)
-        }
-
-        private func updateEditingAnnotationBoundsFromEditorFrame() {
-            guard let pdfView = pdfView,
-                  let documentView = pdfView.documentView,
-                  let annotation = editingAnnotation,
-                  let page = annotation.page,
-                  let editorView = editingEditorView else { return }
-            let viewRect = pdfView.convert(editorView.frame, from: documentView)
-            annotation.bounds = pdfView.convert(viewRect, to: page)
-        }
-
-        private func invalidatePDFRegion(for annotation: PDFAnnotation?, padding: CGFloat = 12) {
-            guard let pdfView = pdfView,
-                  let annotation,
-                  let page = annotation.page else {
-                pdfView?.setNeedsDisplay(pdfView?.bounds ?? .zero)
-                return
-            }
-
-            let viewRect = pdfView.convert(annotation.bounds, from: page).insetBy(dx: -padding, dy: -padding)
-            pdfView.setNeedsDisplay(viewRect)
-            if let documentView = pdfView.documentView {
-                let documentRect = documentView.convert(viewRect, from: pdfView)
-                documentView.setNeedsDisplay(documentRect)
-            }
-        }
-
-        func syncEditingViewAppearance(updateString: Bool = false) {
-            guard let annotation = editingAnnotation,
-                  let editorView = editingEditorView else { return }
-            editorView.applyAnnotationStyle(annotation, updateString: updateString)
-            if let page = annotation.page {
-                syncEditingViewFrame(with: annotation, on: page)
-            }
-        }
-
-        private func adjustEditingTextBoxToFitContentIfNeeded() {
-            guard let pdfView = pdfView,
-                  let documentView = pdfView.documentView,
-                  let annotation = editingAnnotation,
-                  let page = annotation.page,
-                  let editorView = editingEditorView else { return }
-
-            let currentFrame = editorView.frame
-            let targetHeight = max(currentFrame.height, ceil(editorView.fittingHeight()))
-            guard targetHeight > currentFrame.height + 0.5 else { return }
-
-            var grownFrame = currentFrame
-            let delta = targetHeight - currentFrame.height
-            if documentView.isFlipped {
-                grownFrame.size.height = targetHeight
-            } else {
-                grownFrame.origin.y -= delta
-                grownFrame.size.height = targetHeight
-            }
-
-            editorView.syncFrame(grownFrame)
-
-            let viewRect = pdfView.convert(grownFrame, from: documentView)
-            annotation.bounds = pdfView.convert(viewRect, to: page)
-            updateAnnotationBorder()
-            pdfView.setNeedsDisplay(pdfView.bounds)
-        }
-
-        private func updateSelectedAnnotationBounds(using overlayRect: NSRect) {
-            guard let annotation = parent.selectedAnnotation,
-                  let pageRect = pageRect(fromOverlayRect: overlayRect) else { return }
-            annotation.bounds = pageRect
-            if editingAnnotation === annotation, let page = annotation.page {
-                syncEditingViewFrame(with: annotation, on: page)
-            }
-            pdfView?.setNeedsDisplay(pdfView?.bounds ?? .zero)
-        }
-
-        private func beginSelectedTextAnnotationManipulation() {
-            guard let annotation = parent.selectedAnnotation,
-                  annotation.isTextBoxAnnotation,
-                  editingAnnotation == nil else { return }
-            isManipulatingSelectedTextAnnotation = true
-            annotation.shouldDisplay = false
-            invalidatePDFRegion(for: annotation)
-        }
-
-        private func endSelectedTextAnnotationManipulation() {
-            guard let annotation = parent.selectedAnnotation,
-                  annotation.isTextBoxAnnotation else {
-                isManipulatingSelectedTextAnnotation = false
-                return
-            }
-            annotation.shouldDisplay = true
-            isManipulatingSelectedTextAnnotation = false
-            invalidatePDFRegion(for: annotation)
-        }
-
-        private func handleResizeChanged(_ newOverlayRect: NSRect) {
-            if isManipulatingSelectedTextAnnotation {
-                return
-            }
-            updateSelectedAnnotationBounds(using: newOverlayRect)
-        }
-
-        private func handleMoveChanged(_ newOverlayRect: NSRect) {
-            if isManipulatingSelectedTextAnnotation {
-                return
-            }
-            updateSelectedAnnotationBounds(using: newOverlayRect)
-        }
-
-        private func handleMoveComplete(_ newOverlayRect: NSRect) {
-            updateSelectedAnnotationBounds(using: newOverlayRect)
-            endSelectedTextAnnotationManipulation()
-            updateAnnotationBorder()
-            parent.onDocumentChanged()
-        }
-
-        private func handleResizeComplete(_ newOverlayRect: NSRect) {
-            updateSelectedAnnotationBounds(using: newOverlayRect)
-            endSelectedTextAnnotationManipulation()
-            updateAnnotationBorder()
-            if shouldRestoreTextEditingAfterResize, let textView = editingTextView {
-                shouldRestoreTextEditingAfterResize = false
-                pdfView?.window?.makeFirstResponder(textView)
-            }
-            parent.onDocumentChanged()
-        }
-
-        private func handleCursorDragChanged(start: NSPoint, current: NSPoint) {
-            guard let overlay = overlay else { return }
-            if cursorDragOriginOverlayRect == nil {
-                cursorDragOriginOverlayRect = overlay.annotationBorderRect
-            }
-            guard let originRect = cursorDragOriginOverlayRect else { return }
-
-            let startInOverlay = overlay.convert(start, from: cursorView)
-            let currentInOverlay = overlay.convert(current, from: cursorView)
-            let dx = currentInOverlay.x - startInOverlay.x
-            let dy = currentInOverlay.y - startInOverlay.y
-            let movedRect = originRect.offsetBy(dx: dx, dy: dy)
-            overlay.updateAnnotationBorder(rect: movedRect)
-            handleMoveChanged(movedRect)
-        }
-
-        private func handleCursorDragComplete(start: NSPoint, end: NSPoint) {
-            defer { cursorDragOriginOverlayRect = nil }
-            guard let overlay = overlay else { return }
-            let startInOverlay = overlay.convert(start, from: cursorView)
-            let endInOverlay = overlay.convert(end, from: cursorView)
-
-            guard let originRect = cursorDragOriginOverlayRect else { return }
-            let dx = endInOverlay.x - startInOverlay.x
-            let dy = endInOverlay.y - startInOverlay.y
-            let movedRect = originRect.offsetBy(dx: dx, dy: dy)
-            overlay.updateAnnotationBorder(rect: movedRect)
-            handleMoveComplete(movedRect)
         }
 
         private func handleRectDragComplete(start: NSPoint, end: NSPoint) {
-            guard let pdfView = pdfView, let cursorView = cursorView else { return }
-            dismissTextBoxEditing()
-
-            let startView = cursorView.convert(start, to: pdfView)
-            let endView = cursorView.convert(end, to: pdfView)
-
-            guard let page = pdfView.page(for: startView, nearest: true) else { return }
-            let startPage = pdfView.convert(startView, to: page)
-            let endPage = pdfView.convert(endView, to: page)
-
-            let bounds = CGRect(
-                x: min(startPage.x, endPage.x), y: min(startPage.y, endPage.y),
-                width: abs(endPage.x - startPage.x), height: abs(endPage.y - startPage.y)
-            )
-            guard bounds.width > 5, bounds.height > 5 else { return }
-
-            switch currentTool {
-            case .textBox:
-                let annotation = AnnotationService.createTextBoxAnnotation(
-                    bounds: bounds,
-                    on: page,
-                    text: "",
-                    color: currentColor,
-                    fontSize: 12
-                )
-                recordForUndo(page: page, annotation: annotation)
-                parent.selectedAnnotation = annotation
-                updateAnnotationBorder()
-                parent.onDocumentChanged()
-                beginEditingTextBox(annotation, on: page)
-
-            case .rectangle:
-                let annotation = AnnotationService.createShapeAnnotation(
-                    bounds: bounds, type: .square, on: page,
-                    color: currentColor, lineWidth: 2
-                )
-                recordForUndo(page: page, annotation: annotation)
-                finishCreatingDrawableAnnotation(annotation)
-                parent.onDocumentChanged()
-
-            case .oval:
-                let annotation = AnnotationService.createShapeAnnotation(
-                    bounds: bounds, type: .circle, on: page,
-                    color: currentColor, lineWidth: 2
-                )
-                recordForUndo(page: page, annotation: annotation)
-                finishCreatingDrawableAnnotation(annotation)
-                parent.onDocumentChanged()
-
-            case .arrow:
-                let startPt = CGPoint(x: startPage.x, y: startPage.y)
-                let endPt = CGPoint(x: endPage.x, y: endPage.y)
-                let annotation = AnnotationService.createArrowAnnotation(
-                    from: startPt, to: endPt, on: page,
-                    color: currentColor, lineWidth: 2
-                )
-                recordForUndo(page: page, annotation: annotation)
-                finishCreatingDrawableAnnotation(annotation)
-                parent.onDocumentChanged()
-
-            default:
-                break
-            }
+            textBoxController.dismissTextBoxEditing()
+            annotationController.handleRectDragComplete(start: start, end: end)
         }
 
         private func handleInkDragComplete(viewPath: NSBezierPath) {
-            guard let pdfView = pdfView, let cursorView = cursorView else { return }
-
-            // Convert path from cursorView coordinates to page coordinates
-            let midPoint = NSPoint(x: viewPath.bounds.midX, y: viewPath.bounds.midY)
-            let midInPDF = cursorView.convert(midPoint, to: pdfView)
-            guard let page = pdfView.page(for: midInPDF, nearest: true) else { return }
-
-            // Build a new path in page coordinates
-            let pagePath = NSBezierPath()
-            let elements = viewPath.elementCount
-            var points = [NSPoint](repeating: .zero, count: 3)
-            for i in 0..<elements {
-                let type = viewPath.element(at: i, associatedPoints: &points)
-                let viewPt = cursorView.convert(points[0], to: pdfView)
-                let pagePt = pdfView.convert(viewPt, to: page)
-                switch type {
-                case .moveTo: pagePath.move(to: pagePt)
-                case .lineTo: pagePath.line(to: pagePt)
-                default: pagePath.line(to: pagePt)
-                }
-            }
-
-            let annotation = AnnotationService.createInkAnnotation(
-                path: pagePath, on: page,
-                color: currentColor, lineWidth: 2
-            )
-            recordForUndo(page: page, annotation: annotation)
-            parent.selectedAnnotation = annotation
-            updateAnnotationBorder()
-            parent.onDocumentChanged()
+            annotationController.handleInkDragComplete(viewPath: viewPath)
         }
 
-        private func finishCreatingDrawableAnnotation(_ annotation: PDFAnnotation) {
-            parent.selectedAnnotation = annotation
-            updateAnnotationBorder()
-            parent.currentTool = .pointer
-            currentTool = .pointer
-            updateCursor(for: .pointer)
-        }
-
-        /// Start inline editing of a Canope text box using an overlay editor
-        func beginEditingTextBox(_ annotation: PDFAnnotation, on page: PDFPage) {
-            guard let pdfView = pdfView, let documentView = pdfView.documentView else { return }
-            dismissTextBoxEditing()
-
-            guard let docRect = editorFrameInDocumentView(for: annotation, on: page) else { return }
-
-            let editorView = TextNoteEditorView(annotation: annotation)
-            editorView.syncFrame(docRect)
-            let textView = editorView.textView
-            textView.delegate = self
-
-            let existingText = annotation.contents ?? ""
-            if existingText.isEmpty {
-                textView.setSelectedRange(NSRange(location: 0, length: 0))
-            } else {
-                let insertionLocation = existingText.utf16.count
-                textView.setSelectedRange(NSRange(location: insertionLocation, length: 0))
-            }
-
-            editingAnnotation = annotation
-            editingEditorView = editorView
-            editingTextView = textView
-            parent.selectedAnnotation = annotation
-            updateAnnotationBorder()
-            documentView.addSubview(editorView)
-            pdfView.window?.recalculateKeyViewLoop()
-            annotation.shouldDisplay = false
-            syncCursorViewInteractivity()
-            pdfView.setNeedsDisplay(pdfView.bounds)
-            pdfView.window?.makeFirstResponder(textView)
-        }
-
-        // NSTextViewDelegate — commit on Escape or when focus lost
-        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                // Escape → commit and close
-                commitTextBoxEditing()
-                return true
-            }
-            return false
-        }
-
-        func textDidEndEditing(_ notification: Notification) {
-            if let event = NSApp.currentEvent,
-               event.type == .leftMouseDown,
-               let overlay = overlay {
-                let pointInOverlay = overlay.convert(event.locationInWindow, from: nil)
-                if overlay.isResizeHandle(at: pointInOverlay) {
-                    shouldRestoreTextEditingAfterResize = true
-                    return
-                }
-            }
-            commitTextBoxEditing()
-        }
-
-        func textDidChange(_ notification: Notification) {
-            adjustEditingTextBoxToFitContentIfNeeded()
-        }
-
-        func commitTextBoxEditing() {
-            guard let annotation = editingAnnotation,
-                  let textView = editingTextView else { return }
-
-            updateEditingAnnotationBoundsFromEditorFrame()
-            annotation.contents = textView.string
-            annotation.font = textView.font ?? annotation.font
-            annotation.fontColor = textView.textColor ?? annotation.fontColor
-            annotation.alignment = textView.alignment
-
-            let wasFirstResponder = pdfView?.window?.firstResponder === textView
-            editingEditorView?.removeFromSuperview()
-            editingEditorView = nil
-            editingTextView = nil
-            annotation.shouldDisplay = true
-            editingAnnotation = nil
-
-            syncCursorViewInteractivity()
-            if wasFirstResponder {
-                pdfView?.window?.makeFirstResponder(pdfView)
-            }
-            invalidatePDFRegion(for: annotation)
-            updateAnnotationBorder()
-            parent.onDocumentChanged()
-        }
-
-        func dismissTextBoxEditing() {
-            if editingTextView != nil {
-                commitTextBoxEditing()
-            }
+        func syncEditingViewAppearance(updateString: Bool = false) {
+            textBoxController.syncEditingViewAppearance(updateString: updateString)
         }
 
         func recordUserInteraction() {
@@ -844,38 +405,8 @@ struct PDFKitView: NSViewRepresentable {
 
         func handleInteractiveMouseDown(event: NSEvent, at locationInCursorView: NSPoint) -> CursorMouseDownAction {
             recordUserInteraction()
-            guard currentTool == .textBox,
-                  let cursorView = cursorView,
-                  let pdfView = pdfView else { return .passThrough }
-
-            let locationInPDFView = cursorView.convert(locationInCursorView, to: pdfView)
-            guard let annotation = annotationAtPoint(locationInPDFView),
-                  annotation.isTextBoxAnnotation,
-                  let page = annotation.page else {
-                return .passThrough
-            }
-
-            let wasSelected = parent.selectedAnnotation === annotation
-            dismissTextBoxEditing()
-            parent.selectedAnnotation = annotation
-            updateAnnotationBorder()
-
-            if event.clickCount >= 2 {
-                beginEditingTextBox(annotation, on: page)
-                return .handled
-            }
-
-            if wasSelected, let overlay = overlay {
-                let pointInOverlay = overlay.convert(locationInCursorView, from: cursorView)
-                if let overlayRect = overlay.annotationBorderRect,
-                   overlayRect.contains(pointInOverlay),
-                   overlay.isResizeHandle(at: pointInOverlay) == false {
-                    cursorDragOriginOverlayRect = overlayRect
-                    return .beginCustomDrag
-                }
-            }
-
-            return .handled
+            guard currentTool == .textBox else { return .passThrough }
+            return textBoxController.handleInteractiveMouseDown(event: event, at: locationInCursorView)
         }
 
         // MARK: - Mouse Up Monitor
@@ -890,8 +421,10 @@ struct PDFKitView: NSViewRepresentable {
         func installMagnifyMonitor() {
             magnifyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.magnify]) { [weak self] event in
                 guard let self else { return event }
-                if self.shouldHandleTextBoxMagnify(event) {
-                    self.handleTextBoxMagnify(event)
+                let shouldHandle = self.textBoxController.shouldHandleMagnify(event)
+                    || (self.currentTool == .textBox && event.window === self.pdfView?.window)
+                if shouldHandle {
+                    self.textBoxController.handleMagnify(event)
                     return nil
                 }
                 return event
@@ -925,51 +458,9 @@ struct PDFKitView: NSViewRepresentable {
                 return
             }
 
-            isApplyingTextMarkup = true
-
             DispatchQueue.main.async { [weak self] in
-                self?.applyTextMarkup(using: selection)
+                self?.annotationController.applyTextMarkup(using: selection)
             }
-        }
-
-        private func shouldHandleTextBoxMagnify(_ event: NSEvent) -> Bool {
-            guard let pdfView = pdfView,
-                  event.window === pdfView.window else { return false }
-
-            if editingTextView != nil {
-                return true
-            }
-
-            if parent.selectedAnnotation?.isTextBoxAnnotation == true {
-                return true
-            }
-
-            return currentTool == .textBox
-        }
-
-        private func handleTextBoxMagnify(_ event: NSEvent) {
-            guard let pdfView = pdfView else { return }
-
-            let locationInView = pdfView.convert(event.locationInWindow, from: nil)
-            let anchorPage = pdfView.page(for: locationInView, nearest: true)
-            let anchorPoint = anchorPage.map { pdfView.convert(locationInView, to: $0) }
-
-            let minScale = pdfView.minScaleFactor > 0 ? pdfView.minScaleFactor : 0.1
-            let maxScale = pdfView.maxScaleFactor > minScale ? pdfView.maxScaleFactor : 8.0
-            let scaleDelta = max(0.2, 1.0 + event.magnification)
-            let newScale = min(maxScale, max(minScale, pdfView.scaleFactor * scaleDelta))
-
-            guard abs(newScale - pdfView.scaleFactor) > 0.0001 else { return }
-
-            pdfView.scaleFactor = newScale
-            pdfView.layoutDocumentView()
-
-            if let anchorPage, let anchorPoint {
-                pdfView.go(to: PDFDestination(page: anchorPage, at: anchorPoint))
-            }
-
-            cursorView?.previewScaleFactor = newScale
-            updateAnnotationBorder()
         }
 
         // MARK: - Annotation Selection Border
@@ -989,7 +480,7 @@ struct PDFKitView: NSViewRepresentable {
 
             let viewRect = pdfView.convert(annotation.bounds, from: page)
             let overlayRect = overlay.convert(viewRect, from: pdfView)
-            overlay.allowsInteriorDragging = editingAnnotation == nil && annotation.isTextBoxAnnotation
+            overlay.allowsInteriorDragging = textBoxController.isEditing == false && annotation.isTextBoxAnnotation
             if annotation.isTextBoxAnnotation {
                 overlay.updateTextAnnotationPreviewStyle(
                     TextAnnotationPreviewStyle(
@@ -1004,16 +495,13 @@ struct PDFKitView: NSViewRepresentable {
             } else {
                 overlay.updateTextAnnotationPreviewStyle(nil)
             }
-            overlay.updateAnnotationBorder(rect: overlayRect, isEditing: editingAnnotation === annotation)
+            overlay.updateAnnotationBorder(rect: overlayRect, isEditing: textBoxController.editingAnnotation === annotation)
         }
 
         @objc func handleViewChanged(_ notification: Notification) {
             cursorView?.previewScaleFactor = pdfView?.scaleFactor ?? 1.0
             cursorView?.needsDisplay = true
-            if let annotation = editingAnnotation, let page = annotation.page {
-                syncEditingViewFrame(with: annotation, on: page)
-            }
-            updateAnnotationBorder()
+            textBoxController.handleViewChanged()
         }
 
         @objc func handlePageChanged(_ notification: Notification) {
@@ -1117,19 +605,12 @@ struct PDFKitView: NSViewRepresentable {
 
         func clearTransientInteractionState() {
             clearTextSelectionState()
-            dismissTextBoxEditing()
+            textBoxController.dismissTextBoxEditing()
             parent.selectedAnnotation = nil
             overlay?.clear()
         }
 
         func clearCurrentTextSelection() {
-            clearTextSelectionState()
-        }
-
-        private func clearSearchResults() {
-            searchMatches = []
-            searchState?.matchCount = 0
-            searchState?.currentMatchIndex = 0
             clearTextSelectionState()
         }
 
@@ -1147,58 +628,18 @@ struct PDFKitView: NSViewRepresentable {
             // by clearing native PDFView selection on mouseDown, following Skim's pattern.
         }
 
-        private func updateSearchResults(for query: String) {
-            guard let pdfView else { return }
-            let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmedQuery.isEmpty == false else {
-                clearSearchResults()
-                return
-            }
-
-            searchMatches = pdfView.document?.findString(trimmedQuery, withOptions: [.caseInsensitive]) ?? []
-            searchState?.matchCount = searchMatches.count
-
-            guard searchMatches.isEmpty == false else {
-                searchState?.currentMatchIndex = 0
-                clearTextSelectionState()
-                return
-            }
-
-            showSearchMatch(at: 0)
-        }
-
-        private func navigateSearch(step: Int) {
-            guard searchMatches.isEmpty == false else { return }
-            let currentIndex = max(searchState?.currentMatchIndex ?? 1, 1) - 1
-            let nextIndex = (currentIndex + step + searchMatches.count) % searchMatches.count
-            showSearchMatch(at: nextIndex)
-        }
-
-        private func showSearchMatch(at index: Int) {
-            guard let pdfView,
-                  searchMatches.indices.contains(index) else { return }
-            let selection = searchMatches[index]
+        private func resetProgrammaticSelectionStateForSearch() {
             hasActiveSelection = false
             isDragging = false
             overlay?.clearSelection()
             parent.selectedText = ""
             writeSelectionSnapshot("(no text currently selected)")
-            isUpdatingSearchSelection = true
-            pdfView.setCurrentSelection(selection, animate: true)
-            if let page = selection.pages.first {
-                let bounds = selection.bounds(for: page).insetBy(dx: -24, dy: -24)
-                if bounds.isNull == false, bounds.isEmpty == false {
-                    pdfView.go(to: bounds, on: page)
-                }
-            }
-            isUpdatingSearchSelection = false
-            searchState?.currentMatchIndex = index + 1
         }
 
         func handlePreMouseDown(event: NSEvent, at locationInView: NSPoint, in pdfView: InteractivePDFView) -> Bool {
             recordUserInteraction()
-            if editingTextView != nil {
-                commitTextBoxEditing()
+            if textBoxController.isEditing {
+                textBoxController.dismissTextBoxEditing()
                 pdfView.window?.makeFirstResponder(pdfView)
 
                 if let annotation = annotationAtPoint(locationInView) {
@@ -1209,7 +650,7 @@ struct PDFKitView: NSViewRepresentable {
                        annotation.isTextBoxAnnotation,
                        event.clickCount >= 2,
                        let page = annotation.page {
-                        beginEditingTextBox(annotation, on: page)
+                        textBoxController.beginEditingTextBox(annotation, on: page)
                     }
                 } else if currentTool == .pointer {
                     parent.selectedAnnotation = nil
@@ -1230,7 +671,7 @@ struct PDFKitView: NSViewRepresentable {
 
                     if event.clickCount >= 2,
                        let page = annotation.page {
-                        beginEditingTextBox(annotation, on: page)
+                        textBoxController.beginEditingTextBox(annotation, on: page)
                     }
 
                     return true
@@ -1267,16 +708,8 @@ struct PDFKitView: NSViewRepresentable {
         func handlePostMouseUp(at locationInView: NSPoint) {
             recordUserInteraction()
             guard let pdfView = pdfView else { return }
-
             if currentTool == .note {
-                guard let page = pdfView.page(for: locationInView, nearest: true) else { return }
-                let pagePoint = pdfView.convert(locationInView, to: page)
-                let annotation = AnnotationService.createNoteAnnotation(
-                    at: pagePoint, on: page, text: "", color: currentColor
-                )
-                recordForUndo(page: page, annotation: annotation)
-                parent.selectedAnnotation = annotation
-                parent.onDocumentChanged()
+                annotationController.createNote(at: locationInView)
                 return
             }
 
@@ -1322,7 +755,7 @@ struct PDFKitView: NSViewRepresentable {
         // MARK: - Text Selection
 
         @objc func handleSelectionChanged(_ notification: Notification) {
-            if isApplyingTextMarkup || isUpdatingSearchSelection {
+            if annotationController.isApplyingTextMarkup || searchController.isUpdatingSearchSelection {
                 return
             }
 
@@ -1345,48 +778,6 @@ struct PDFKitView: NSViewRepresentable {
             updateSelectionDismissInterception()
         }
 
-        func applyTextMarkup(using selection: PDFSelection) {
-            let annotationType: PDFAnnotationSubtype
-            switch currentTool {
-            case .highlight: annotationType = .highlight
-            case .underline: annotationType = .underline
-            case .strikethrough: annotationType = .strikeOut
-            default:
-                isApplyingTextMarkup = false
-                return
-            }
-
-            guard let pdfView = pdfView else {
-                isApplyingTextMarkup = false
-                return
-            }
-
-            let annotations = AnnotationService.createMarkupAnnotation(
-                selection: selection,
-                type: annotationType,
-                color: currentColor,
-                on: pdfView
-            )
-
-            // Record for undo
-            for (page, annotation) in annotations {
-                recordForUndo(page: page, annotation: annotation)
-            }
-
-            pdfView.documentView?.needsDisplay = true
-            pdfView.needsDisplay = true
-            pdfView.documentView?.displayIfNeeded()
-            pdfView.displayIfNeeded()
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.clearTextSelectionState()
-                self.isApplyingTextMarkup = false
-                pdfView.setNeedsDisplay(pdfView.bounds)
-                self.parent.onDocumentChanged()
-            }
-        }
-
         // MARK: - Double Click (edit Text Box)
 
         @objc func handleDoubleClick(_ gesture: NSClickGestureRecognizer) {
@@ -1398,166 +789,14 @@ struct PDFKitView: NSViewRepresentable {
                   let page = annotation.page else { return }
             parent.selectedAnnotation = annotation
             updateAnnotationBorder()
-            beginEditingTextBox(annotation, on: page)
+            textBoxController.beginEditingTextBox(annotation, on: page)
         }
 
         // MARK: - Right Click
 
         @objc func handleRightClick(_ gesture: NSClickGestureRecognizer) {
             recordUserInteraction()
-            guard let pdfView = pdfView else { return }
-            let locationInView = gesture.location(in: pdfView)
-            guard let annotation = annotationAtPoint(locationInView) else { return }
-            parent.selectedAnnotation = annotation
-            updateAnnotationBorder()
-
-            let menu = NSMenu()
-            let colorMenu = NSMenu()
-            for item in AnnotationColor.all {
-                let menuItem = NSMenuItem(title: item.name, action: #selector(changeAnnotationColor(_:)), keyEquivalent: "")
-                menuItem.target = self
-                menuItem.representedObject = item.color
-                let image = NSImage(size: NSSize(width: 12, height: 12))
-                image.lockFocus()
-                item.color.setFill()
-                NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: 12, height: 12)).fill()
-                image.unlockFocus()
-                menuItem.image = image
-                colorMenu.addItem(menuItem)
-            }
-            let colorItem = NSMenuItem(title: "Couleur", action: nil, keyEquivalent: "")
-            colorItem.submenu = colorMenu
-            menu.addItem(colorItem)
-
-            let editItem = NSMenuItem(title: "Modifier la note…", action: #selector(editAnnotationNote(_:)), keyEquivalent: "")
-            editItem.target = self
-            editItem.representedObject = annotation
-            menu.addItem(editItem)
-
-            // Text-box-specific formatting options
-            if annotation.isTextBoxAnnotation {
-                menu.addItem(NSMenuItem.separator())
-
-                // Font size submenu
-                let sizeMenu = NSMenu()
-                for size in [8, 10, 12, 14, 16, 18, 20, 24, 28, 32] {
-                    let item = NSMenuItem(title: "\(size) pt", action: #selector(changeFontSize(_:)), keyEquivalent: "")
-                    item.target = self
-                    item.tag = size
-                    if Int(annotation.font?.pointSize ?? 12) == size {
-                        item.state = .on
-                    }
-                    sizeMenu.addItem(item)
-                }
-                let sizeItem = NSMenuItem(title: "Taille", action: nil, keyEquivalent: "")
-                sizeItem.submenu = sizeMenu
-                menu.addItem(sizeItem)
-
-                // Text color submenu
-                let textColorMenu = NSMenu()
-                for (name, nsColor) in [("Noir", NSColor.black), ("Blanc", NSColor.white),
-                    ("Rouge", NSColor.systemRed), ("Bleu", NSColor.systemBlue),
-                    ("Vert", NSColor.systemGreen), ("Orange", NSColor.systemOrange)] {
-                    let item = NSMenuItem(title: name, action: #selector(changeFontColor(_:)), keyEquivalent: "")
-                    item.target = self
-                    item.representedObject = nsColor
-                    let img = NSImage(size: NSSize(width: 12, height: 12))
-                    img.lockFocus()
-                    nsColor.setFill()
-                    NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: 12, height: 12)).fill()
-                    img.unlockFocus()
-                    item.image = img
-                    textColorMenu.addItem(item)
-                }
-                let textColorItem = NSMenuItem(title: "Couleur du texte", action: nil, keyEquivalent: "")
-                textColorItem.submenu = textColorMenu
-                menu.addItem(textColorItem)
-
-                // Alignment submenu
-                let alignMenu = NSMenu()
-                for (name, alignment) in [("Gauche", NSTextAlignment.left),
-                    ("Centre", NSTextAlignment.center),
-                    ("Droite", NSTextAlignment.right),
-                    ("Justifié", NSTextAlignment.justified)] {
-                    let item = NSMenuItem(title: name, action: #selector(changeAlignment(_:)), keyEquivalent: "")
-                    item.target = self
-                    item.tag = alignment.rawValue
-                    if annotation.alignment == alignment {
-                        item.state = .on
-                    }
-                    alignMenu.addItem(item)
-                }
-                let alignItem = NSMenuItem(title: "Alignment", action: nil, keyEquivalent: "")
-                alignItem.submenu = alignMenu
-                menu.addItem(alignItem)
-            }
-
-            menu.addItem(NSMenuItem.separator())
-
-            let deleteItem = NSMenuItem(title: AppStrings.delete, action: #selector(deleteSelectedAnnotation(_:)), keyEquivalent: "")
-            deleteItem.target = self
-            deleteItem.representedObject = annotation
-            menu.addItem(deleteItem)
-
-            menu.popUp(positioning: nil, at: gesture.location(in: pdfView), in: pdfView)
-        }
-
-        @objc func changeAnnotationColor(_ sender: NSMenuItem) {
-            guard let color = sender.representedObject as? NSColor,
-                  let annotation = parent.selectedAnnotation else { return }
-            AnnotationService.applyColor(color, to: annotation)
-            if editingAnnotation === annotation {
-                syncEditingViewAppearance()
-            }
-            pdfView?.setNeedsDisplay(annotation.bounds)
-            parent.onDocumentChanged()
-        }
-
-        @objc func changeFontSize(_ sender: NSMenuItem) {
-            guard let annotation = parent.selectedAnnotation, annotation.isTextBoxAnnotation else { return }
-            let size = CGFloat(sender.tag)
-            annotation.font = NSFont.systemFont(ofSize: size)
-            if editingAnnotation === annotation {
-                syncEditingViewAppearance()
-            }
-            pdfView?.setNeedsDisplay(pdfView?.bounds ?? .zero)
-            parent.onDocumentChanged()
-        }
-
-        @objc func changeFontColor(_ sender: NSMenuItem) {
-            guard let color = sender.representedObject as? NSColor,
-                  let annotation = parent.selectedAnnotation, annotation.isTextBoxAnnotation else { return }
-            annotation.fontColor = color
-            if editingAnnotation === annotation {
-                syncEditingViewAppearance()
-            }
-            pdfView?.setNeedsDisplay(pdfView?.bounds ?? .zero)
-            parent.onDocumentChanged()
-        }
-
-        @objc func changeAlignment(_ sender: NSMenuItem) {
-            guard let annotation = parent.selectedAnnotation, annotation.isTextBoxAnnotation else { return }
-            annotation.alignment = NSTextAlignment(rawValue: sender.tag) ?? .left
-            if editingAnnotation === annotation {
-                syncEditingViewAppearance()
-            }
-            pdfView?.setNeedsDisplay(pdfView?.bounds ?? .zero)
-            parent.onDocumentChanged()
-        }
-
-        @objc func editAnnotationNote(_ sender: NSMenuItem) {
-            guard let annotation = sender.representedObject as? PDFAnnotation else { return }
-            parent.selectedAnnotation = annotation
-            parent.onDocumentChanged()
-        }
-
-        @objc func deleteSelectedAnnotation(_ sender: NSMenuItem) {
-            guard let annotation = sender.representedObject as? PDFAnnotation,
-                  let page = annotation.page else { return }
-            page.removeAnnotation(annotation)
-            parent.selectedAnnotation = nil
-            updateAnnotationBorder()
-            parent.onDocumentChanged()
+            annotationController.handleRightClick(gesture)
         }
 
         // MARK: - Gesture Delegate
@@ -1568,6 +807,90 @@ struct PDFKitView: NSViewRepresentable {
         ) -> Bool {
             if event.type == .rightMouseDown { return true }
             return currentTool == .pointer || currentTool == .note || currentTool == .textBox
+        }
+
+        func dismissTextBoxEditing() {
+            textBoxController.dismissTextBoxEditing()
+        }
+
+        private func configureControllers() {
+            searchController.onClearTextSelectionState = { [weak self] in
+                self?.clearTextSelectionState()
+            }
+            searchController.onResetProgrammaticSelectionState = { [weak self] in
+                self?.resetProgrammaticSelectionStateForSearch()
+            }
+
+            annotationController.selectedAnnotationProvider = { [weak self] in
+                self?.parent.selectedAnnotation
+            }
+            annotationController.setSelectedAnnotation = { [weak self] annotation in
+                self?.parent.selectedAnnotation = annotation
+            }
+            annotationController.onAnnotationBorderNeedsUpdate = { [weak self] in
+                self?.updateAnnotationBorder()
+            }
+            annotationController.onDocumentChanged = { [weak self] in
+                self?.parent.onDocumentChanged()
+            }
+            annotationController.onBeginTextBoxEditing = { [weak self] annotation, page in
+                self?.textBoxController.beginEditingTextBox(annotation, on: page)
+            }
+            annotationController.onResetToolToPointer = { [weak self] in
+                self?.setToolToPointer()
+            }
+            annotationController.onSyncEditingAppearance = { [weak self] updateString in
+                self?.textBoxController.syncEditingViewAppearance(updateString: updateString)
+            }
+            annotationController.editingAnnotationProvider = { [weak self] in
+                self?.textBoxController.editingAnnotation
+            }
+            annotationController.annotationAtPoint = { [weak self] point in
+                self?.annotationAtPoint(point)
+            }
+            annotationController.onClearTextSelectionState = { [weak self] in
+                self?.clearTextSelectionState()
+            }
+
+            textBoxController.selectedAnnotationProvider = { [weak self] in
+                self?.parent.selectedAnnotation
+            }
+            textBoxController.setSelectedAnnotation = { [weak self] annotation in
+                self?.parent.selectedAnnotation = annotation
+            }
+            textBoxController.onDocumentChanged = { [weak self] in
+                self?.parent.onDocumentChanged()
+            }
+            textBoxController.onAnnotationBorderNeedsUpdate = { [weak self] in
+                self?.updateAnnotationBorder()
+            }
+            textBoxController.onCursorInteractivityChanged = { [weak self] in
+                self?.syncCursorViewInteractivity()
+            }
+            textBoxController.annotationAtPoint = { [weak self] point in
+                self?.annotationAtPoint(point)
+            }
+        }
+
+        func assignControllerViews() {
+            searchController.pdfView = pdfView
+            searchController.searchState = searchState
+
+            annotationController.pdfView = pdfView
+            annotationController.cursorView = cursorView
+            annotationController.currentTool = currentTool
+            annotationController.currentColor = currentColor
+
+            textBoxController.pdfView = pdfView
+            textBoxController.overlay = overlay
+            textBoxController.cursorView = cursorView
+        }
+
+        private func setToolToPointer() {
+            parent.currentTool = .pointer
+            currentTool = .pointer
+            annotationController.currentTool = .pointer
+            updateCursor(for: .pointer)
         }
     }
 }

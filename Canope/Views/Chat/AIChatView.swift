@@ -432,7 +432,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @FocusState private var isInputFocused: Bool
     @State private var selectedSlashIndex: Int?
     @State private var showSessionPicker = false
-    @State private var cachedSelection: SelectionInfo?
+    @StateObject private var selectionContextStore = ChatSelectionContextStore()
     @State private var attachedFiles: [AttachedFile] = []
     @State private var imageCounter = 0
     @State private var pasteMonitor: Any?
@@ -442,10 +442,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     @State private var fileListTask: Task<Void, Never>?
     @State private var isRenamingCurrentSession = false
     @State private var currentSessionNameDraft = ""
-    @State private var cachedSelectionModifiedAt: Date?
-    @State private var selectionStateMonitor: DirectoryEventMonitor?
     @State private var modeStatusFlash = false
-    @State private var approvalFieldValues: [String: String] = [:]
+    @StateObject private var approvalFormModel = ChatApprovalFormModel()
     @State private var hoveredUserMessageID: UUID?
     @State private var hoveredUserMessageHideTask: Task<Void, Never>?
     @State private var showCustomInstructionsEditor = false
@@ -477,20 +475,19 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             if !provider.isConnected {
                 provider.start()
             }
-            configureSelectionStateMonitor()
-            refreshSelectionCache(force: true)
-            syncPendingApprovalFormState()
+            selectionContextStore.startMonitoring(selectionStatePath: CanopeContextFiles.ideSelectionStatePaths[0])
+            selectionContextStore.refreshSelectionCache(force: true, statePath: CanopeContextFiles.ideSelectionStatePaths[0])
+            approvalFormModel.sync(with: provider.pendingApprovalRequest)
         }
         .onDisappear {
             fileListTask?.cancel()
             fileListTask = nil
-            selectionStateMonitor?.stop()
-            selectionStateMonitor = nil
+            selectionContextStore.stopMonitoring()
             hoveredUserMessageHideTask?.cancel()
             hoveredUserMessageHideTask = nil
         }
         .onChange(of: provider.pendingApprovalRequest?.id) { _, _ in
-            syncPendingApprovalFormState()
+            approvalFormModel.sync(with: provider.pendingApprovalRequest)
         }
         // Cmd+N handled via menu item or button — SwiftUI doesn't support view-level Cmd shortcuts well
         .sheet(isPresented: $showSessionPicker) {
@@ -537,39 +534,13 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
     }
 
-    private func refreshSelectionCache(force: Bool = false) {
-        let path = CanopeContextFiles.ideSelectionStatePaths[0]
-        let modifiedAt = selectionStateModificationDate(at: path)
-
-        if !force, modifiedAt == cachedSelectionModifiedAt {
-            return
-        }
-
-        cachedSelectionModifiedAt = modifiedAt
-        cachedSelection = readSelectionFromDisk(at: path)
-    }
-
-    private func configureSelectionStateMonitor() {
-        let path = CanopeContextFiles.ideSelectionStatePaths[0]
-        let fileURL = URL(fileURLWithPath: path)
-        let directoryURL = fileURL.deletingLastPathComponent()
-
-        selectionStateMonitor?.stop()
-        selectionStateMonitor = DirectoryEventMonitor(directoryURL: directoryURL) {
-            Task { @MainActor in
-                refreshSelectionCache()
-            }
-        }
-        selectionStateMonitor?.start()
-    }
-
     private var chatFileRootURL: URL {
         fileRootURL ?? provider.chatWorkingDirectory
     }
 
-    private var currentSelection: SelectionInfo? { cachedSelection }
+    private var currentSelection: ChatSelectionInfo? { selectionContextStore.cachedSelection }
 
-    private var visibleSelection: SelectionInfo? {
+    private var visibleSelection: ChatSelectionInfo? {
         provider.chatIncludesIDEContext ? currentSelection : nil
     }
 
@@ -599,113 +570,21 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     // MARK: - Session Header
 
     private var sessionHeader: some View {
-        HStack(spacing: 8) {
-            Image(systemName: provider.providerIcon)
-                .font(.system(size: usesCodexVisualStyle ? 9 : 10, weight: .semibold))
-                .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
-
-            Text(provider.chatSessionDisplayName)
-                .font(.system(size: usesCodexVisualStyle ? 10 : 11, weight: .semibold))
-                .lineLimit(1)
-
-            if provider.chatCanRenameCurrentSession {
-                Button {
-                    currentSessionNameDraft = provider.chatSessionDisplayName
-                    isRenamingCurrentSession = true
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(AppStrings.renameConversation)
-            }
-
-            if !provider.chatUsesBottomPromptControls {
-                Menu {
-                    ForEach(provider.chatAvailableModels, id: \.self) { model in
-                        Button {
-                            provider.chatSelectedModel = model
-                        } label: {
-                            HStack {
-                                Text(model)
-                                if provider.chatSelectedModel == model {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Text(provider.chatSelectedModel)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.orange)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-
-                Text("·")
-                    .foregroundStyle(.secondary.opacity(0.5))
-
-                Menu {
-                    ForEach(provider.chatAvailableEfforts, id: \.self) { effort in
-                        Button {
-                            provider.chatSelectedEffort = effort
-                        } label: {
-                            HStack {
-                                Text(effortDisplayLabel(effort))
-                                if provider.chatSelectedEffort == effort {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Text(effortDisplayLabel(provider.chatSelectedEffort))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            }
-
-            if provider.session.turns > 0 {
-                if !provider.chatUsesBottomPromptControls {
-                    Text("·")
-                        .foregroundStyle((usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary).opacity(0.5))
-                }
-                Text("\(provider.session.turns) turns")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
-            }
-
-            ForEach(provider.chatStatusBadges) { badge in
-                Text("·")
-                    .foregroundStyle(.secondary.opacity(0.5))
+        ChatSessionHeader(
+            provider: provider,
+            usesCodexVisualStyle: usesCodexVisualStyle,
+            effortDisplayLabel: effortDisplayLabel,
+            onRename: {
+                currentSessionNameDraft = provider.chatSessionDisplayName
+                isRenamingCurrentSession = true
+            },
+            onStop: {
+                provider.stop()
+            },
+            statusBadgeView: { badge in
                 statusBadgeView(badge)
             }
-
-            Spacer()
-
-            if provider.isProcessing {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.7)
-            }
-
-            Button {
-                provider.stop()
-            } label: {
-                Image(systemName: provider.isProcessing ? "stop.circle.fill" : "stop.fill")
-                    .font(.system(size: provider.isProcessing ? 14 : 9))
-                    .foregroundStyle(provider.isProcessing ? .red : .secondary)
-            }
-            .buttonStyle(.plain)
-            .opacity(provider.isProcessing ? 1 : 0.3)
-            .disabled(!provider.isProcessing)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: usesCodexVisualStyle ? AppChromeMetrics.codexHeaderHeight : 28)
-        .background(usesCodexVisualStyle ? AppChromePalette.codexHeaderFill : AppChromePalette.surfaceSubbar)
+        )
     }
 
     // MARK: - Message List
@@ -1306,166 +1185,75 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     // MARK: - Input Bar
 
     private var inputBar: some View {
-        Group {
-            if usesCodexVisualStyle {
-                codexInputBar
-            } else {
-                standardInputBar
-            }
-        }
-        .onAppear { installPasteMonitor() }
-        .onDisappear { removePasteMonitor() }
-        .onExitCommand {
-            if provider.isProcessing {
+        ChatComposerBar(
+            provider: provider,
+            usesCodexVisualStyle: usesCodexVisualStyle,
+            selection: visibleSelection,
+            showsSuggestions: !fileListItems.isEmpty || (showSlashSuggestions && !filteredSlashCommands.isEmpty),
+            showsAttachments: !attachedFiles.isEmpty,
+            onInstallPasteMonitor: installPasteMonitor,
+            onRemovePasteMonitor: removePasteMonitor,
+            onExitStop: {
                 provider.stop()
-            }
-        }
-    }
+            },
+            approvalContent: { approval in
+                approvalRequestCard(approval)
+            },
+            suggestionsContent: {
+                VStack(spacing: 0) {
+                    if !fileListItems.isEmpty {
+                        promptFileSuggestionsList
+                    }
+                    if showSlashSuggestions, !filteredSlashCommands.isEmpty {
+                        promptSlashSuggestionsList
+                    }
+                }
+            },
+            attachmentsContent: {
+                attachedFilesStrip
+            },
+            promptFieldContent: {
+                Group {
+                    if usesCodexVisualStyle {
+                        promptTextField
+                            .padding(.horizontal, 18)
+                            .padding(.top, (visibleSelection == nil && attachedFiles.isEmpty) ? 10 : 7)
+                            .padding(.bottom, 8)
+                    } else {
+                        HStack(spacing: 8) {
+                            attachButton(isCodexPrompt: false)
+                            promptTextField
+                            sendButton(isCodexPrompt: false)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                    }
+                }
+            },
+            standardFooterContent: {
+                HStack(spacing: 8) {
+                    if provider.chatUsesBottomPromptControls {
+                        modelPromptMenu
+                        effortPromptMenu
+                    }
 
-    private var standardInputBar: some View {
-        VStack(spacing: 0) {
-            if let sel = visibleSelection {
-                HStack(spacing: 6) {
-                    Image(systemName: "text.quote")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.orange)
+                    interactionModePromptMenu(style: .standard)
 
-                    Text(sel.fileName)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    if let environmentLabel = provider.chatPromptEnvironmentLabel {
+                        environmentPromptMenu(environmentLabel)
+                    }
 
-                    Text("·")
-                        .foregroundStyle(.secondary.opacity(0.5))
-
-                    Text("\(sel.lineCount) ligne\(sel.lineCount > 1 ? "s" : "")")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                    if let configurationLabel = provider.chatPromptConfigurationLabel {
+                        configurationPromptMenu(configurationLabel)
+                    }
 
                     Spacer()
                 }
+                .frame(height: 22)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(AppChromePalette.surfaceSubbar.opacity(0.6))
-
-                Divider()
-            }
-
-            if let approval = provider.pendingApprovalRequest {
-                approvalRequestCard(approval)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.green.opacity(0.08))
-
-                Divider()
-            }
-
-            if !fileListItems.isEmpty {
-                promptFileSuggestionsList
-            }
-
-            if showSlashSuggestions, !filteredSlashCommands.isEmpty {
-                promptSlashSuggestionsList
-            }
-
-            if !attachedFiles.isEmpty {
-                attachedFilesStrip
-            }
-
-            HStack(spacing: 8) {
-                attachButton(isCodexPrompt: false)
-
-                promptTextField
-
-                sendButton(isCodexPrompt: false)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            HStack(spacing: 8) {
-                if provider.chatUsesBottomPromptControls {
-                    modelPromptMenu
-                    effortPromptMenu
-                }
-
-                interactionModePromptMenu(style: .standard)
-
-                if let environmentLabel = provider.chatPromptEnvironmentLabel {
-                    environmentPromptMenu(environmentLabel)
-                }
-
-                if let configurationLabel = provider.chatPromptConfigurationLabel {
-                    configurationPromptMenu(configurationLabel)
-                }
-
-                Spacer()
-            }
-            .frame(height: 22)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
-        }
-        .background(AppChromePalette.surfaceSubbar)
-    }
-
-    private var codexInputBar: some View {
-        VStack(spacing: 6) {
-            if let approval = provider.pendingApprovalRequest {
-                approvalRequestCard(approval)
-                    .padding(.horizontal, 14)
-            }
-
-            if !fileListItems.isEmpty {
-                promptFileSuggestionsList
-                    .padding(.horizontal, 8)
-            }
-
-            if showSlashSuggestions, !filteredSlashCommands.isEmpty {
-                promptSlashSuggestionsList
-                    .padding(.horizontal, 8)
-            }
-
-            VStack(spacing: 0) {
-                if let sel = visibleSelection {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(AppChromePalette.codexIDEContext)
-
-                        Text(sel.fileName)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(AppChromePalette.codexMutedText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-
-                        Text("·")
-                            .foregroundStyle(AppChromePalette.codexMutedText.opacity(0.4))
-
-                        Text("\(sel.lineCount) ligne\(sel.lineCount > 1 ? "s" : "")")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(AppChromePalette.codexMutedText)
-
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-                }
-
-                if !attachedFiles.isEmpty {
-                    attachedFilesStrip
-                        .padding(.top, visibleSelection == nil ? 8 : 5)
-                }
-
-                promptTextField
-                    .padding(.horizontal, 18)
-                    .padding(.top, (visibleSelection == nil && attachedFiles.isEmpty) ? 10 : 7)
-                    .padding(.bottom, 8)
-
-                Rectangle()
-                    .fill(AppChromePalette.codexPromptDivider.opacity(0.55))
-                    .frame(height: 1)
-                    .padding(.horizontal, 16)
-
+                .padding(.bottom, 8)
+            },
+            codexFooterContent: {
                 HStack(spacing: 8) {
                     attachButton(isCodexPrompt: true)
 
@@ -1508,71 +1296,16 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
                     sendButton(isCodexPrompt: true)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(AppChromePalette.codexPromptShell)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(AppChromePalette.codexPromptStroke, lineWidth: 1)
-            )
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 6)
+            },
+            codexSecondaryContent: {
+                HStack(spacing: 16) {
+                    interactionModePromptMenu(style: .codexSecondary)
 
-            HStack(spacing: 16) {
-                interactionModePromptMenu(style: .codexSecondary)
-
-                if let environmentLabel = provider.chatPromptEnvironmentLabel {
-                    codexSecondaryMenuLabel(title: environmentLabel, iconName: "laptopcomputer") {
-                        Button {} label: {
-                            HStack {
-                                Text(environmentLabel)
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                        .disabled(true)
-
-                        Divider()
-
-                        Button {} label: {
-                            Text(environmentExecutionLabel)
-                        }
-                        .disabled(true)
-
-                        Button {} label: {
-                            Text("Reseau actif")
-                        }
-                        .disabled(true)
-
-                        Button {} label: {
-                            Text(provider.chatWorkingDirectory.path)
-                                .lineLimit(1)
-                        }
-                        .disabled(true)
-                    }
-                }
-
-                if let configurationLabel = provider.chatPromptConfigurationLabel {
-                    if provider.chatSupportsCustomInstructions {
-                        Button {
-                            openCustomInstructionsEditor()
-                        } label: {
-                            codexSecondaryButtonLabel(
-                                title: configurationLabel,
-                                iconName: "gearshape",
-                                showsIndicator: provider.chatCustomInstructions.hasAny
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .help("\(AppStrings.customInstructions) · \(provider.chatCustomInstructions.summaryLabel)")
-                    } else {
-                        codexSecondaryMenuLabel(title: configurationLabel, iconName: "gearshape") {
+                    if let environmentLabel = provider.chatPromptEnvironmentLabel {
+                        codexSecondaryMenuLabel(title: environmentLabel, iconName: "laptopcomputer") {
                             Button {} label: {
                                 HStack {
-                                    Text(configurationLabel)
+                                    Text(environmentLabel)
                                     Image(systemName: "checkmark")
                                 }
                             }
@@ -1581,38 +1314,76 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                             Divider()
 
                             Button {} label: {
-                                Text("\(AppStrings.modelLabel): \(provider.chatSelectedModel.uppercased())")
+                                Text(environmentExecutionLabel)
                             }
                             .disabled(true)
 
                             Button {} label: {
-                                Text("\(AppStrings.reasoningLabel): \(effortDisplayLabel(provider.chatSelectedEffort))")
+                                Text("Reseau actif")
+                            }
+                            .disabled(true)
+
+                            Button {} label: {
+                                Text(provider.chatWorkingDirectory.path)
+                                    .lineLimit(1)
                             }
                             .disabled(true)
                         }
                     }
-                }
 
-                Spacer(minLength: 0)
+                    if let configurationLabel = provider.chatPromptConfigurationLabel {
+                        if provider.chatSupportsCustomInstructions {
+                            Button {
+                                openCustomInstructionsEditor()
+                            } label: {
+                                codexSecondaryButtonLabel(
+                                    title: configurationLabel,
+                                    iconName: "gearshape",
+                                    showsIndicator: provider.chatCustomInstructions.hasAny
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .help("\(AppStrings.customInstructions) · \(provider.chatCustomInstructions.summaryLabel)")
+                        } else {
+                            codexSecondaryMenuLabel(title: configurationLabel, iconName: "gearshape") {
+                                Button {} label: {
+                                    HStack {
+                                        Text(configurationLabel)
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                                .disabled(true)
 
-                if provider.isProcessing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(AppChromePalette.codexMutedText)
-                        .scaleEffect(0.7)
-                } else {
-                    Circle()
-                        .strokeBorder(AppChromePalette.codexPromptDivider.opacity(0.65), lineWidth: 2)
-                        .frame(width: 14, height: 14)
+                                Divider()
+
+                                Button {} label: {
+                                    Text("\(AppStrings.modelLabel): \(provider.chatSelectedModel.uppercased())")
+                                }
+                                .disabled(true)
+
+                                Button {} label: {
+                                    Text("\(AppStrings.reasoningLabel): \(effortDisplayLabel(provider.chatSelectedEffort))")
+                                }
+                                .disabled(true)
+                            }
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if provider.isProcessing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(AppChromePalette.codexMutedText)
+                            .scaleEffect(0.7)
+                    } else {
+                        Circle()
+                            .strokeBorder(AppChromePalette.codexPromptDivider.opacity(0.65), lineWidth: 2)
+                            .frame(width: 14, height: 14)
+                    }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 0)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 0)
-        .padding(.vertical, 6)
-        .background(AppChromePalette.codexCanvas)
+        )
     }
 
     private var promptFileSuggestionsList: some View {
@@ -2009,256 +1780,20 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     @ViewBuilder
     private func approvalRequestCard(_ approval: ChatApprovalRequest) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 8) {
-                if let actionLabel = approval.actionLabel {
-                    Text(actionLabel)
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.green.opacity(0.95))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill(Color.green.opacity(0.14))
-                        )
-                } else {
-                    Image(systemName: approval.requiresFormInput ? "square.and.pencil" : "checkmark.shield")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.green)
-                }
-
-                Text(approval.message ?? "Autoriser l’action \(approval.toolName) ?")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-
-                Spacer(minLength: 8)
+        ChatApprovalCard(
+            approval: approval,
+            usesCodexVisualStyle: usesCodexVisualStyle,
+            formModel: approvalFormModel,
+            onDismiss: {
+                provider.dismissPendingApprovalRequest()
+            },
+            onApprove: {
+                provider.approvePendingApprovalRequest()
+            },
+            onSubmit: { fieldValues in
+                provider.submitPendingApprovalRequest(fieldValues: fieldValues)
             }
-
-            if approval.requiresFormInput {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(approval.fields) { field in
-                        approvalFieldRow(field)
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    Button(AppStrings.cancel) {
-                        provider.dismissPendingApprovalRequest()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Button("Send") {
-                        provider.submitPendingApprovalRequest(fieldValues: approvalFieldValues)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
-                    .font(.system(size: 11, weight: .semibold))
-                    .disabled(!canSubmitApprovalRequest(approval))
-                }
-            } else {
-                if let preview = approval.preview {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(preview.title)
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            Text(preview.body)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(.primary)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(usesCodexVisualStyle ? AppChromePalette.codexPromptInner.opacity(0.85) : Color.white.opacity(0.05))
-                        )
-                    }
-                }
-
-                if !approval.details.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(approval.details, id: \.self) { detail in
-                            Text(detail)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .truncationMode(.middle)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .fill(usesCodexVisualStyle ? AppChromePalette.codexPromptInner.opacity(0.7) : Color.white.opacity(0.04))
-                                )
-                        }
-                    }
-                }
-
-                HStack {
-                    Spacer(minLength: 0)
-
-                    Button("Refuser") {
-                        provider.dismissPendingApprovalRequest()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
-
-                    Button("Autoriser") {
-                        provider.approvePendingApprovalRequest()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
-                    .font(.system(size: 11, weight: .semibold))
-                }
-            }
-        }
-        .padding(usesCodexVisualStyle ? 10 : 0)
-        .background(
-            RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexEventCornerRadius : 0, style: .continuous)
-                .fill(usesCodexVisualStyle ? AppChromePalette.codexEventFill : Color.clear)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: usesCodexVisualStyle ? AppChromeMetrics.codexEventCornerRadius : 0, style: .continuous)
-                .strokeBorder(usesCodexVisualStyle ? AppChromePalette.codexPromptStroke.opacity(0.75) : Color.clear, lineWidth: usesCodexVisualStyle ? 0.8 : 0)
-        )
-    }
-
-    @ViewBuilder
-    private func approvalFieldRow(_ field: ChatInteractiveField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text(field.title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.primary)
-                if field.isRequired {
-                    Text("*")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.orange)
-                }
-            }
-
-            if let prompt = field.prompt, !prompt.isEmpty {
-                Text(prompt)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            switch field.kind {
-            case .boolean:
-                Toggle(isOn: approvalBoolBinding(for: field)) {
-                    Text(approvalBoolBinding(for: field).wrappedValue ? "Oui" : "Non")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.primary)
-                }
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-
-            case .singleChoice:
-                Picker("", selection: approvalTextBinding(for: field)) {
-                    ForEach(field.options) { option in
-                        Text(option.label).tag(option.label)
-                    }
-                    if field.supportsCustomValue {
-                        Text("Autre…").tag("__other__")
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-
-                if approvalTextBinding(for: field).wrappedValue == "__other__" {
-                    TextField("Autre valeur", text: approvalOtherTextBinding(for: field))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
-                }
-
-            case .secureText:
-                SecureField(field.placeholder ?? "Valeur", text: approvalTextBinding(for: field))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11))
-
-            case .text, .integer, .number:
-                TextField(field.placeholder ?? "Valeur", text: approvalTextBinding(for: field))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11))
-            }
-        }
-    }
-
-    private func syncPendingApprovalFormState() {
-        guard let approval = provider.pendingApprovalRequest else {
-            approvalFieldValues = [:]
-            return
-        }
-
-        var values: [String: String] = [:]
-        for field in approval.fields {
-            values[field.id] = field.defaultValue
-            if field.supportsCustomValue {
-                values["\(field.id)__other"] = ""
-            }
-        }
-        approvalFieldValues = values
-    }
-
-    private func approvalTextBinding(for field: ChatInteractiveField) -> Binding<String> {
-        Binding(
-            get: { approvalFieldValues[field.id] ?? field.defaultValue },
-            set: { approvalFieldValues[field.id] = $0 }
-        )
-    }
-
-    private func approvalOtherTextBinding(for field: ChatInteractiveField) -> Binding<String> {
-        Binding(
-            get: { approvalFieldValues["\(field.id)__other"] ?? "" },
-            set: { approvalFieldValues["\(field.id)__other"] = $0 }
-        )
-    }
-
-    private func approvalBoolBinding(for field: ChatInteractiveField) -> Binding<Bool> {
-        Binding(
-            get: { (approvalFieldValues[field.id] ?? field.defaultValue) == "true" },
-            set: { approvalFieldValues[field.id] = $0 ? "true" : "false" }
-        )
-    }
-
-    private func resolvedApprovalValue(for field: ChatInteractiveField) -> String {
-        let raw = (approvalFieldValues[field.id] ?? field.defaultValue)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if field.supportsCustomValue && raw == "__other__" {
-            return (approvalFieldValues["\(field.id)__other"] ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return raw
-    }
-
-    private func canSubmitApprovalRequest(_ approval: ChatApprovalRequest) -> Bool {
-        for field in approval.fields {
-            let value = resolvedApprovalValue(for: field)
-            if field.isRequired && value.isEmpty {
-                return false
-            }
-            switch field.kind {
-            case .integer where !value.isEmpty && Int(value) == nil:
-                return false
-            case .number where !value.isEmpty && Double(value) == nil:
-                return false
-            default:
-                break
-            }
-        }
-        return true
     }
 
     // MARK: - Slash Commands
@@ -2388,29 +1923,6 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     // MARK: - Selection State
-
-    private struct SelectionInfo {
-        let fileName: String
-        let lineCount: Int
-    }
-
-    private func selectionStateModificationDate(at path: String) -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? nil
-    }
-
-    private func readSelectionFromDisk(at path: String) -> SelectionInfo? {
-        guard let data = FileManager.default.contents(atPath: path),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let text = json["text"] as? String,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return nil }
-
-        let filePath = json["filePath"] as? String ?? ""
-        let fileName = (filePath as NSString).lastPathComponent
-        let lines = text.components(separatedBy: .newlines).count
-
-        return SelectionInfo(fileName: fileName, lineCount: lines)
-    }
 
     private func looksLikeMarkdownTableRow(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -2825,136 +2337,28 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     private var customInstructionsEditorSheet: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(alignment: .center, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(AppStrings.instructions)
-                                .font(.system(size: 15, weight: .semibold))
-                            Text(AppStrings.codexPromptOnly)
-                                .font(.system(size: 11))
-                                .foregroundStyle(AppChromePalette.codexMutedText)
-                        }
-
-                        Spacer(minLength: 0)
-
-                        Text(provider.chatCustomInstructions.summaryLabel)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(provider.chatCustomInstructions.hasAny ? AppChromePalette.codexIDEContext : AppChromePalette.codexMutedText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(AppChromePalette.codexPromptInner)
-                            )
-                    }
-
-                    customInstructionsEditorSection(
-                        title: AppStrings.globalInstructions,
-                        subtitle: AppStrings.globalInstructionsSubtitle,
-                        text: $globalCustomInstructionsDraft,
-                        placeholder: "E.g. Respond in simple, direct English."
-                    )
-
-                    customInstructionsEditorSection(
-                        title: AppStrings.sessionInstructions,
-                        subtitle: AppStrings.sessionInstructionsSubtitle,
-                        text: $sessionCustomInstructionsDraft,
-                        placeholder: "E.g. In this conversation, be concise and always cite files."
-                    )
-
-                    HStack(spacing: 10) {
-                        Button("Reset global") {
-                            globalCustomInstructionsDraft = ""
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-
-                        Button("Reset session") {
-                            sessionCustomInstructionsDraft = ""
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(20)
+        ChatCustomInstructionsSheet(
+            summaryLabel: provider.chatCustomInstructions.summaryLabel,
+            hasAnyInstructions: provider.chatCustomInstructions.hasAny,
+            globalText: $globalCustomInstructionsDraft,
+            sessionText: $sessionCustomInstructionsDraft,
+            onResetGlobal: {
+                globalCustomInstructionsDraft = ""
+            },
+            onResetSession: {
+                sessionCustomInstructionsDraft = ""
+            },
+            onCancel: {
+                showCustomInstructionsEditor = false
+            },
+            onSave: {
+                provider.updateChatCustomInstructions(
+                    global: globalCustomInstructionsDraft,
+                    session: sessionCustomInstructionsDraft
+                )
+                showCustomInstructionsEditor = false
             }
-
-            Divider()
-                .overlay(AppChromePalette.codexPromptDivider.opacity(0.65))
-
-            HStack(spacing: 10) {
-                Spacer(minLength: 0)
-
-                Button(AppStrings.cancel) {
-                    showCustomInstructionsEditor = false
-                }
-                .buttonStyle(.bordered)
-                .keyboardShortcut(.cancelAction)
-
-                Button(AppStrings.save) {
-                    provider.updateChatCustomInstructions(
-                        global: globalCustomInstructionsDraft,
-                        session: sessionCustomInstructionsDraft
-                    )
-                    showCustomInstructionsEditor = false
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(AppChromePalette.codexCanvas)
-        }
-        .frame(width: 620)
-        .frame(minHeight: 430, idealHeight: 500, maxHeight: 620, alignment: .topLeading)
-        .background(AppChromePalette.codexCanvas)
-    }
-
-    private func customInstructionsEditorSection(
-        title: String,
-        subtitle: String,
-        text: Binding<String>,
-        placeholder: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                Text(subtitle)
-                    .font(.system(size: 10))
-                    .foregroundStyle(AppChromePalette.codexMutedText)
-            }
-
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: text)
-                    .scrollContentBackground(.hidden)
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 2)
-                    .padding(.vertical, 2)
-
-                if text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(placeholder)
-                        .font(.system(size: 12))
-                        .foregroundStyle(AppChromePalette.codexMutedText.opacity(0.7))
-                        .padding(.top, 8)
-                        .padding(.leading, 7)
-                        .allowsHitTesting(false)
-                }
-            }
-            .frame(minHeight: 112, maxHeight: 140)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(AppChromePalette.codexPromptShell)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(AppChromePalette.codexPromptStroke, lineWidth: 1)
-            )
-        }
+        )
     }
 
     private func openCustomInstructionsEditor() {
@@ -2992,54 +2396,49 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     private func send() {
-        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !attachedFiles.isEmpty else { return }
+        let originalText = inputText
+        guard ChatCommandRouter.route(
+            inputText: originalText,
+            attachedFiles: attachedFiles,
+            supportsReview: provider.chatSupportsReview,
+            chatFileRootURL: chatFileRootURL
+        ) != nil else {
+            return
+        }
         inputText = ""
-        refreshSelectionCache()
+        selectionContextStore.refreshSelectionCache(statePath: CanopeContextFiles.ideSelectionStatePaths[0])
 
-        if text == "/plan" {
-            provider.chatInteractionMode = .plan
+        guard let action = ChatCommandRouter.route(
+            inputText: originalText,
+            attachedFiles: attachedFiles,
+            supportsReview: provider.chatSupportsReview,
+            chatFileRootURL: chatFileRootURL
+        ) else {
+            return
+        }
+
+        switch action {
+        case .setMode(let mode):
+            provider.chatInteractionMode = mode
             flashModeChange()
-            return
-        }
 
-        if text == "/agent" {
-            provider.chatInteractionMode = .agent
-            flashModeChange()
-            return
-        }
+        case .startReview(let command):
+            provider.startChatReview(command: command)
 
-        if text.hasPrefix("/review"), provider.chatSupportsReview {
-            let command = String(text.dropFirst("/review".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            provider.startChatReview(command: command.isEmpty ? nil : command)
-            return
-        }
-
-        // /new starts a fresh conversation
-        if text == "/new" {
+        case .newSession:
             provider.newChatSession()
-            return
-        }
 
-        // Handle /continue locally
-        if text == "/continue" {
-            provider.resumeLastChatSession(matchingDirectory: chatFileRootURL)
-            return
-        }
+        case .resumeLastChatSession(let matchingDirectory):
+            provider.resumeLastChatSession(matchingDirectory: matchingDirectory)
 
-        // /resume shows the session picker
-        if text == "/resume" {
+        case .showSessionPicker:
             showSessionPicker = true
-            return
-        }
 
-        if !attachedFiles.isEmpty {
-            let displayText = AttachedFile.chatDisplayText(userText: text, attachedFiles: attachedFiles)
-            let items = attachedFiles.map(\.chatInputItem) + (text.isEmpty ? [] : [.text(text)])
+        case .sendItems(let displayText, let items):
             attachedFiles.removeAll()
-
             provider.sendMessageWithDisplay(displayText: displayText, items: items)
-        } else {
+
+        case .sendText(let text):
             provider.sendMessage(text)
         }
     }

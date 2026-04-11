@@ -1,8 +1,14 @@
 import SwiftUI
 import SwiftData
 import PDFKit
+import OSLog
 
 struct MainWindow: View {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.canope.app",
+        category: "MainWindow"
+    )
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var terminalAppearanceStore = TerminalAppearanceStore.shared
     @Query private var allPapers: [Paper]
@@ -14,6 +20,7 @@ struct MainWindow: View {
     @State private var didRestoreWorkspace = AppRuntime.isRunningTests
     @StateObject private var latexWorkspaceState = LaTeXWorkspaceUIState()
     @StateObject private var terminalWorkspaceState = TerminalWorkspaceState()
+    @State private var pendingTabSwitchStartUptime: TimeInterval?
     @Namespace private var documentTabIndicatorNamespace
 
     private var openPaperIDs: [UUID] { tabController.openPaperIDs }
@@ -21,6 +28,20 @@ struct MainWindow: View {
     private var openEditorPaths: [String] { tabController.openEditorPaths }
 
     private var openPDFPaths: [String] { tabController.openPDFPaths }
+
+    private var activeSplitPDFSurfaceCount: Int {
+        guard case .paper(let paperID) = tabController.selectedTab,
+              let splitID = tabController.splitPaperID,
+              splitID != paperID,
+              allPapers.contains(where: { $0.id == splitID }) else {
+            return 0
+        }
+        return 1
+    }
+
+    private var mountedPDFSurfaceCount: Int {
+        openPaperIDs.count + openPDFPaths.count + activeSplitPDFSurfaceCount
+    }
 
     private var isEditorSelected: Bool {
         switch tabController.selectedTab {
@@ -263,6 +284,43 @@ struct MainWindow: View {
         WorkspaceSessionStore.shared.saveMainWindowState(snapshot)
     }
 
+    private func describe(tab: TabItem) -> String {
+        switch tab {
+        case .library:
+            return "library"
+        case .paper(let id):
+            return "paper:\(id.uuidString)"
+        case .editorWorkspace:
+            return "editorWorkspace"
+        case .editor(let path):
+            return "editor:\(URL(fileURLWithPath: path).lastPathComponent)"
+        case .pdfFile(let path):
+            return "pdf:\(URL(fileURLWithPath: path).lastPathComponent)"
+        }
+    }
+
+    private func logWindowMetrics(reason: String) {
+        Self.logger.info(
+            "Main window metrics reason=\(reason, privacy: .public) openTabs=\(tabController.openTabs.count, privacy: .public) mountedPDFSurfaces=\(mountedPDFSurfaceCount, privacy: .public) openPaperTabs=\(openPaperIDs.count, privacy: .public) openStandalonePDFTabs=\(openPDFPaths.count, privacy: .public) selected=\(describe(tab: tabController.selectedTab), privacy: .public)"
+        )
+    }
+
+    private func scheduleTabSwitchMetrics(for selectedTab: TabItem) {
+        let start = ProcessInfo.processInfo.systemUptime
+        pendingTabSwitchStartUptime = start
+
+        Task { @MainActor in
+            await Task.yield()
+            guard pendingTabSwitchStartUptime == start else { return }
+            pendingTabSwitchStartUptime = nil
+
+            let elapsedMilliseconds = Int(((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded())
+            Self.logger.info(
+                "Tab switch completed target=\(describe(tab: selectedTab), privacy: .public) elapsedMs=\(elapsedMilliseconds, privacy: .public) openTabs=\(tabController.openTabs.count, privacy: .public) mountedPDFSurfaces=\(mountedPDFSurfaceCount, privacy: .public)"
+            )
+        }
+    }
+
     private func restoreWorkspaceStateIfNeeded() {
         guard !didRestoreWorkspace else { return }
         didRestoreWorkspace = true
@@ -321,15 +379,24 @@ struct MainWindow: View {
                     restoreWorkspaceStateIfNeeded()
                 }
                 makeSplitersEasyToGrab()
+                logWindowMetrics(reason: "appear")
             }
         }
         .onChange(of: tabController.selectedTab) {
             makeSplitersEasyToGrab()
             persistWorkspaceState()
+            scheduleTabSwitchMetrics(for: tabController.selectedTab)
+            logWindowMetrics(reason: "selectedTab")
         }
-        .onChange(of: tabController.openTabs) { persistWorkspaceState() }
+        .onChange(of: tabController.openTabs) {
+            persistWorkspaceState()
+            logWindowMetrics(reason: "openTabs")
+        }
         .onChange(of: showTerminal) { persistWorkspaceState() }
-        .onChange(of: tabController.splitPaperID) { persistWorkspaceState() }
+        .onChange(of: tabController.splitPaperID) {
+            persistWorkspaceState()
+            logWindowMetrics(reason: "splitPaper")
+        }
         .onChange(of: paperToOpen) {
             guard let id = paperToOpen else { return }
             openPaperAsReference(id: id)

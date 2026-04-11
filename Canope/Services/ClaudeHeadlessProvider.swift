@@ -1101,9 +1101,9 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
     nonisolated static func blockedToolMessage(toolName: String, mode: ChatInteractionMode) -> String {
         switch mode {
         case .agent:
-            return "The action \(toolName) was blocked."
+            return "L’action \(toolName) a ete bloquee."
         case .acceptEdits:
-            return "Accept edits mode: the action \(toolName) was blocked while waiting for your approval. Interactive approval is not wired yet."
+            return "Mode accept edits: l’action \(toolName) a ete bloquee en attendant ton approbation. L’approbation interactive n’est pas encore branchee."
         case .plan:
             return "\(AppStrings.mutatingActionBlockedPrefix) \(toolName) \(AppStrings.mutatingActionBlockedSuffix)"
         }
