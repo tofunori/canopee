@@ -289,7 +289,7 @@ final class ClaudeHeadlessProvider: ObservableObject, AIHeadlessProvider {
         resumeWorkingDirectory = nil
         useContinueForNextMessage = false
         messages.removeAll()
-        appendSystem("Nouvelle conversation")
+        appendSystem(AppStrings.newConversation)
     }
 
     func renameCurrentSession(to name: String) {

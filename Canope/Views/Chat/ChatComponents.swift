@@ -9,11 +9,25 @@ struct ChatSessionHeader<Provider: HeadlessChatProviding, StatusBadgeContent: Vi
     let onStop: () -> Void
     let statusBadgeView: (ChatStatusBadge) -> StatusBadgeContent
 
+    private var visibleStatusBadges: [ChatStatusBadge] {
+        guard usesCodexVisualStyle else { return provider.chatStatusBadges }
+        return provider.chatStatusBadges.filter { badge in
+            switch badge.kind {
+            case .connected, .mcpOkay:
+                return false
+            default:
+                return true
+            }
+        }
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: provider.providerIcon)
-                .font(.system(size: usesCodexVisualStyle ? 9 : 10, weight: .semibold))
-                .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
+            if !usesCodexVisualStyle {
+                Image(systemName: provider.providerIcon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
 
             Text(provider.chatSessionDisplayName)
                 .font(.system(size: usesCodexVisualStyle ? 10 : 11, weight: .semibold))
@@ -86,7 +100,7 @@ struct ChatSessionHeader<Provider: HeadlessChatProviding, StatusBadgeContent: Vi
                     .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
             }
 
-            ForEach(provider.chatStatusBadges) { badge in
+            ForEach(visibleStatusBadges) { badge in
                 Text("·")
                     .foregroundStyle(.secondary.opacity(0.5))
                 statusBadgeView(badge)
@@ -585,7 +599,7 @@ private struct ChatSelectionSummaryBar: View {
             Text("·")
                 .foregroundStyle((usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary).opacity(0.4))
 
-            Text("\(selection.lineCount) ligne\(selection.lineCount > 1 ? "s" : "")")
+            Text(AppStrings.lineCount(selection.lineCount))
                 .font(.system(size: usesCodexVisualStyle ? 11 : 10, weight: usesCodexVisualStyle ? .medium : .regular, design: usesCodexVisualStyle ? .default : .monospaced))
                 .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
 

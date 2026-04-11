@@ -123,7 +123,7 @@ extension ClaudeHeadlessProvider: HeadlessChatProviding {
     var chatSessionDisplayName: String {
         let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !trimmed.isEmpty { return trimmed }
-        return session.id == nil ? "Nouvelle conversation" : "Conversation"
+        return session.id == nil ? AppStrings.newConversation : AppStrings.conversation
     }
     var chatCanRenameCurrentSession: Bool { session.id != nil }
 

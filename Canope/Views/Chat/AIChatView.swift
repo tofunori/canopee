@@ -53,18 +53,18 @@ extension AttachedFile {
         var parts: [String] = []
 
         if imageCount == 1 {
-            parts.append("🖼 1 image jointe")
+            parts.append("🖼 1 image attached")
         } else if imageCount > 1 {
-            parts.append("🖼 \(imageCount) images jointes")
+            parts.append("🖼 \(imageCount) images attached")
         }
 
         switch textFiles.count {
         case 0:
             break
         case 1:
-            parts.append("📎 1 fichier joint")
+            parts.append("📎 1 file attached")
         default:
-            parts.append("📎 \(textFiles.count) fichiers")
+            parts.append("📎 \(textFiles.count) files")
         }
 
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -1497,28 +1497,25 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     private var promptTextField: some View {
         if usesCodexVisualStyle {
             ZStack(alignment: .topLeading) {
-                TextEditor(text: $inputText)
-                    .scrollContentBackground(.hidden)
-                    .font(.system(size: 14))
-                    .focused($isInputFocused)
-                    .onChange(of: inputText) {
+                CodexPromptEditor(
+                    text: $inputText,
+                    isFocused: Binding(
+                        get: { isInputFocused },
+                        set: { isInputFocused = $0 }
+                    )
+                ) {
+                    send()
+                } onTextChange: {
                         updateSlashSuggestions()
                         updateFileList()
-                    }
-                    .onKeyPress(phases: .down) { press in
-                        if press.key == .return && !press.modifiers.contains(.shift) {
-                            send()
-                            return .handled
-                        }
-                        return .ignored
                     }
 
                 if inputText.isEmpty {
                     Text(chatInputPlaceholder)
                         .font(.system(size: 14))
                         .foregroundStyle(AppChromePalette.codexMutedText.opacity(0.72))
-                        .padding(.top, 6)
-                        .padding(.leading, 5)
+                        .padding(.top, CodexPromptEditor.placeholderTopInset)
+                        .padding(.leading, CodexPromptEditor.placeholderLeadingInset)
                         .allowsHitTesting(false)
                 }
             }
@@ -2370,22 +2367,22 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     private var environmentExecutionLabel: String {
         switch provider.chatInteractionMode {
         case .plan:
-            return "Lecture seule"
+            return "Read-only"
         case .agent, .acceptEdits:
-            return "Écriture locale"
+            return "Local write"
         }
     }
 
     private func effortDisplayLabel(_ effort: String) -> String {
         switch effort.lowercased() {
         case "low":
-            return "Bas"
+            return "Low"
         case "medium":
-            return "Moyen"
+            return "Medium"
         case "high":
-            return "Eleve"
+            return "High"
         case "xhigh":
-            return "Tres approfondi"
+            return "Very deep"
         default:
             return effort
         }
@@ -2502,8 +2499,10 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     private func statusBadgeChip(_ badge: ChatStatusBadge, isActionable: Bool = false) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: statusBadgeIconName(badge.kind))
-                .font(.system(size: 9, weight: .semibold))
+            if !usesCodexVisualStyle {
+                Image(systemName: statusBadgeIconName(badge.kind))
+                    .font(.system(size: 9, weight: .semibold))
+            }
             Text(badge.text)
                 .lineLimit(1)
             if isActionable {
@@ -2665,6 +2664,161 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         case "Agent": return .mint.opacity(0.9)
         default: return .secondary
         }
+    }
+}
+
+@MainActor
+private struct CodexPromptEditor: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+
+    let onSubmit: () -> Void
+    let onTextChange: () -> Void
+
+    static let placeholderTopInset: CGFloat = 2
+    static let placeholderLeadingInset: CGFloat = 0
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.contentView.drawsBackground = false
+
+        let textStorage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        let textContainer = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        textStorage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(textContainer)
+
+        let textView = CodexPromptTextView(frame: .zero, textContainer: textContainer)
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.usesFontPanel = false
+        textView.usesRuler = false
+        textView.drawsBackground = false
+        textView.focusRingType = .none
+        textView.font = .systemFont(ofSize: 14)
+        textView.textColor = .labelColor
+        textView.insertionPointColor = .systemBlue
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.textContainerInset = NSSize(width: Self.placeholderLeadingInset, height: Self.placeholderTopInset)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width, .height]
+        textView.maxSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textContainer.widthTracksTextView = true
+        textContainer.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        textContainer.lineBreakMode = .byWordWrapping
+        textView.delegate = context.coordinator
+        textView.string = text
+        textView.onSubmit = onSubmit
+        textView.onFocusChange = { focused in
+            if context.coordinator.isFocused != focused {
+                context.coordinator.isFocused = focused
+                DispatchQueue.main.async {
+                    self.isFocused = focused
+                }
+            }
+        }
+
+        context.coordinator.textView = textView
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? CodexPromptTextView else { return }
+
+        context.coordinator.parent = self
+        context.coordinator.textView = textView
+        textView.onSubmit = onSubmit
+        let contentSize = scrollView.contentSize
+        textView.frame = NSRect(origin: .zero, size: contentSize)
+        textView.maxSize = NSSize(width: contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.containerSize = NSSize(width: contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+
+        if textView.string != text {
+            let selectedRange = textView.selectedRange()
+            textView.string = text
+            let maxLength = (text as NSString).length
+            let clampedLocation = min(selectedRange.location, maxLength)
+            let clampedLength = min(selectedRange.length, max(0, maxLength - clampedLocation))
+            textView.setSelectedRange(NSRange(location: clampedLocation, length: clampedLength))
+        }
+
+        if isFocused, textView.window?.firstResponder !== textView {
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(textView)
+            }
+        } else if !isFocused, textView.window?.firstResponder === textView {
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: CodexPromptEditor
+        weak var textView: CodexPromptTextView?
+        var isFocused = false
+        private var isUpdating = false
+
+        init(parent: CodexPromptEditor) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard !isUpdating, let textView else { return }
+            parent.text = textView.string
+            parent.onTextChange()
+        }
+    }
+}
+
+private final class CodexPromptTextView: NSTextView {
+    var onSubmit: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let didBecomeFirstResponder = super.becomeFirstResponder()
+        if didBecomeFirstResponder {
+            onFocusChange?(true)
+        }
+        return didBecomeFirstResponder
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResignFirstResponder = super.resignFirstResponder()
+        if didResignFirstResponder {
+            onFocusChange?(false)
+        }
+        return didResignFirstResponder
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if (event.keyCode == 36 || event.keyCode == 76),
+           !event.modifierFlags.contains(.shift) {
+            onSubmit?()
+            return
+        }
+        super.keyDown(with: event)
     }
 }
 

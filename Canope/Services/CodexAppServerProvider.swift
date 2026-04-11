@@ -2675,7 +2675,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     var chatSessionDisplayName: String {
         let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !trimmed.isEmpty { return trimmed }
-        return session.id == nil ? "Nouvelle conversation" : "Conversation"
+        return session.id == nil ? AppStrings.newConversation : AppStrings.conversation
     }
 
     var chatCanRenameCurrentSession: Bool { session.id != nil }
@@ -2715,7 +2715,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     func newChatSession() {
         Task {
             await disconnectAndReset()
-            appendSystem("Nouvelle conversation")
+            appendSystem(AppStrings.newConversation)
         }
     }
 
@@ -2764,7 +2764,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         guard !trimmed.isEmpty else { return }
         Task {
             await disconnectAndReset()
-            appendSystem("Nouvelle conversation")
+            appendSystem(AppStrings.newConversation)
             await sendUserMessage(
                 [.text(trimmed)],
                 display: trimmed,
@@ -2776,7 +2776,7 @@ extension CodexAppServerProvider: HeadlessChatProviding {
 
     func startChatReview(command: String?) {
         guard let tid = threadCoordinator.currentThreadId else {
-            appendSystem("Codex: lance d’abord une conversation avant /review.")
+            appendSystem(AppStrings.startConversationBeforeReview)
             return
         }
 

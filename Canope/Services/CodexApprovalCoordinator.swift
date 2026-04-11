@@ -282,7 +282,7 @@ final class CodexApprovalCoordinator {
                     return last.isEmpty ? path : last
                 })
                 if paths.count > 1 {
-                    details.append("\(paths.count) fichiers")
+                    details.append("\(paths.count) files")
                 }
                 return details
             }
@@ -294,7 +294,7 @@ final class CodexApprovalCoordinator {
                     return last.isEmpty ? path : last
                 })
                 if changes.count > 1 {
-                    details.append("\(changes.count) modifications")
+                    details.append("\(changes.count) changes")
                 }
                 return details
             }
@@ -417,7 +417,7 @@ final class CodexApprovalCoordinator {
                 options: options,
                 isRequired: true,
                 allowsCustomValue: allowsOther,
-                placeholder: isSecret ? "Saisir la valeur" : nil,
+                placeholder: isSecret ? "Enter value" : nil,
                 defaultValue: defaultValue
             )
         }
