@@ -1,3 +1,6 @@
+import AppKit
+import CoreText
+import PDFKit
 import XCTest
 @testable import Canope
 
@@ -144,6 +147,79 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertEqual(
             displayText,
             "fit toi a ce document\n📎 1 file attached"
+        )
+    }
+
+    func testChatAttachmentSupportReadsUnicodeFallbackForAutocompleteAndPickerParity() throws {
+        let url = makeTemporaryTextFile(
+            named: "selection-unicode.txt",
+            content: "Bonjour de l’encoding Unicode",
+            encoding: .unicode
+        )
+
+        XCTAssertEqual(
+            ChatAttachmentSupport.readTextAttachment(at: url),
+            "Bonjour de l’encoding Unicode"
+        )
+        XCTAssertEqual(
+            ChatAttachmentSupport.readTextFileWithFallbacks(at: url),
+            "Bonjour de l’encoding Unicode"
+        )
+    }
+
+    func testChatAttachmentSupportReadsPDFWithSharedPageMarkersForAttachments() throws {
+        let url = try makeTemporaryTextPDF(
+            named: "attached-pages.pdf",
+            pages: ["Page un", "Page deux"]
+        )
+
+        XCTAssertEqual(
+            ChatAttachmentSupport.readTextAttachment(at: url),
+            """
+            [Attached PDF: attached-pages.pdf]
+
+            --- Page 1 ---
+            Page un
+
+            --- Page 2 ---
+            Page deux
+            """
+        )
+    }
+
+    func testChatAttachmentSupportMakeAttachmentKeepsImageAttachmentsStructured() throws {
+        let url = try makeTemporaryFile(
+            named: "capture.png",
+            data: Data([0x89, 0x50, 0x4E, 0x47])
+        )
+
+        let attachment = ChatAttachmentSupport.makeAttachment(from: url)
+
+        XCTAssertEqual(attachment?.name, "capture.png")
+        XCTAssertEqual(attachment?.path, url.path)
+        XCTAssertEqual(attachment?.content, "[Attached image at: \(url.path)]")
+        XCTAssertEqual(attachment?.kind, .image)
+    }
+
+    func testChatAttachmentSupportMakeAttachmentKeepsTextFallbacksStructured() throws {
+        let url = makeTemporaryTextFile(
+            named: "notes-unicode.txt",
+            content: "Bonjour Unicode",
+            encoding: .unicode
+        )
+
+        let attachment = ChatAttachmentSupport.makeAttachment(from: url)
+
+        XCTAssertEqual(attachment?.name, "notes-unicode.txt")
+        XCTAssertEqual(attachment?.path, url.path)
+        XCTAssertEqual(attachment?.content, "Bonjour Unicode")
+        XCTAssertEqual(attachment?.kind, .textFile)
+    }
+
+    func testChatAttachmentSupportSkippedAttachmentMessageRemainsStable() {
+        XCTAssertEqual(
+            ChatAttachmentSupport.skippedAttachmentMessage(for: ["notes.bin", "archive.zip"]),
+            "Skipped attachments: notes.bin, archive.zip. Only images and text files are supported for now."
         )
     }
 
@@ -1526,5 +1602,181 @@ final class ChatSolidificationTests: XCTestCase {
             provider.messages.last?.content,
             "Je vais appliquer seulement le changement approuve.\n\nJe verifie maintenant la selection active."
         )
+    }
+
+    @MainActor
+    func testClaudeQueuesMessagesWhileProcessing() {
+        let provider = ClaudeHeadlessProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetProcessing(true)
+
+        provider.sendMessage("Deuxieme message")
+
+        XCTAssertEqual(provider.messages.count, 1)
+        XCTAssertEqual(provider.messages.first?.role, .user)
+        XCTAssertEqual(provider.messages.first?.content, "Deuxieme message")
+        XCTAssertEqual(provider.messages.first?.queuePosition, 1)
+        XCTAssertEqual(provider.testQueuedMessageCount, 1)
+    }
+
+    @MainActor
+    func testClaudeToolUseAndToolResultStayAssociatedOnSameCard() {
+        let provider = ClaudeHeadlessProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetCurrentRunState(interactionMode: .agent)
+
+        provider.testHandleAssistantEvent([
+            "message": [
+                "content": [
+                    [
+                        "type": "tool_use",
+                        "name": "Read",
+                        "input": ["file_path": "/tmp/note.txt"],
+                    ],
+                    [
+                        "type": "tool_result",
+                        "content": "Contenu lu",
+                    ],
+                ]
+            ]
+        ])
+
+        XCTAssertEqual(provider.messages.count, 1)
+        XCTAssertEqual(provider.messages.first?.role, .toolUse)
+        XCTAssertEqual(provider.messages.first?.toolName, "Read")
+        XCTAssertEqual(provider.messages.first?.content, "note.txt")
+        XCTAssertEqual(provider.messages.first?.toolOutput, "Contenu lu")
+    }
+
+    @MainActor
+    func testClaudeResultEventStopsProcessingAndAccumulatesSessionMetrics() {
+        let provider = ClaudeHeadlessProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetProcessing(true)
+
+        provider.testHandleResultEvent([
+            "duration_ms": 42,
+            "total_cost_usd": 0.125,
+        ])
+
+        XCTAssertFalse(provider.isProcessing)
+        XCTAssertEqual(provider.session.turns, 1)
+        XCTAssertEqual(provider.session.durationMs, 42)
+        XCTAssertEqual(provider.session.costUSD, 0.125, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testCodexRetryingErrorKeepsProcessingAndTurnStateUntilRetryCompletes() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetProcessing(true)
+        provider.testSetCurrentTurnId("turn-123")
+
+        provider.testHandleNotification(method: "error", params: [
+            "message": "Boom",
+            "willRetry": true,
+        ])
+
+        XCTAssertTrue(provider.isProcessing)
+        XCTAssertEqual(provider.testCurrentTurnId, "turn-123")
+        XCTAssertEqual(provider.messages.last?.role, .system)
+        XCTAssertEqual(provider.messages.last?.content, "Boom")
+    }
+
+    @MainActor
+    func testCodexNonRetryingErrorStopsProcessingAndClearsTurnState() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetProcessing(true)
+        provider.testSetCurrentTurnId("turn-123")
+
+        provider.testHandleNotification(method: "error", params: [
+            "message": "Boom",
+            "willRetry": false,
+        ])
+
+        XCTAssertFalse(provider.isProcessing)
+        XCTAssertNil(provider.testCurrentTurnId)
+        XCTAssertEqual(provider.messages.last?.role, .system)
+        XCTAssertEqual(provider.messages.last?.content, "Boom")
+    }
+
+    @MainActor
+    func testCodexTurnCompletedClearsStreamingAssistantAndTurnState() {
+        let provider = CodexAppServerProvider(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        provider.testSetProcessing(true)
+        provider.testSetCurrentTurnId("turn-123")
+        provider.testBeginAssistantMessage()
+        provider.testReceiveAssistantDelta("Plan en cours")
+        provider.testFlushPendingAssistantDelta()
+
+        provider.testHandleNotification(method: "turn/completed", params: [:])
+
+        XCTAssertFalse(provider.isProcessing)
+        XCTAssertNil(provider.testCurrentTurnId)
+        XCTAssertEqual(provider.messages.last?.role, .assistant)
+        XCTAssertFalse(provider.messages.last?.isStreaming ?? true)
+    }
+
+    private func makeTemporaryTextFile(
+        named name: String,
+        content: String,
+        encoding: String.Encoding
+    ) -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent(name)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? content.write(to: url, atomically: true, encoding: encoding)
+        return url
+    }
+
+    private func makeTemporaryFile(named name: String, data: Data) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent(name)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: url)
+        return url
+    }
+
+    private func makeTemporaryTextPDF(named name: String, pages: [String]) throws -> URL {
+        let data = NSMutableData()
+        guard let consumer = CGDataConsumer(data: data as CFMutableData) else {
+            XCTFail("Expected a PDF data consumer")
+            throw NSError(domain: "ChatSolidificationTests", code: 1)
+        }
+
+        var mediaBox = CGRect(x: 0, y: 0, width: 400, height: 400)
+        guard let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+            XCTFail("Expected a PDF graphics context")
+            throw NSError(domain: "ChatSolidificationTests", code: 2)
+        }
+
+        for pageText in pages {
+            context.beginPDFPage(nil)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 18),
+                .foregroundColor: NSColor.black,
+            ]
+            let attributedString = NSAttributedString(string: pageText, attributes: attributes)
+            let line = CTLineCreateWithAttributedString(attributedString)
+            context.textPosition = CGPoint(x: 36, y: 220)
+            CTLineDraw(line, context)
+            context.endPDFPage()
+        }
+
+        context.closePDF()
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent(name)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: url)
+        return url
     }
 }

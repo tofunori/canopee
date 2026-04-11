@@ -587,25 +587,17 @@ struct UnifiedEditorView: View {
 
     @ViewBuilder
     var workAreaPane: some View {
-        Group {
-            if isActive && showTerminal && showEditorPane {
-                horizontalThreePaneLayout
-            } else if isActive && showTerminal && !showEditorPane && isContentPaneVisible {
-                HSplitView {
-                    embeddedTerminalPane
-                    contentPane
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            } else if isActive && showTerminal {
-                embeddedTerminalPane
-            } else {
-                editorAndContentPane
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showPDFPreview)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showEditorPane)
+        UnifiedEditorWorkAreaPane(
+            isActive: isActive,
+            showTerminal: showTerminal,
+            showEditorPane: showEditorPane,
+            isContentPaneVisible: isContentPaneVisible,
+            contentAnimationTrigger: showPDFPreview,
+            horizontalThreePaneLayout: { horizontalThreePaneLayout },
+            embeddedTerminalPane: { embeddedTerminalPane },
+            contentPane: { contentPane },
+            editorAndContentPane: { editorAndContentPane }
+        )
     }
 
     // MARK: - Three-Pane Layout
@@ -930,15 +922,12 @@ struct UnifiedEditorView: View {
             tabs: contentPaneTabs,
             selectedTab: selectedContentTab,
             tabBar: {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        ForEach(contentPaneTabs, id: \.self) { tab in
-                            contentTabButton(tab)
-                        }
+                UnifiedEditorContentTabsView(
+                    tabs: contentPaneTabs,
+                    tabButton: { tab in
+                        contentTabButton(tab)
                     }
-                }
-                .frame(height: AppChromeMetrics.tabBarHeight)
-                .background(AppChromePalette.surfaceSubbar)
+                )
             },
             primaryContent: {
                 primaryContentView
@@ -1171,37 +1160,25 @@ struct UnifiedEditorView: View {
     // MARK: - Toolbar
 
     var editorToolbar: some View {
-        HStack(spacing: 0) {
-            // Left side: collapsible clusters, scrollable when all expanded
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    fileToolbarClusterView
-                    documentActionsCluster
-                    markdownFormattingToolbarClusterView
-                    if documentMode.isRunnableCode {
-                        codeActiveReferenceToolbarView
-                    } else {
-                        activeReferenceToolbarView
-                    }
-                    activePDFSearchToolbarView
+        UnifiedEditorToolbarView(
+            leadingClusters: {
+                fileToolbarClusterView
+                documentActionsCluster
+                markdownFormattingToolbarClusterView
+                if documentMode.isRunnableCode {
+                    codeActiveReferenceToolbarView
+                } else {
+                    activeReferenceToolbarView
                 }
-            }
-
-            Spacer(minLength: 4)
-
-            // Right side: always visible
-            HStack(spacing: 8) {
+                activePDFSearchToolbarView
+            },
+            trailingClusters: {
                 panneauxCluster
                 dispositionCluster
                 editorAppearanceToolbarClusterView
                 terminalToolbarClusterView
             }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .frame(height: AppChromeMetrics.toolbarHeight)
-        .background(AppChromePalette.surfaceBar)
-        .zIndex(30)
+        )
         .background {
             Button("") { openActivePDFSearch() }
                 .keyboardShortcut("f", modifiers: .command)

@@ -67,92 +67,95 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var mainContentPane: some View {
-        ZStack(alignment: .topLeading) {
-            LibraryView(
-                paperToOpen: $paperToOpen,
-                isImportingPDF: $isImportingPDF
-            )
-                .opacity(tabController.selectedTab == .library ? 1 : 0)
-                .allowsHitTesting(tabController.selectedTab == .library)
-                .zIndex(tabController.selectedTab == .library ? 1 : 0)
-                // Keep the library/editor switch immediate: crossfading a live PDFKit
-                // surface behind the library produces visible flashes.
-                .animation(nil, value: tabController.selectedTab)
-
-            ForEach(openPaperIDs, id: \.self) { paperId in
-                if let paper = allPapers.first(where: { $0.id == paperId }) {
-                    Group {
-                        let isActive = tabController.selectedTab == .paper(paperId)
-                        if let splitID = tabController.splitPaperID,
-                           splitID != paperId,
-                           isActive {
-                            if let splitPaper = allPapers.first(where: { $0.id == splitID }) {
-                                HSplitView {
-                                    PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
-                                    PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
+        MainWindowMountedContentHost(
+            librarySurface: {
+                LibraryView(
+                    paperToOpen: $paperToOpen,
+                    isImportingPDF: $isImportingPDF
+                )
+                    .opacity(tabController.selectedTab == .library ? 1 : 0)
+                    .allowsHitTesting(tabController.selectedTab == .library)
+                    .zIndex(tabController.selectedTab == .library ? 1 : 0)
+                    // Keep the library/editor switch immediate: crossfading a live PDFKit
+                    // surface behind the library produces visible flashes.
+                    .animation(nil, value: tabController.selectedTab)
+            },
+            paperSurfaces: {
+                ForEach(openPaperIDs, id: \.self) { paperId in
+                    if let paper = allPapers.first(where: { $0.id == paperId }) {
+                        Group {
+                            let isActive = tabController.selectedTab == .paper(paperId)
+                            if let splitID = tabController.splitPaperID,
+                               splitID != paperId,
+                               isActive {
+                                if let splitPaper = allPapers.first(where: { $0.id == splitID }) {
+                                    HSplitView {
+                                        PDFReaderView(paperID: paper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
+                                        PDFReaderView(paperID: splitPaper.persistentModelID, isSplitMode: true, isActive: isActive, showTerminal: $showTerminal)
+                                    }
                                 }
+                            } else {
+                                PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal)
                             }
-                        } else {
-                            PDFReaderView(paperID: paper.persistentModelID, isActive: isActive, showTerminal: $showTerminal)
                         }
+                        .opacity(tabController.selectedTab == .paper(paperId) ? 1 : 0)
+                        .allowsHitTesting(tabController.selectedTab == .paper(paperId))
+                        .zIndex(tabController.selectedTab == .paper(paperId) ? 1 : 0)
                     }
-                    .opacity(tabController.selectedTab == .paper(paperId) ? 1 : 0)
-                    .allowsHitTesting(tabController.selectedTab == .paper(paperId))
-                    .zIndex(tabController.selectedTab == .paper(paperId) ? 1 : 0)
+                }
+            },
+            editorSurface: {
+                LaTeXEditorContainer(
+                    openPaths: openEditorPaths.filter { !$0.isEmpty },
+                    selectedTab: $tabController.selectedTab,
+                    showTerminal: $showTerminal,
+                    openPaperIDs: openPaperIDs,
+                    workspaceState: latexWorkspaceState,
+                    terminalWorkspaceState: terminalWorkspaceState,
+                    isEditorSectionActive: isEditorSelected,
+                    onOpenTeX: { url in openTeXFile(url) },
+                    onOpenPDF: { url in openPDFFile(url) },
+                    onCloseEditor: { path in
+                        tabController.closeTab(.editor(path))
+                    }
+                )
+                .opacity(isEditorSelected ? 1 : 0)
+                .allowsHitTesting(isEditorSelected)
+                .zIndex(isEditorSelected ? 1 : 0)
+                // Preserve the mounted editor state, but avoid animating the hidden PDF
+                // preview when the user jumps to the library and back.
+                .animation(nil, value: tabController.selectedTab)
+            },
+            standalonePDFSurfaces: {
+                ForEach(openPDFPaths, id: \.self) { path in
+                    StandalonePDFView(url: URL(fileURLWithPath: path))
+                        .opacity(tabController.selectedTab == .pdfFile(path) ? 1 : 0)
+                        .allowsHitTesting(tabController.selectedTab == .pdfFile(path))
+                        .zIndex(tabController.selectedTab == .pdfFile(path) ? 1 : 0)
                 }
             }
-
-            LaTeXEditorContainer(
-                openPaths: openEditorPaths.filter { !$0.isEmpty },
-                selectedTab: $tabController.selectedTab,
-                showTerminal: $showTerminal,
-                openPaperIDs: openPaperIDs,
-                workspaceState: latexWorkspaceState,
-                terminalWorkspaceState: terminalWorkspaceState,
-                isEditorSectionActive: isEditorSelected,
-                onOpenTeX: { url in openTeXFile(url) },
-                onOpenPDF: { url in openPDFFile(url) },
-                onCloseEditor: { path in
-                    tabController.closeTab(.editor(path))
-                }
-            )
-            .opacity(isEditorSelected ? 1 : 0)
-            .allowsHitTesting(isEditorSelected)
-            .zIndex(isEditorSelected ? 1 : 0)
-            // Preserve the mounted editor state, but avoid animating the hidden PDF
-            // preview when the user jumps to the library and back.
-            .animation(nil, value: tabController.selectedTab)
-
-            ForEach(openPDFPaths, id: \.self) { path in
-                StandalonePDFView(url: URL(fileURLWithPath: path))
-                    .opacity(tabController.selectedTab == .pdfFile(path) ? 1 : 0)
-                    .allowsHitTesting(tabController.selectedTab == .pdfFile(path))
-                    .zIndex(tabController.selectedTab == .pdfFile(path) ? 1 : 0)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        )
         // Keep large content-surface switches deterministic. Animating between
         // the library and a live PDF/editor stack still produces subtle flicker
         // and feels less fluid than an immediate swap.
     }
 
     private var terminalPane: some View {
-        TerminalPanel(
-            workspaceState: terminalWorkspaceState,
-            document: nil,
+        MainWindowExternalTerminalHost(
             isVisible: showTerminal && tabController.selectedTab != .library && !isEditorSelected,
-            topInset: 0,
-            showsInlineControls: true,
-            startupWorkingDirectory: terminalStartupWorkingDirectoryForMainPane
+            animation: AppChromeMotion.panel(reduceMotion: reduceMotion),
+            animationTrigger: showTerminal,
+            terminalContent: {
+                TerminalPanel(
+                    workspaceState: terminalWorkspaceState,
+                    document: nil,
+                    isVisible: showTerminal && tabController.selectedTab != .library && !isEditorSelected,
+                    topInset: 0,
+                    showsInlineControls: true,
+                    startupWorkingDirectory: terminalStartupWorkingDirectoryForMainPane
+                )
+            }
         )
-        .frame(
-            minWidth: showTerminal && tabController.selectedTab != .library && !isEditorSelected ? 180 : 0,
-            idealWidth: showTerminal && tabController.selectedTab != .library && !isEditorSelected ? 680 : 0,
-            maxWidth: showTerminal && tabController.selectedTab != .library && !isEditorSelected ? .infinity : 0
-        )
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .opacity(showTerminal && tabController.selectedTab != .library && !isEditorSelected ? 1 : 0)
-        .animation(AppChromeMotion.panel(reduceMotion: reduceMotion), value: showTerminal)
     }
 
     private func tabTitle(_ tab: TabItem) -> String {
@@ -333,27 +336,16 @@ struct MainWindow: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                // Document tabs row (papers/PDFs from library)
-                let docTabs = tabController.openTabs.filter {
+            MainWindowDocumentTabsRow(
+                tabs: tabController.openTabs.filter {
                     if case .paper = $0 { return true }
                     if case .pdfFile = $0 { return true }
                     return false
+                },
+                tabContent: { tab in
+                    documentTabButton(for: tab)
                 }
-                if !docTabs.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 0) {
-                            ForEach(docTabs, id: \.self) { tab in
-                                documentTabButton(for: tab)
-                            }
-                        }
-                    }
-                    .frame(height: AppChromeMetrics.tabBarHeight)
-                    .background(AppChromePalette.surfaceSubbar)
-                }
-
-                AppChromeDivider(role: .shell)
-            }
+            )
 
             // Content + resizable shared terminal
             HSplitView {

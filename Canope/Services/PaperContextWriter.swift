@@ -155,15 +155,12 @@ final class PaperContextWriter: ObservableObject {
     }
 
     nonisolated static func extractDocumentContent(_ document: PDFDocument) -> PaperContextDocumentContent {
-        var extractedText = ""
-        for pageIndex in 0..<document.pageCount {
-            if let page = document.page(at: pageIndex), let text = page.string {
-                extractedText += "--- Page \(pageIndex + 1) ---\n\(text)\n\n"
-            }
-        }
         return PaperContextDocumentContent(
             pageCount: document.pageCount,
-            extractedText: extractedText
+            extractedText: PDFPageTextFormatter.formattedText(
+                from: document,
+                options: .paperContext
+            )
         )
     }
 }
