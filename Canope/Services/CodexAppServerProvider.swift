@@ -595,6 +595,12 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     }
 
     private func handleNotification(method: String, params: [String: Any]) {
+        guard shouldHandleThreadScopedPayload(params) else {
+            let foreignThreadID = params["threadId"] as? String ?? "<none>"
+            let activeThreadID = threadCoordinator.currentThreadId ?? "<none>"
+            CodexTraceLog.write("ignored notification \(method) foreignThread=\(foreignThreadID) activeThread=\(activeThreadID)")
+            return
+        }
         let paramsSummary = Self.jsonString(params) ?? "{}"
         CodexTraceLog.write("notification \(method) params=\(paramsSummary)")
         switch CodexNotificationRouter.route(method: method, params: params) {
@@ -681,6 +687,12 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     }
 
     private func handleServerRequest(id: Int, method: String, params: [String: Any]) {
+        guard shouldHandleThreadScopedPayload(params) else {
+            let foreignThreadID = params["threadId"] as? String ?? "<none>"
+            let activeThreadID = threadCoordinator.currentThreadId ?? "<none>"
+            CodexTraceLog.write("ignored serverRequest id=\(id) method=\(method) foreignThread=\(foreignThreadID) activeThread=\(activeThreadID)")
+            return
+        }
         let paramsSummary = Self.jsonString(params) ?? "{}"
         CodexTraceLog.write("serverRequest id=\(id) method=\(method) params=\(paramsSummary)")
         let request = approvalCoordinator.registerRequest(id: id, method: method, params: params)
@@ -2125,6 +2137,18 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         pendingApprovalRequest = nil
         approvalCoordinator.reset()
         currentRun.reset()
+    }
+
+    private func shouldHandleThreadScopedPayload(_ params: [String: Any]) -> Bool {
+        guard let payloadThreadID = params["threadId"] as? String,
+              !payloadThreadID.isEmpty,
+              let currentThreadID = threadCoordinator.currentThreadId,
+              !currentThreadID.isEmpty
+        else {
+            return true
+        }
+
+        return payloadThreadID == currentThreadID
     }
 
     private func resumeThread(id: String) async {

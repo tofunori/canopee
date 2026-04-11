@@ -78,7 +78,8 @@ struct DeferredMarkdownView: View {
             MarkdownBlockView(text: text)
         } else {
             Text(InlineMarkdownCache.shared.get(text))
-                .font(.system(size: 13))
+                .font(.system(size: 14))
+                .lineSpacing(6)
                 .textSelection(.enabled)
                 .task(id: text) {
                     guard !effectiveSkipFull else { return }

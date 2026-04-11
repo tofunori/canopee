@@ -454,6 +454,7 @@ struct TerminalPanel: View {
             case .claude:
                 if let provider = workspaceState.claudeChatProviders[tab.id] {
                     AIChatView(provider: provider, fileRootURL: startupWorkingDirectory)
+                        .id(tab.id)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 } else {
                     chatProviderPlaceholder
@@ -461,6 +462,7 @@ struct TerminalPanel: View {
             case .codex:
                 if let provider = workspaceState.codexChatProviders[tab.id] {
                     AIChatView(provider: provider, fileRootURL: startupWorkingDirectory)
+                        .id(tab.id)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 } else {
                     chatProviderPlaceholder

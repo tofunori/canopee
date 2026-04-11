@@ -503,8 +503,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                 VStack(alignment: .leading, spacing: usesCodexVisualStyle ? 4 : 0) {
                     if message.isStreaming {
                         Text(message.content)
-                            .font(.system(size: 13))
+                            .font(.system(size: usesCodexVisualStyle ? 14 : 13))
                             .foregroundStyle(.primary)
+                            .lineSpacing(usesCodexVisualStyle ? 6 : 2)
                             .textSelection(.enabled)
                         streamingCursor
                     } else if shouldUseRichMarkdown {
@@ -526,20 +527,36 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                             )
                         } else {
                             Text(message.content)
-                                .font(.system(size: 13))
+                                .font(.system(size: usesCodexVisualStyle ? 14 : 13))
                                 .foregroundStyle(.primary.opacity(usesCodexVisualStyle ? 0.9 : 0.7))
+                                .lineSpacing(usesCodexVisualStyle ? 6 : 2)
                                 .textSelection(.enabled)
                         }
                     } else if let preRenderedMarkdown = message.preRenderedMarkdown,
                               !needsBlockMarkdown {
                         Text(preRenderedMarkdown)
-                            .font(.system(size: 13))
+                            .font(.system(size: usesCodexVisualStyle ? 14 : 13))
+                            .lineSpacing(usesCodexVisualStyle ? 6 : 2)
                             .textSelection(.enabled)
                     } else {
                         assistantMarkdownStable(message, needsBlockMarkdown: needsBlockMarkdown)
                     }
                 }
-                .frame(maxWidth: usesCodexVisualStyle ? 680 : .infinity, alignment: .leading)
+                .padding(.horizontal, usesCodexVisualStyle ? 16 : 0)
+                .padding(.vertical, usesCodexVisualStyle ? 14 : 0)
+                .frame(maxWidth: usesCodexVisualStyle ? 720 : .infinity, alignment: .leading)
+                .background {
+                    if usesCodexVisualStyle {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(AppChromePalette.codexEventFill.opacity(0.96))
+                    }
+                }
+                .overlay {
+                    if usesCodexVisualStyle {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(AppChromePalette.codexPromptStroke.opacity(0.65), lineWidth: 1)
+                    }
+                }
 
                 Spacer(minLength: 20)
             }
@@ -617,7 +634,8 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             MarkdownBlockView(text: message.content)
         } else {
             Text(InlineMarkdownCache.shared.get(message.content))
-                .font(.system(size: 13))
+                .font(.system(size: usesCodexVisualStyle ? 14 : 13))
+                .lineSpacing(usesCodexVisualStyle ? 6 : 2)
                 .textSelection(.enabled)
         }
     }

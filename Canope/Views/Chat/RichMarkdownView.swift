@@ -41,7 +41,7 @@ struct RichMarkdownView: View {
                 blockView(block, isFirst: index == 0)
             }
         }
-        .frame(maxWidth: 760, alignment: .leading)
+        .frame(maxWidth: 680, alignment: .leading)
     }
 
     @ViewBuilder
@@ -93,9 +93,9 @@ struct RichMarkdownView: View {
 
     private func paragraphView(text: String) -> some View {
         Text(inlineMarkdown(text))
-            .font(.system(size: 14))
+            .font(.system(size: 14, weight: .regular))
             .foregroundStyle(.primary)
-            .lineSpacing(4)
+            .lineSpacing(6)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -112,7 +112,7 @@ struct RichMarkdownView: View {
                     Text(inlineMarkdown(item))
                         .font(.system(size: 14))
                         .foregroundStyle(.primary)
-                        .lineSpacing(4)
+                        .lineSpacing(6)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -131,7 +131,7 @@ struct RichMarkdownView: View {
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .italic()
-                .lineSpacing(4)
+                .lineSpacing(6)
                 .textSelection(.enabled)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -157,7 +157,7 @@ struct RichMarkdownView: View {
                 Text(inlineMarkdown(line))
                     .font(.system(size: 14))
                     .foregroundStyle(.primary)
-                    .lineSpacing(4)
+                    .lineSpacing(6)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
