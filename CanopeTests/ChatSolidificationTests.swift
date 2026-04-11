@@ -263,6 +263,43 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertFalse(out.contains("[Canope Custom Instructions — Session]"))
     }
 
+    func testCodexPromptPrefersCurrentPaperContextForPDFRequests() throws {
+        let selectionPath = CanopeContextFiles.ideSelectionStatePaths[0]
+        let paperPath = CanopeContextFiles.paperPaths[0]
+
+        let selectionPayload: [String: Any] = [
+            "text": "memory_summary rollout details",
+            "filePath": "/Users/tofunori/.codex/memories/MEMORY.md",
+        ]
+        let selectionData = try JSONSerialization.data(withJSONObject: selectionPayload)
+        try selectionData.write(to: URL(fileURLWithPath: selectionPath), options: .atomic)
+        try """
+        ========================================
+        CURRENTLY OPEN PAPER IN CANOPÉE
+        ========================================
+        Title: Test Paper
+        Authors: Jane Doe
+
+        Main result from the PDF.
+        """.write(toFile: paperPath, atomically: true, encoding: .utf8)
+
+        defer {
+            try? FileManager.default.removeItem(atPath: selectionPath)
+            try? FileManager.default.removeItem(atPath: paperPath)
+        }
+
+        let out = CodexAppServerProvider.buildPromptForInteractionMode(
+            "Résume le PDF ouvert",
+            mode: .agent
+        )
+
+        XCTAssertTrue(out.contains("[Canope Paper Context"))
+        XCTAssertTrue(out.contains("Title: Test Paper"))
+        XCTAssertTrue(out.contains("Main result from the PDF."))
+        XCTAssertFalse(out.contains("[Canope IDE Context"))
+        XCTAssertFalse(out.contains("memory_summary rollout details"))
+    }
+
     @MainActor
     func testChatHeaderStateHidesConnectedAndMCPOkayInCodexStyle() {
         let provider = MockHeadlessProvider()

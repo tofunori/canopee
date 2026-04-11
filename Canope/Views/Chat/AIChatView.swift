@@ -1,5 +1,6 @@
 import Combine
 import AppKit
+import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -2153,6 +2154,14 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     private func tryReadTextAttachment(at url: URL) -> String? {
+        if url.pathExtension.lowercased() == "pdf",
+           let content = readPDFAttachmentText(at: url) {
+            return """
+            [Attached PDF: \(url.lastPathComponent)]
+
+            \(content)
+            """
+        }
         if let content = try? String(contentsOf: url, encoding: .utf8) {
             return content
         }
@@ -2163,6 +2172,24 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             return content
         }
         return nil
+    }
+
+    private func readPDFAttachmentText(at url: URL) -> String? {
+        guard let document = PDFDocument(url: url) else { return nil }
+
+        var parts: [String] = []
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex),
+                  let text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty
+            else {
+                continue
+            }
+            parts.append("--- Page \(pageIndex + 1) ---\n\(text)")
+        }
+
+        let content = parts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return content.isEmpty ? nil : content
     }
 
     // MARK: - Helpers

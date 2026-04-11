@@ -266,6 +266,8 @@ final class ClaudeCLIWrapperService: @unchecked Sendable {
         When the user asks which PDF, paper, article, or document is currently open in Canope, first use the Canope MCP tool getCurrentPaper before answering.
         If getCurrentPaper reports success, do not say that no PDF is attached or open.
         Only fall back to reading /tmp/canopee_paper.txt directly if the getCurrentPaper tool is unavailable.
+        When the user asks to summarize, explain, or analyze an attached file or the current PDF/article in Canope, use the attached file content or getCurrentPaper as the primary source.
+        For attached-document or PDF-summary requests, do not inspect workspace memory files, repo context, or unrelated IDE selections unless the user explicitly asks for project context.
         """
     }
 

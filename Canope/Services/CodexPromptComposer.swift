@@ -1,6 +1,10 @@
 import Foundation
 
 enum CodexPromptComposer {
+    private static let paperRequestKeywords = [
+        "pdf", "paper", "article", "papier", "document",
+    ]
+
     static func buildPromptWithIDEContext(
         _ userMessage: String,
         includeIDEContext: Bool = true
@@ -59,7 +63,7 @@ enum CodexPromptComposer {
         globalCustomInstructions: String = "",
         sessionCustomInstructions: String = ""
     ) -> String {
-        let promptWithContext = buildPromptWithIDEContext(
+        let promptWithContext = buildPromptWithPreferredContext(
             userMessage,
             includeIDEContext: includeIDEContext
         )
@@ -170,5 +174,60 @@ enum CodexPromptComposer {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func buildPromptWithPreferredContext(
+        _ userMessage: String,
+        includeIDEContext: Bool
+    ) -> String {
+        if let paperPrompt = buildPromptWithPaperContextIfRelevant(userMessage) {
+            return paperPrompt
+        }
+
+        return buildPromptWithIDEContext(
+            userMessage,
+            includeIDEContext: includeIDEContext
+        )
+    }
+
+    private static func buildPromptWithPaperContextIfRelevant(_ userMessage: String) -> String? {
+        guard shouldPreferPaperContext(for: userMessage),
+              let paperContext = readPaperContext()
+        else {
+            return nil
+        }
+
+        return """
+        [Canope Paper Context — currently open PDF]
+        Use the currently open paper in Canope as the primary context for this request.
+        Ignore unrelated IDE selection context unless the user explicitly asks about editor content.
+        \(paperContext)
+        [/Canope Paper Context]
+
+        \(userMessage)
+        """
+    }
+
+    private static func shouldPreferPaperContext(for userMessage: String) -> Bool {
+        let normalized = userMessage
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+
+        return paperRequestKeywords.contains { normalized.contains($0) }
+    }
+
+    private static func readPaperContext() -> String? {
+        for path in CanopeContextFiles.paperPaths {
+            guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+                continue
+            }
+
+            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+
+        return nil
     }
 }
