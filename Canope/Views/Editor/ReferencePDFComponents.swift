@@ -145,6 +145,81 @@ struct ReferencePDFToolCluster: View {
     }
 }
 
+struct ReferencePDFColorCluster: View {
+    @ObservedObject var state: ReferencePDFUIState
+    let onChangeSelectedColor: (NSColor) -> Void
+
+    @State private var favoriteColors: [NSColor] = AnnotationColor.loadFavorites()
+    @State private var customColor: Color = .yellow
+    @State private var editingSlotIndex: Int? = nil
+    @State private var showColorPicker = false
+
+    var body: some View {
+        Group {
+            if isVisible {
+                AppChromeToolbarCluster(zone: .primary, title: AppStrings.colors, collapsible: true) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(favoriteColors.indices), id: \.self) { index in
+                            ColorSlotButton(
+                                color: favoriteColors[index],
+                                isSelected: colorsMatch(state.currentColor, favoriteColors[index]),
+                                onSelect: {
+                                    applyColor(favoriteColors[index])
+                                },
+                                onCustomize: {
+                                    editingSlotIndex = index
+                                    customColor = Color(nsColor: favoriteColors[index])
+                                    showColorPicker = true
+                                }
+                            )
+                        }
+
+                        ToolbarIconButton(
+                            systemName: "plus.circle",
+                            helpText: AppStrings.customColor,
+                            action: {
+                                editingSlotIndex = nil
+                                customColor = Color(nsColor: state.currentColor)
+                                showColorPicker = true
+                            }
+                        )
+                    }
+                }
+                .popover(isPresented: $showColorPicker) {
+                    ColorPickerPopover(
+                        selectedColor: $customColor,
+                        slotIndex: editingSlotIndex,
+                        onApply: { color in
+                            let nsColor = AnnotationColor.normalized(NSColor(color))
+                            if let index = editingSlotIndex, favoriteColors.indices.contains(index) {
+                                favoriteColors[index] = nsColor
+                                AnnotationColor.saveFavorites(favoriteColors)
+                            }
+                            applyColor(nsColor)
+                            showColorPicker = false
+                        },
+                        onCancel: {
+                            showColorPicker = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private var isVisible: Bool {
+        state.currentTool != .pointer || state.selectedAnnotation != nil
+    }
+
+    private func applyColor(_ color: NSColor) {
+        let normalizedColor = AnnotationColor.normalized(color)
+        state.currentColor = normalizedColor
+        if state.selectedAnnotation != nil {
+            onChangeSelectedColor(normalizedColor)
+        }
+    }
+}
+
 struct ReferencePDFActionsCluster: View {
     @State private var showDeleteAllConfirm = false
     let title: String
@@ -153,7 +228,6 @@ struct ReferencePDFActionsCluster: View {
     let isAnnotationSidebarVisible: Bool
     let activeMarkdownFileName: String?
     let companionExportFileName: String
-    let onChangeSelectedColor: (NSColor) -> Void
     let onFitToWidth: () -> Void
     let onRefresh: () -> Void
     let onSave: () -> Void
@@ -167,32 +241,6 @@ struct ReferencePDFActionsCluster: View {
     var body: some View {
         AppChromeToolbarCluster(zone: .primary, title: title, collapsible: true) {
             HStack(spacing: 6) {
-                Menu {
-                    ForEach(AnnotationColor.all, id: \.name) { item in
-                        Button {
-                            onChangeSelectedColor(item.color)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(nsImage: annotationColorSwatchImage(item.color))
-                                    .renderingMode(.original)
-
-                                Text(item.name)
-
-                                if colorsMatch(item.color, state.currentColor) {
-                                    Spacer(minLength: 8)
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    ReferencePDFToolbarIconLabel(systemName: "eyedropper.halffull", isActive: false)
-                }
-                .buttonStyle(.plain)
-                .help("Couleur d'annotation")
-
-                AppChromeDivider(role: .inset, axis: .vertical, inset: 4)
-
                 ReferencePDFToolbarIconButton(
                     systemName: "arrow.left.and.right.square",
                     isActive: false,
@@ -282,13 +330,4 @@ func colorsMatch(_ a: NSColor, _ b: NSColor) -> Bool {
            abs(ac.greenComponent - bc.greenComponent) < 0.01 &&
            abs(ac.blueComponent - bc.blueComponent) < 0.01 &&
            abs(ac.alphaComponent - bc.alphaComponent) < 0.01
-}
-
-func annotationColorSwatchImage(_ color: NSColor) -> NSImage {
-    let image = NSImage(size: NSSize(width: 12, height: 12))
-    image.lockFocus()
-    AnnotationColor.normalized(color).setFill()
-    NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: 12, height: 12)).fill()
-    image.unlockFocus()
-    return image
 }

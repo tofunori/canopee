@@ -269,6 +269,10 @@ struct ActiveReferenceToolbarSections: View {
     var body: some View {
         Group {
             ReferencePDFToolCluster(title: AppStrings.tools, state: referenceState)
+            ReferencePDFColorCluster(
+                state: referenceState,
+                onChangeSelectedColor: onChangeSelectedColor
+            )
 
             ReferencePDFActionsCluster(
                 title: AppStrings.actions,
@@ -277,7 +281,6 @@ struct ActiveReferenceToolbarSections: View {
                 isAnnotationSidebarVisible: isAnnotationSidebarVisible,
                 activeMarkdownFileName: activeMarkdownFileName,
                 companionExportFileName: companionExportFileName,
-                onChangeSelectedColor: onChangeSelectedColor,
                 onFitToWidth: onFitToWidth,
                 onRefresh: onRefresh,
                 onSave: onSave,
