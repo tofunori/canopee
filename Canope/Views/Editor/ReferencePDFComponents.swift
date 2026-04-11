@@ -214,7 +214,7 @@ struct ReferencePDFColorCluster: View {
     private func applyColor(_ color: NSColor) {
         let normalizedColor = AnnotationColor.normalized(color)
         state.currentColor = normalizedColor
-        if state.selectedAnnotation != nil {
+        if state.currentTool == .pointer, state.selectedAnnotation != nil {
             onChangeSelectedColor(normalizedColor)
         }
     }

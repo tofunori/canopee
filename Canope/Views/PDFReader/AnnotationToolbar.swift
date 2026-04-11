@@ -40,7 +40,7 @@ struct AnnotationToolbar: View {
                         isSelected: colorsMatch(currentColor, favoriteColors[index]),
                         onSelect: {
                             currentColor = favoriteColors[index]
-                            if selectedAnnotation != nil {
+                            if currentTool == .pointer, selectedAnnotation != nil {
                                 onChangeColor(favoriteColors[index])
                             }
                         },
@@ -173,7 +173,7 @@ struct AnnotationToolbar: View {
                     }
 
                     // If an annotation is selected, change its color
-                    if selectedAnnotation != nil {
+                    if currentTool == .pointer, selectedAnnotation != nil {
                         onChangeColor(nsColor)
                     }
 
