@@ -2,6 +2,66 @@ import XCTest
 @testable import Canope
 
 final class ChatSolidificationTests: XCTestCase {
+    @MainActor
+    final class MockHeadlessProvider: ObservableObject, HeadlessChatProviding {
+        @Published var messages: [ChatMessage] = []
+        @Published var isProcessing = false
+        @Published var isConnected = true
+        @Published var session = SessionInfo()
+        @Published var pendingApprovalRequest: ChatApprovalRequest?
+
+        let providerName = "Mock"
+        let providerIcon = "brain"
+        var chatWorkingDirectory = URL(fileURLWithPath: "/tmp")
+        var chatSessionDisplayName = "Mock session"
+        var chatCanRenameCurrentSession = false
+        var chatVisualStyle: ChatVisualStyle = .standard
+        var chatUsesBottomPromptControls = false
+        var chatPromptEnvironmentLabel: String?
+        var chatPromptConfigurationLabel: String?
+        var chatSupportsCustomInstructions = false
+        var chatCustomInstructions = ChatCustomInstructions()
+        var chatSupportsIDEContextToggle = true
+        var chatIncludesIDEContext = true
+        var chatInteractionMode: ChatInteractionMode = .agent
+        var chatSupportsPlanMode = true
+        var chatSupportsReview = false
+        var chatReviewStateDescription: String?
+        var chatStatusBadges: [ChatStatusBadge] = []
+        var chatAvailableModels: [String] = ["mock"]
+        var chatSelectedModel = "mock"
+        var chatAvailableEfforts: [String] = ["low"]
+        var chatSelectedEffort = "low"
+
+        func start() {}
+        func stop() {}
+        func sendMessage(_ text: String) { _ = text }
+        func chatStatusActions(for badge: ChatStatusBadge) -> [ChatStatusAction] { _ = badge; return [] }
+        func performChatStatusAction(_ action: ChatStatusAction) { _ = action }
+        func newChatSession() {}
+        func resumeLastChatSession(matchingDirectory: URL?) { _ = matchingDirectory }
+        func resumeChatSession(id: String) { _ = id }
+        func renameCurrentChatSession(to name: String) { _ = name }
+        func updateChatCustomInstructions(global: String, session: String) {
+            chatCustomInstructions = ChatCustomInstructions(globalText: global, sessionText: session)
+        }
+        func resetSessionCustomInstructions() {
+            chatCustomInstructions = ChatCustomInstructions(globalText: chatCustomInstructions.globalText, sessionText: "")
+        }
+        func editAndResendLastUser(newText: String) { _ = newText }
+        func forkChatFromUserMessage(newText: String) { _ = newText }
+        func sendMessageWithDisplay(displayText: String, items: [ChatInputItem]) { _ = displayText; _ = items }
+        func sendMessageWithDisplay(displayText: String, prompt: String) { _ = displayText; _ = prompt }
+        func startChatReview(command: String?) { _ = command }
+        func approvePendingApprovalRequest() {}
+        func submitPendingApprovalRequest(fieldValues: [String: String]) { _ = fieldValues }
+        func dismissPendingApprovalRequest() { pendingApprovalRequest = nil }
+        func listChatSessions(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem] { _ = limit; _ = matchingDirectory; return [] }
+        func listChatSessionsAsync(limit: Int, matchingDirectory: URL?) async -> [ChatSessionListItem] { _ = limit; _ = matchingDirectory; return [] }
+        static func renameChatSession(id: String, name: String) { _ = id; _ = name }
+        static func toolIconName(for toolName: String) -> String { toolName }
+    }
+
     func testAttachedFileMapsToStructuredChatInputItems() {
         let textFile = AttachedFile(
             name: "notes.md",
@@ -46,7 +106,7 @@ final class ChatSolidificationTests: XCTestCase {
             kind: .image
         )
 
-        XCTAssertEqual(AttachedFile.chatDisplaySummary(for: [imageFile]), "🖼 1 image jointe")
+        XCTAssertEqual(AttachedFile.chatDisplaySummary(for: [imageFile]), "🖼 1 image attached")
     }
 
     func testAttachedFileDisplayTextKeepsPromptReadableWithImageAttachment() {
@@ -64,7 +124,7 @@ final class ChatSolidificationTests: XCTestCase {
 
         XCTAssertEqual(
             displayText,
-            "non regarde comment la premiere etait belle\n🖼 1 image jointe"
+            "non regarde comment la premiere etait belle\n🖼 1 image attached"
         )
     }
 
@@ -83,7 +143,7 @@ final class ChatSolidificationTests: XCTestCase {
 
         XCTAssertEqual(
             displayText,
-            "fit toi a ce document\n📎 1 fichier joint"
+            "fit toi a ce document\n📎 1 file attached"
         )
     }
 
@@ -103,8 +163,8 @@ final class ChatSolidificationTests: XCTestCase {
     }
 
     func testChatCustomInstructionsSummaryLabelReflectsState() {
-        XCTAssertEqual(ChatCustomInstructions().summaryLabel, "Aucune instruction")
-        XCTAssertEqual(ChatCustomInstructions(globalText: "Toujours concis").summaryLabel, "Global actif")
+        XCTAssertEqual(ChatCustomInstructions().summaryLabel, "No instructions")
+        XCTAssertEqual(ChatCustomInstructions(globalText: "Toujours concis").summaryLabel, "Global active")
         XCTAssertEqual(ChatCustomInstructions(sessionText: "Cite les fichiers").summaryLabel, "Session active")
         XCTAssertEqual(
             ChatCustomInstructions(globalText: "Toujours concis", sessionText: "Cite les fichiers").summaryLabel,
@@ -204,6 +264,104 @@ final class ChatSolidificationTests: XCTestCase {
     }
 
     @MainActor
+    func testChatHeaderStateHidesConnectedAndMCPOkayInCodexStyle() {
+        let provider = MockHeadlessProvider()
+        provider.session.turns = 3
+        provider.chatStatusBadges = [
+            ChatStatusBadge(kind: .connected, text: "Connected"),
+            ChatStatusBadge(kind: .mcpOkay, text: "MCP OK"),
+            ChatStatusBadge(kind: .authRequired, text: "Auth required"),
+        ]
+
+        let state = ChatHeaderState(provider: provider, usesCodexVisualStyle: true)
+
+        XCTAssertFalse(state.showsProviderIcon)
+        XCTAssertEqual(state.visibleStatusBadges, [ChatStatusBadge(kind: .authRequired, text: "Auth required")])
+        XCTAssertEqual(state.turnCountLabel, "3 turns")
+    }
+
+    func testChatComposerStateReflectsPromptAndAttachmentAvailability() {
+        let emptyState = ChatComposerState(
+            inputText: "   ",
+            attachedFiles: [],
+            interactionMode: .plan,
+            providerName: "Codex",
+            usesCodexVisualStyle: true
+        )
+        XCTAssertFalse(emptyState.canSend)
+        XCTAssertEqual(emptyState.placeholder, "Plan to Codex…")
+        XCTAssertEqual(emptyState.sendButtonHelp, "Send planning request")
+        XCTAssertEqual(emptyState.environmentExecutionLabel, "Read-only")
+
+        let attachmentState = ChatComposerState(
+            inputText: "",
+            attachedFiles: [AttachedFile(name: "note.txt", path: "/tmp/note.txt", content: "x")],
+            interactionMode: .agent,
+            providerName: "Codex",
+            usesCodexVisualStyle: true
+        )
+        XCTAssertTrue(attachmentState.canSend)
+        XCTAssertEqual(attachmentState.environmentExecutionLabel, "Local write")
+    }
+
+    func testCodexNotificationRouterRoutesToolOutputAndErrors() {
+        let toolEvent = CodexNotificationRouter.route(
+            method: "item/commandExecution/outputDelta",
+            params: ["itemId": "item-1", "output": "hello"]
+        )
+        switch toolEvent {
+        case .toolOutputDelta(let itemID, let delta):
+            XCTAssertEqual(itemID, "item-1")
+            XCTAssertEqual(delta, "hello")
+        default:
+            XCTFail("Expected tool output delta event")
+        }
+
+        let errorEvent = CodexNotificationRouter.route(
+            method: "error",
+            params: [
+                "message": "Boom",
+                "willRetry": true,
+            ]
+        )
+        switch errorEvent {
+        case .error(let rendered, let willRetry):
+            XCTAssertEqual(rendered, "Boom")
+            XCTAssertTrue(willRetry)
+        default:
+            XCTFail("Expected error event")
+        }
+    }
+
+    @MainActor
+    func testClaudeStreamReducerFlushesBufferedEventsIncludingTrailingLineWithoutNewline() {
+        let reducer = ClaudeStreamReducer()
+        var events: [ClaudeStreamEvent] = []
+
+        reducer.appendOutput("""
+        {"type":"system","subtype":"init","session_id":"abc"}
+        {"type":"result","duration_ms":12}
+        """) { event in
+            events.append(event)
+        }
+        reducer.flushPendingLines { event in
+            events.append(event)
+        }
+
+        XCTAssertEqual(events.count, 2)
+        if case .system(let json) = events[0] {
+            XCTAssertEqual(json["session_id"] as? String, "abc")
+        } else {
+            XCTFail("Expected system event first")
+        }
+        if case .result(let json) = events[1] {
+            XCTAssertEqual(json["duration_ms"] as? Int, 12)
+        } else {
+            XCTFail("Expected result event second")
+        }
+    }
+
+    @MainActor
     func testCodexCustomInstructionsPersistGloballyAndPerThread() {
         CodexAppServerProvider.testClearStoredCustomInstructions()
         defer { CodexAppServerProvider.testClearStoredCustomInstructions() }
@@ -274,7 +432,7 @@ final class ChatSolidificationTests: XCTestCase {
         XCTAssertEqual(snapshot?.messages[1].content, "Salut")
         XCTAssertEqual(snapshot?.messages[2].role, .toolUse)
         XCTAssertEqual(snapshot?.messages[2].toolName, "Bash")
-        XCTAssertEqual(snapshot?.messages[2].toolOutput, "Commande terminee (code 0) · /bin/echo hi\nhi")
+        XCTAssertEqual(snapshot?.messages[2].toolOutput, "Command completed (code 0) · /bin/echo hi\nhi")
         XCTAssertTrue(snapshot?.messages.allSatisfy(\.isFromHistory) ?? false)
     }
 
@@ -664,7 +822,7 @@ final class ChatSolidificationTests: XCTestCase {
                 chatFileRootURL: URL(fileURLWithPath: "/tmp/chat")
             ),
             .sendItems(
-                displayText: "Regarde ca\n📎 1 fichier joint",
+                displayText: "Regarde ca\n📎 1 file attached",
                 items: [
                     .textFile(name: "notes.txt", path: "/tmp/notes.txt", content: "Hydrology notes"),
                     .text("Regarde ca"),
@@ -949,7 +1107,7 @@ final class ChatSolidificationTests: XCTestCase {
         provider.startChatReview(command: nil)
 
         XCTAssertEqual(provider.messages.last?.role, .system)
-        XCTAssertEqual(provider.messages.last?.content, "Codex: lance d’abord une conversation avant /review.")
+        XCTAssertEqual(provider.messages.last?.content, "Codex: start a conversation before /review.")
     }
 
     @MainActor
@@ -990,7 +1148,7 @@ final class ChatSolidificationTests: XCTestCase {
 
         XCTAssertEqual(provider.messages.count, 1)
         XCTAssertEqual(provider.messages.last?.role, .toolUse)
-        XCTAssertTrue(provider.messages.last?.toolOutput?.contains("Commande terminee") == true)
+        XCTAssertTrue(provider.messages.last?.toolOutput?.contains("Command completed") == true)
         XCTAssertTrue(provider.messages.last?.toolOutput?.contains("file.txt") == true)
         XCTAssertEqual(provider.messages.last?.isCollapsed, true)
     }
@@ -1096,7 +1254,7 @@ final class ChatSolidificationTests: XCTestCase {
 
         XCTAssertEqual(provider.messages.count, 1)
         XCTAssertEqual(provider.messages.last?.role, .toolUse)
-        XCTAssertEqual(provider.messages.last?.toolOutput, "Modification proposee · demo.tex non appliquee")
+        XCTAssertEqual(provider.messages.last?.toolOutput, "Modification proposee · demo.tex not applied")
     }
 
     @MainActor
@@ -1247,7 +1405,7 @@ final class ChatSolidificationTests: XCTestCase {
 
         XCTAssertEqual(
             provider.chatStatusBadges.map(\.text),
-            ["Connecte", "MCP OK", "Auth requise", "Review terminee"]
+            ["Connected", "MCP OK", "Auth requise", "Review terminee"]
         )
     }
 

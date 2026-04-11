@@ -9,21 +9,13 @@ struct ChatSessionHeader<Provider: HeadlessChatProviding, StatusBadgeContent: Vi
     let onStop: () -> Void
     let statusBadgeView: (ChatStatusBadge) -> StatusBadgeContent
 
-    private var visibleStatusBadges: [ChatStatusBadge] {
-        guard usesCodexVisualStyle else { return provider.chatStatusBadges }
-        return provider.chatStatusBadges.filter { badge in
-            switch badge.kind {
-            case .connected, .mcpOkay:
-                return false
-            default:
-                return true
-            }
-        }
+    private var headerState: ChatHeaderState {
+        ChatHeaderState(provider: provider, usesCodexVisualStyle: usesCodexVisualStyle)
     }
 
     var body: some View {
         HStack(spacing: 8) {
-            if !usesCodexVisualStyle {
+            if headerState.showsProviderIcon {
                 Image(systemName: provider.providerIcon)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -90,17 +82,17 @@ struct ChatSessionHeader<Provider: HeadlessChatProviding, StatusBadgeContent: Vi
                 .fixedSize()
             }
 
-            if provider.session.turns > 0 {
+            if let turnCountLabel = headerState.turnCountLabel {
                 if !provider.chatUsesBottomPromptControls {
                     Text("·")
                         .foregroundStyle((usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary).opacity(0.5))
                 }
-                Text("\(provider.session.turns) turns")
+                Text(turnCountLabel)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(usesCodexVisualStyle ? AppChromePalette.codexMutedText : .secondary)
             }
 
-            ForEach(visibleStatusBadges) { badge in
+            ForEach(headerState.visibleStatusBadges) { badge in
                 Text("·")
                     .foregroundStyle(.secondary.opacity(0.5))
                 statusBadgeView(badge)

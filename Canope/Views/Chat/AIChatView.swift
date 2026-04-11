@@ -461,6 +461,16 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         provider.chatVisualStyle == .codex
     }
 
+    private var composerState: ChatComposerState {
+        ChatComposerState(
+            inputText: inputText,
+            attachedFiles: attachedFiles,
+            interactionMode: provider.chatInteractionMode,
+            providerName: provider.providerName,
+            usesCodexVisualStyle: usesCodexVisualStyle
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             sessionHeader
@@ -724,8 +734,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                                 forkUserMessage(message)
                             }
                             Button(isLatestEditableUserMessage(message) ? "Éditer & renvoyer" : "Éditer & forker") {
-                                editingMessageID = message.id
-                                editingText = message.content
+                                ChatMessageActions.beginEditing(
+                                    message: message,
+                                    editingMessageID: &editingMessageID,
+                                    editingText: &editingText
+                                )
                             }
                         }
                     }
@@ -771,8 +784,11 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
             .help("Fork")
 
             Button {
-                editingMessageID = message.id
-                editingText = message.content
+                ChatMessageActions.beginEditing(
+                    message: message,
+                    editingMessageID: &editingMessageID,
+                    editingText: &editingText
+                )
             } label: {
                 Image(systemName: "pencil")
                     .font(.system(size: 12, weight: .medium))
@@ -840,22 +856,21 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     private func commitEditedUserMessage(_ message: ChatMessage) {
-        let newText = editingText
         editingMessageID = nil
-        if isLatestEditableUserMessage(message) {
-            provider.editAndResendLastUser(newText: newText)
-        } else {
-            provider.forkChatFromUserMessage(newText: newText)
-        }
+        ChatMessageActions.commitEditedMessage(
+            message: message,
+            editingText: editingText,
+            provider: provider,
+            isLatestEditableUserMessage: isLatestEditableUserMessage(message)
+        )
     }
 
     private func copyUserMessage(_ message: ChatMessage) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(message.content, forType: .string)
+        ChatMessageActions.copy(message)
     }
 
     private func forkUserMessage(_ message: ChatMessage) {
-        provider.forkChatFromUserMessage(newText: message.content)
+        ChatMessageActions.fork(message: message, provider: provider)
     }
 
     private func formattedUserMessageTime(_ date: Date) -> String {
@@ -1511,7 +1526,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     }
 
                 if inputText.isEmpty {
-                    Text(chatInputPlaceholder)
+                    Text(composerState.placeholder)
                         .font(.system(size: 14))
                         .foregroundStyle(AppChromePalette.codexMutedText.opacity(0.72))
                         .padding(.top, CodexPromptEditor.placeholderTopInset)
@@ -1519,9 +1534,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                         .allowsHitTesting(false)
                 }
             }
-            .frame(height: codexPromptEditorHeight, alignment: .topLeading)
+            .frame(height: composerState.promptEditorHeight, alignment: .topLeading)
         } else {
-            TextField(chatInputPlaceholder, text: $inputText, axis: .vertical)
+            TextField(composerState.placeholder, text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .lineLimit(1...6)
@@ -1536,25 +1551,6 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
                     updateFileList()
                 }
                 .foregroundStyle(.primary)
-        }
-    }
-
-    private var codexPromptEditorHeight: CGFloat {
-        let lineBreaks = inputText.reduce(into: 1) { count, character in
-            if character == "\n" { count += 1 }
-        }
-        let wrappedLines = max(1, Int(ceil(Double(max(inputText.count, 1)) / 72.0)))
-        let estimatedLines = max(lineBreaks, wrappedLines)
-
-        switch estimatedLines {
-        case ...1:
-            return 34
-        case 2:
-            return 52
-        case 3:
-            return 70
-        default:
-            return min(110, 70 + CGFloat(estimatedLines - 3) * 18)
         }
     }
 
@@ -2173,13 +2169,9 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
 
     @State private var listResetID = UUID()
 
-    private var chatInputPlaceholder: String {
-        "\(provider.chatInteractionMode.inputPlaceholderSuffix) to \(provider.providerName)…"
-    }
+    private var chatInputPlaceholder: String { composerState.placeholder }
 
-    private var sendButtonHelp: String {
-        provider.chatInteractionMode == .plan ? "Send planning request" : "Send"
-    }
+    private var sendButtonHelp: String { composerState.sendButtonHelp }
 
     private var modelPromptMenu: some View {
         Menu {
@@ -2365,12 +2357,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
     }
 
     private var environmentExecutionLabel: String {
-        switch provider.chatInteractionMode {
-        case .plan:
-            return "Read-only"
-        case .agent, .acceptEdits:
-            return "Local write"
-        }
+        composerState.environmentExecutionLabel
     }
 
     private func effortDisplayLabel(_ effort: String) -> String {
@@ -2388,9 +2375,7 @@ struct AIChatView<Provider: HeadlessChatProviding>: View {
         }
     }
 
-    private var canSend: Bool {
-        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedFiles.isEmpty
-    }
+    private var canSend: Bool { composerState.canSend }
 
     private func send() {
         let originalText = inputText
@@ -2761,10 +2746,6 @@ private struct CodexPromptEditor: NSViewRepresentable {
         if isFocused, textView.window?.firstResponder !== textView {
             DispatchQueue.main.async {
                 textView.window?.makeFirstResponder(textView)
-            }
-        } else if !isFocused, textView.window?.firstResponder === textView {
-            DispatchQueue.main.async {
-                textView.window?.makeFirstResponder(nil)
             }
         }
     }

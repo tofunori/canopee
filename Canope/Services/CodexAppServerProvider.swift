@@ -317,19 +317,8 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private var connectTask: Task<Void, Never>?
     private let threadCoordinator = CodexThreadCoordinator()
     private let approvalCoordinator = CodexApprovalCoordinator()
+    private let toolEventReducer = CodexToolEventReducer()
     private var currentRun = CodexCurrentRunState()
-    private var currentAssistantMessageIndex: Int?
-    private var currentAgentItemId: String?
-    private var lastRetryStatusMessage: String?
-    private var pendingAssistantDelta = ""
-    private var assistantDeltaFlushTask: Task<Void, Never>?
-    private var pendingMarkdown: [(UUID, String)] = []
-    private var markdownTask: Task<Void, Never>?
-    private var itemToolUseMessageIndex: [String: Int] = [:]
-    private var itemOutputBuffers: [String: String] = [:]
-
-    private static let assistantDeltaThrottleNanoseconds: UInt64 = 60_000_000
-    private static let markdownPreRenderDelayNanoseconds: UInt64 = 80_000_000
 
     init(workingDirectory: URL? = nil) {
         self.globalCustomInstructionsText = CodexCustomInstructionsStore.loadGlobalText()
@@ -351,8 +340,6 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
     deinit {
         connectTask?.cancel()
-        assistantDeltaFlushTask?.cancel()
-        markdownTask?.cancel()
         rpc?.terminate()
     }
 
@@ -363,18 +350,9 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
 
     func stop() {
         Task { await interruptIfNeeded() }
-        flushPendingAssistantDelta()
-        clearAssistantDeltaWork()
-        clearMarkdownPreRenderWork()
         approvalCoordinator.reset()
-        itemToolUseMessageIndex.removeAll()
-        itemOutputBuffers.removeAll()
+        toolEventReducer.stop(messages: &messages)
         isProcessing = false
-        if let idx = currentAssistantMessageIndex, idx < messages.count {
-            messages[idx].isStreaming = false
-        }
-        currentAssistantMessageIndex = nil
-        currentAgentItemId = nil
     }
 
     func sendMessage(_ text: String) {
@@ -557,11 +535,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             prompt: prompt,
             displayText: display
         )
-        currentAssistantMessageIndex = nil
-        currentAgentItemId = nil
-        lastRetryStatusMessage = nil
-        itemToolUseMessageIndex.removeAll()
-        itemOutputBuffers.removeAll()
+        toolEventReducer.configureNewRun()
         CodexTraceLog.write("sendUserMessage mode=\(interactionMode.rawValue) display=\(display.replacingOccurrences(of: "\n", with: "\\n"))")
 
         await ensureConnected()
@@ -618,93 +592,85 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private func handleNotification(method: String, params: [String: Any]) {
         let paramsSummary = Self.jsonString(params) ?? "{}"
         CodexTraceLog.write("notification \(method) params=\(paramsSummary)")
-        switch method {
-        case "turn/started":
-            if let turn = params["turn"] as? [String: Any],
-               let tid = turn["id"] as? String {
-                threadCoordinator.setCurrentTurnId(tid)
-            }
-        case "item/started":
-            if let item = params["item"] as? [String: Any] {
-                handleItemStarted(item)
-            }
-        case "item/agentMessage/delta":
-            let delta = extractDeltaText(params) ?? ""
-            bufferAssistantDelta(delta, itemID: params["itemId"] as? String)
-        case "item/plan/delta":
-            let delta = extractDeltaText(params) ?? ""
-            bufferAssistantDelta(delta, itemID: params["itemId"] as? String)
-        case "item/commandExecution/outputDelta",
-             "item/fileChange/outputDelta":
-            if let itemID = params["itemId"] as? String {
-                let delta = extractDeltaText(params)
-                    ?? (params["output"] as? String)
-                    ?? (params["aggregatedOutput"] as? String)
-                    ?? ""
-                if !delta.isEmpty {
-                    itemOutputBuffers[itemID, default: ""].append(delta)
+        switch CodexNotificationRouter.route(method: method, params: params) {
+        case .turnStarted(let turnID):
+            threadCoordinator.setCurrentTurnId(turnID)
+
+        case .itemStarted(let item):
+            handleItemStarted(item)
+
+        case .assistantDelta(let itemID, let delta):
+            toolEventReducer.bufferAssistantDelta(delta, itemID: itemID, messages: &messages)
+            if toolEventReducer.needsAssistantDeltaFlushScheduling {
+                toolEventReducer.scheduleAssistantDeltaFlush { [weak self] in
+                    guard let self else { return }
+                    self.toolEventReducer.flushPendingAssistantDelta(messages: &self.messages)
                 }
             }
-        case "item/completed":
-            flushPendingAssistantDelta()
-            clearAssistantDeltaWork()
-            if let item = params["item"] as? [String: Any] {
-                handleItemCompleted(item)
-            }
-        case "turn/completed":
-            flushPendingAssistantDelta()
-            clearAssistantDeltaWork()
-            if let idx = currentAssistantMessageIndex, idx < messages.count {
+
+        case .toolOutputDelta(let itemID, let delta):
+            toolEventReducer.appendToolOutputDelta(itemID: itemID, delta: delta)
+
+        case .itemCompleted(let item):
+            toolEventReducer.flushPendingAssistantDelta(messages: &messages)
+            toolEventReducer.clearAssistantDeltaWork()
+            handleItemCompleted(item)
+
+        case .turnCompleted:
+            toolEventReducer.flushPendingAssistantDelta(messages: &messages)
+            toolEventReducer.clearAssistantDeltaWork()
+            if let idx = toolEventReducer.currentAssistantMessageIndex, idx < messages.count {
                 messages[idx].isStreaming = false
-                enqueueMarkdownPreRender(for: messages[idx].id, text: messages[idx].content)
-                currentAssistantMessageIndex = nil
+                toolEventReducer.scheduleMarkdownPreRender { [weak self] in
+                    guard let self else { return }
+                    self.toolEventReducer.flushMarkdownPreRender(into: &self.messages)
+                }
             }
             isProcessing = false
             threadCoordinator.setCurrentTurnId(nil)
-            lastRetryStatusMessage = nil
+            toolEventReducer.markRetryStatusMessage(nil)
             approvalCoordinator.reset()
-        case "turn/plan/updated":
-            handleTurnPlanUpdated(params)
-        case "serverRequest/resolved":
-            if let requestId = jsonInt(params["requestId"]) {
-                approvalCoordinator.removeRequest(id: requestId)
-                if pendingApprovalRequest?.rpcRequestID == requestId {
-                    pendingApprovalRequest = nil
+
+        case .turnPlanUpdated(let explanation, let plan):
+            guard toolEventReducer.currentAssistantMessageIndex == nil else { break }
+            toolEventReducer.enqueuePlanUpdate(
+                explanation: explanation,
+                plan: plan,
+                messages: &messages
+            )
+            if toolEventReducer.needsMarkdownScheduling {
+                toolEventReducer.scheduleMarkdownPreRender { [weak self] in
+                    guard let self else { return }
+                    self.toolEventReducer.flushMarkdownPreRender(into: &self.messages)
                 }
             }
-        case "item/commandExecution/approvalResolved",
-             "item/fileChange/approvalResolved",
-             "item/tool/requestUserInputResolved":
-            clearResolvedApproval(for: params["itemId"] as? String)
-        case "error":
-            let errorPayload = params["error"] as? [String: Any]
-            let message = (errorPayload?["message"] as? String)
-                ?? (params["message"] as? String)
-                ?? AppStrings.codexError
-            let details = errorPayload?["additionalDetails"] as? String
-            let rendered = [message, details]
-                .compactMap { value in
-                    guard let value, !value.isEmpty else { return nil }
-                    return value
-                }
-                .joined(separator: "\n")
-            let willRetry = params["willRetry"] as? Bool ?? false
 
-            flushPendingAssistantDelta()
-            clearAssistantDeltaWork()
-            if !willRetry || lastRetryStatusMessage != rendered {
+        case .serverRequestResolved(let requestID):
+            approvalCoordinator.removeRequest(id: requestID)
+            if pendingApprovalRequest?.rpcRequestID == requestID {
+                pendingApprovalRequest = nil
+            }
+
+        case .approvalResolved(let itemID):
+            clearResolvedApproval(for: itemID)
+
+        case .error(let rendered, let willRetry):
+            toolEventReducer.flushPendingAssistantDelta(messages: &messages)
+            toolEventReducer.clearAssistantDeltaWork()
+            if !willRetry || toolEventReducer.lastRetryStatusMessage != rendered {
                 appendSystem(rendered)
             }
             updateStatusForErrorMessage(rendered)
 
             if willRetry {
-                lastRetryStatusMessage = rendered
+                toolEventReducer.markRetryStatusMessage(rendered)
             } else {
-                lastRetryStatusMessage = nil
+                toolEventReducer.markRetryStatusMessage(nil)
                 isProcessing = false
                 threadCoordinator.setCurrentTurnId(nil)
             }
-        default:
+
+        case .ignored:
             break
         }
     }
@@ -824,23 +790,18 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private func beginStreamingAssistantItem(_ item: [String: Any], type: String) {
         let traceItemID = (item["id"] as? String) ?? ""
         CodexTraceLog.write("beginStreamingAssistantItem type=\(type) itemId=\(traceItemID)")
-        clearAssistantDeltaWork()
-        let itemID = (item["id"] as? String) ?? UUID().uuidString
-        currentAgentItemId = itemID
-        let text = (item["text"] as? String) ?? ""
-        let presentationKind: ChatMessage.PresentationKind = type == "plan" ? .plan : (currentRun.interactionMode == .plan ? .plan : .standard)
-        let message = ChatMessage(
-            role: .assistant,
-            content: text,
-            timestamp: Date(),
-            isStreaming: true,
-            isCollapsed: false,
-            presentationKind: presentationKind
+        toolEventReducer.clearAssistantDeltaWork()
+        toolEventReducer.beginStreamingAssistantItem(
+            item: item,
+            type: type,
+            interactionMode: currentRun.interactionMode,
+            messages: &messages
         )
-        messages.append(message)
-        currentAssistantMessageIndex = messages.count - 1
-        if !text.isEmpty {
-            enqueueMarkdownPreRender(for: message.id, text: text)
+        if toolEventReducer.needsMarkdownScheduling {
+            toolEventReducer.scheduleMarkdownPreRender { [weak self] in
+                guard let self else { return }
+                self.toolEventReducer.flushMarkdownPreRender(into: &self.messages)
+            }
         }
     }
 
@@ -848,8 +809,8 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         let toolName = (item["tool"] as? String) ?? ""
         let itemID = (item["id"] as? String) ?? ""
         CodexTraceLog.write("handleMCPToolCallStarted tool=\(toolName) itemId=\(itemID)")
-        flushPendingAssistantDelta()
-        clearAssistantDeltaWork()
+        toolEventReducer.flushPendingAssistantDelta(messages: &messages)
+        toolEventReducer.clearAssistantDeltaWork()
         let name = (item["tool"] as? String) ?? "mcp"
         let summary = (item["server"] as? String).map { "\($0) · \(name)" } ?? name
         mcpStatusBadge = ChatStatusBadge(kind: .mcpOkay, text: "MCP OK")
@@ -897,13 +858,19 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
             completeToolItem(
                 itemID: item["id"] as? String,
                 toolName: "Bash",
-                summary: Self.completedCommandExecutionSummary(item, bufferedOutput: itemOutputBuffers[item["id"] as? String ?? ""])
+                summary: Self.completedCommandExecutionSummary(
+                    item,
+                    bufferedOutput: toolEventReducer.bufferedOutput(for: item["id"] as? String)
+                )
             )
         case "fileChange":
             completeToolItem(
                 itemID: item["id"] as? String,
                 toolName: "Edit",
-                summary: Self.completedFileChangeSummary(item, bufferedOutput: itemOutputBuffers[item["id"] as? String ?? ""])
+                summary: Self.completedFileChangeSummary(
+                    item,
+                    bufferedOutput: toolEventReducer.bufferedOutput(for: item["id"] as? String)
+                )
             )
         case "dynamicToolCall":
             completeToolItem(
@@ -950,58 +917,31 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     private func completeAssistantItem(_ item: [String: Any]) {
         let itemID = (item["id"] as? String) ?? ""
         CodexTraceLog.write("completeAssistantItem itemId=\(itemID)")
-        if let text = item["text"] as? String,
-           let idx = currentAssistantMessageIndex,
-           idx < messages.count,
-           messages[idx].content.isEmpty {
-            messages[idx].content = text
+        toolEventReducer.completeAssistantItem(item: item, messages: &messages)
+        if toolEventReducer.needsMarkdownScheduling {
+            toolEventReducer.scheduleMarkdownPreRender { [weak self] in
+                guard let self else { return }
+                self.toolEventReducer.flushMarkdownPreRender(into: &self.messages)
+            }
         }
-
-        if let idx = currentAssistantMessageIndex, idx < messages.count {
-            messages[idx].isStreaming = false
-            enqueueMarkdownPreRender(for: messages[idx].id, text: messages[idx].content)
-        }
-        currentAssistantMessageIndex = nil
-        currentAgentItemId = nil
     }
 
     private func appendToolUseItem(itemID: String?, toolName: String, content: String, toolInput: String?) {
-        messages.append(
-            ChatMessage(
-                role: .toolUse,
-                content: content,
-                timestamp: Date(),
-                toolName: toolName,
-                toolInput: toolInput,
-                isStreaming: false,
-                isCollapsed: true
-            )
+        toolEventReducer.appendToolUseItem(
+            itemID: itemID,
+            toolName: toolName,
+            content: content,
+            toolInput: toolInput,
+            messages: &messages
         )
-        if let itemID {
-            itemToolUseMessageIndex[itemID] = messages.count - 1
-        }
     }
 
     private func completeToolItem(itemID: String?, toolName: String, summary: String?) {
-        guard let summary, !summary.isEmpty else { return }
-        if let itemID,
-           let idx = itemToolUseMessageIndex[itemID],
-           idx < messages.count {
-            messages[idx].toolOutput = summary
-            messages[idx].isCollapsed = true
-            itemToolUseMessageIndex.removeValue(forKey: itemID)
-            itemOutputBuffers.removeValue(forKey: itemID)
-            return
-        }
-        messages.append(
-            ChatMessage(
-                role: .toolResult,
-                content: summary,
-                timestamp: Date(),
-                toolName: toolName,
-                isStreaming: false,
-                isCollapsed: false
-            )
+        toolEventReducer.completeToolItem(
+            itemID: itemID,
+            toolName: toolName,
+            summary: summary,
+            messages: &messages
         )
     }
 
@@ -1032,35 +972,26 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
     }
 
     private func handleTurnPlanUpdated(_ params: [String: Any]) {
-        guard currentAssistantMessageIndex == nil,
+        guard toolEventReducer.currentAssistantMessageIndex == nil,
               let plan = params["plan"] as? [[String: Any]],
               !plan.isEmpty
         else { return }
-        let text = Self.renderPlanText(plan: plan, explanation: params["explanation"] as? String)
-        messages.append(
-            ChatMessage(
-                role: .assistant,
-                content: text,
-                timestamp: Date(),
-                isStreaming: false,
-                isCollapsed: false,
-                presentationKind: .plan
-            )
+        toolEventReducer.enqueuePlanUpdate(
+            explanation: params["explanation"] as? String,
+            plan: plan,
+            messages: &messages
         )
-        if let id = messages.last?.id {
-            enqueueMarkdownPreRender(for: id, text: text)
+        if toolEventReducer.needsMarkdownScheduling {
+            toolEventReducer.scheduleMarkdownPreRender { [weak self] in
+                guard let self else { return }
+                self.toolEventReducer.flushMarkdownPreRender(into: &self.messages)
+            }
         }
     }
 
     private func clearResolvedApproval(for itemID: String?) {
         approvalCoordinator.clearResolvedApproval(for: itemID, pendingApprovalRequest: &pendingApprovalRequest)
-    }
-
-    private func extractDeltaText(_ params: [String: Any]) -> String? {
-        if let s = params["delta"] as? String { return s }
-        if let s = params["text"] as? String { return s }
-        if let s = params["textDelta"] as? String { return s }
-        return nil
+        toolEventReducer.clearResolvedApproval(for: itemID)
     }
 
     private func appendSystem(_ text: String) {
@@ -1073,135 +1004,6 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
                 isCollapsed: false
             )
         )
-    }
-
-    private func bufferAssistantDelta(_ delta: String, itemID: String?) {
-        guard !delta.isEmpty,
-              let idx = assistantMessageIndex(for: itemID),
-              idx < messages.count
-        else { return }
-        let itemIDSummary = itemID ?? ""
-        CodexTraceLog.write("assistantDelta itemId=\(itemIDSummary) chars=\(delta.count)")
-        if let itemID, currentAgentItemId == nil {
-            currentAgentItemId = itemID
-        }
-        pendingAssistantDelta += delta
-        messages[idx].isStreaming = true
-        scheduleAssistantDeltaFlushIfNeeded()
-    }
-
-    private func assistantMessageIndex(for itemID: String?) -> Int? {
-        if let itemID,
-           let currentAgentItemId,
-           currentAgentItemId == itemID,
-           let currentAssistantMessageIndex,
-           currentAssistantMessageIndex < messages.count {
-            return currentAssistantMessageIndex
-        }
-        if itemID == nil,
-           let currentAssistantMessageIndex,
-           currentAssistantMessageIndex < messages.count {
-            return currentAssistantMessageIndex
-        }
-        return currentAssistantMessageIndex
-    }
-
-    private func scheduleAssistantDeltaFlushIfNeeded() {
-        guard assistantDeltaFlushTask == nil else { return }
-        assistantDeltaFlushTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.assistantDeltaThrottleNanoseconds)
-            guard let self, !Task.isCancelled else { return }
-            self.assistantDeltaFlushTask = nil
-            self.flushPendingAssistantDelta()
-        }
-    }
-
-    private func flushPendingAssistantDelta() {
-        guard !pendingAssistantDelta.isEmpty else { return }
-        guard let idx = currentAssistantMessageIndex, idx < messages.count else {
-            pendingAssistantDelta.removeAll()
-            return
-        }
-        let merged = messages[idx].content + pendingAssistantDelta
-        messages[idx].content = Self.sanitizeAssistantDisplayText(merged)
-        messages[idx].isStreaming = true
-        pendingAssistantDelta.removeAll()
-    }
-
-    private func clearAssistantDeltaWork() {
-        assistantDeltaFlushTask?.cancel()
-        assistantDeltaFlushTask = nil
-        pendingAssistantDelta.removeAll()
-    }
-
-    private static func sanitizeAssistantDisplayText(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return text }
-
-        let paragraphs = trimmed.components(separatedBy: "\n\n")
-        let filtered = paragraphs.filter { paragraph in
-            let normalized = paragraph.folding(
-                options: [String.CompareOptions.diacriticInsensitive, String.CompareOptions.caseInsensitive],
-                locale: Locale.current
-            )
-            if normalized.contains("l'edition directe a echoue") { return false }
-            if normalized.contains("the direct edit failed") { return false }
-            if normalized.contains("direct edit failed") { return false }
-            if normalized.contains("i couldn't find the exact text") { return false }
-            if normalized.contains("je n'ai pas trouve le texte exact") { return false }
-            if normalized.contains("le texte exact") && normalized.contains("pas ete retrouve") { return false }
-            if normalized.contains("exact text") && normalized.contains("not found") { return false }
-            return true
-        }
-
-        guard !filtered.isEmpty else { return "" }
-        return filtered.joined(separator: "\n\n")
-    }
-
-    private func enqueueMarkdownPreRender(for id: UUID, text: String) {
-        guard !text.isEmpty else { return }
-        guard !ChatMarkdownPolicy.shouldSkipFullMarkdown(for: text) else { return }
-        pendingMarkdown.append((id, text))
-        scheduleMarkdownPreRender()
-    }
-
-    private func scheduleMarkdownPreRender() {
-        markdownTask?.cancel()
-        markdownTask = Task.detached { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.markdownPreRenderDelayNanoseconds)
-            await MainActor.run { [weak self] in
-                self?.flushMarkdownPreRender()
-            }
-        }
-    }
-
-    private func flushMarkdownPreRender() {
-        guard !pendingMarkdown.isEmpty else { return }
-        let batch = pendingMarkdown
-        pendingMarkdown.removeAll()
-        Task.detached { [weak self] in
-            var results: [(UUID, AttributedString)] = []
-            for (id, text) in batch {
-                let attr = MarkdownBlockView.renderAttributedPreviewForBackground(text)
-                results.append((id, attr))
-            }
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                for (id, attr) in results {
-                    if let idx = self.messages.firstIndex(where: { $0.id == id }) {
-                        self.messages[idx].preRenderedMarkdown = attr
-                        ChatMarkdownPolicy.applyPreRenderedMarkdownRetentionBudget(to: &self.messages)
-                    }
-                }
-                self.markdownTask = nil
-            }
-        }
-    }
-
-    private func clearMarkdownPreRenderWork() {
-        pendingMarkdown.removeAll()
-        markdownTask?.cancel()
-        markdownTask = nil
     }
 
     private func replyToServerRequest(
@@ -1311,7 +1113,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
-    private static func jsonString(_ obj: Any?) -> String? {
+    nonisolated static func jsonString(_ obj: Any?) -> String? {
         guard let obj else { return nil }
         if let s = obj as? String { return s }
         guard JSONSerialization.isValidJSONObject(obj),
@@ -1321,7 +1123,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return str
     }
 
-    private static func commandExecutionSummary(_ item: [String: Any]) -> String {
+    nonisolated static func commandExecutionSummary(_ item: [String: Any]) -> String {
         let command = (item["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let cwd = (item["cwd"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let command, !command.isEmpty, let cwd, !cwd.isEmpty {
@@ -1333,7 +1135,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return "Command in progress"
     }
 
-    private static func fileChangeSummary(_ item: [String: Any]) -> String {
+    nonisolated static func fileChangeSummary(_ item: [String: Any]) -> String {
         if let changes = item["changes"] as? [[String: Any]], !changes.isEmpty {
             let firstPath = (changes.first?["path"] as? String) ?? (changes.first?["newPath"] as? String)
             if let firstPath, !firstPath.isEmpty {
@@ -1344,7 +1146,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return "Modification proposee"
     }
 
-    private static func completedCommandExecutionSummary(_ item: [String: Any], bufferedOutput: String?) -> String? {
+    nonisolated static func completedCommandExecutionSummary(_ item: [String: Any], bufferedOutput: String?) -> String? {
         let status = (item["status"] as? String) ?? "completed"
         let command = (item["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Command"
         let exitCode = jsonInt(item["exitCode"])
@@ -1366,7 +1168,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return "\(statusLabel)\(suffix) · \(command)"
     }
 
-    private static func completedFileChangeSummary(_ item: [String: Any], bufferedOutput: String?) -> String? {
+    nonisolated static func completedFileChangeSummary(_ item: [String: Any], bufferedOutput: String?) -> String? {
         let status = (item["status"] as? String) ?? "completed"
         let base = fileChangeSummary(item)
         let output = (bufferedOutput?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
@@ -1386,7 +1188,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
-    private static func completedDynamicToolCallSummary(_ item: [String: Any]) -> String? {
+    nonisolated static func completedDynamicToolCallSummary(_ item: [String: Any]) -> String? {
         let status = (item["status"] as? String) ?? "completed"
         let text = extractText(fromContentItems: item["contentItems"] as? [[String: Any]])
         switch status {
@@ -1397,7 +1199,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
-    private static func dynamicToolCallSummary(_ item: [String: Any]) -> String {
+    nonisolated static func dynamicToolCallSummary(_ item: [String: Any]) -> String {
         if let tool = (item["tool"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !tool.isEmpty {
             if let argsPreview = compactKeyValuePreview(
                 from: item["arguments"] as? [String: Any],
@@ -1411,7 +1213,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return "Dynamic tool call"
     }
 
-    private static func dynamicToolCallInputPreview(_ item: [String: Any]) -> String? {
+    nonisolated static func dynamicToolCallInputPreview(_ item: [String: Any]) -> String? {
         compactKeyValuePreview(
             from: item["arguments"] as? [String: Any],
             preferredKeys: ["path", "filePath", "query", "url", "cwd", "pattern", "command", "text"],
@@ -1419,7 +1221,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         )
     }
 
-    private static func webSearchSummary(_ item: [String: Any]) -> String {
+    nonisolated static func webSearchSummary(_ item: [String: Any]) -> String {
         let query = (item["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let action = (item["action"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         if let query, !query.isEmpty, let action {
@@ -1431,7 +1233,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return "Recherche web"
     }
 
-    private static func webSearchInputPreview(_ item: [String: Any]) -> String? {
+    nonisolated static func webSearchInputPreview(_ item: [String: Any]) -> String? {
         var lines: [String] = []
         if let query = (item["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
             lines.append("query: \(query)")
@@ -1445,7 +1247,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
-    private static func completedWebSearchSummary(_ item: [String: Any]) -> String? {
+    nonisolated static func completedWebSearchSummary(_ item: [String: Any]) -> String? {
         let base = webSearchSummary(item)
         if let action = (item["action"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !action.isEmpty {
             return "\(base)\nAction: \(action)"
@@ -1453,18 +1255,18 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return base
     }
 
-    private static func imageViewSummary(_ item: [String: Any]) -> String {
+    nonisolated static func imageViewSummary(_ item: [String: Any]) -> String {
         if let path = (item["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
             return "Image ouverte · \((path as NSString).lastPathComponent)"
         }
         return "Image ouverte"
     }
 
-    private static func completedImageViewSummary(_ item: [String: Any]) -> String? {
+    nonisolated static func completedImageViewSummary(_ item: [String: Any]) -> String? {
         imageViewSummary(item)
     }
 
-    private static func collabAgentToolCallSummary(_ item: [String: Any]) -> String {
+    nonisolated static func collabAgentToolCallSummary(_ item: [String: Any]) -> String {
         let tool = (item["tool"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let sender = (item["senderThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let target = (item["targetThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1480,7 +1282,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return "Collab agent"
     }
 
-    private static func collabAgentToolCallInputPreview(_ item: [String: Any]) -> String? {
+    nonisolated static func collabAgentToolCallInputPreview(_ item: [String: Any]) -> String? {
         var lines: [String] = []
         if let sender = (item["senderThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !sender.isEmpty {
             lines.append("sender: \(sender)")
@@ -1501,7 +1303,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
-    private static func completedCollabAgentToolCallSummary(_ item: [String: Any]) -> String? {
+    nonisolated static func completedCollabAgentToolCallSummary(_ item: [String: Any]) -> String? {
         let base = collabAgentToolCallSummary(item)
         if let status = (item["status"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !status.isEmpty {
             return "\(base)\nStatut: \(status)"
@@ -1509,7 +1311,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return base
     }
 
-    private static func compactKeyValuePreview(
+    private nonisolated static func compactKeyValuePreview(
         from dictionary: [String: Any]?,
         preferredKeys: [String],
         maxLines: Int
@@ -1537,7 +1339,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
-    private static func compactPreviewValue(_ value: Any) -> String? {
+    private nonisolated static func compactPreviewValue(_ value: Any) -> String? {
         switch value {
         case let string as String:
             return string.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -1676,7 +1478,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
-    private static func reviewStateDescription(_ item: [String: Any]) -> String {
+    nonisolated static func reviewStateDescription(_ item: [String: Any]) -> String {
         let review = (item["review"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let review, !review.isEmpty {
             return "Review actif · \(review)"
@@ -1720,7 +1522,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         }
     }
 
-    private static func parseReviewOutput(_ rendered: String) -> (summary: String?, findings: [ChatReviewFinding]) {
+    nonisolated static func parseReviewOutput(_ rendered: String) -> (summary: String?, findings: [ChatReviewFinding]) {
         let normalized = rendered
             .replacingOccurrences(of: "\r\n", with: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1754,7 +1556,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return (summary, findings)
     }
 
-    private static func parseRenderedReviewFinding(_ blockLines: [String]) -> ChatReviewFinding? {
+    private nonisolated static func parseRenderedReviewFinding(_ blockLines: [String]) -> ChatReviewFinding? {
         guard let firstLineRaw = blockLines.first else { return nil }
         let firstLine = firstLineRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !firstLine.isEmpty else { return nil }
@@ -1813,7 +1615,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         )
     }
 
-    private static func parseReviewLocation(_ location: String) -> (path: String?, start: Int?, end: Int?) {
+    private nonisolated static func parseReviewLocation(_ location: String) -> (path: String?, start: Int?, end: Int?) {
         let regex = try? NSRegularExpression(pattern: #"^(.*?):(\d+)(?:-(\d+))?$"#)
         let nsLocation = location as NSString
         let range = NSRange(location: 0, length: nsLocation.length)
@@ -1831,7 +1633,7 @@ final class CodexAppServerProvider: ObservableObject, AIHeadlessProvider {
         return (path.nilIfEmpty, start, end)
     }
 
-    private static func extractText(fromContentItems items: [[String: Any]]?) -> String? {
+    private nonisolated static func extractText(fromContentItems items: [[String: Any]]?) -> String? {
         items?
             .compactMap { item in
                 if let text = item["text"] as? String { return text }
@@ -2867,14 +2669,11 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     }
 
     func listChatSessionsAsync(limit: Int, matchingDirectory: URL?) async -> [ChatSessionListItem] {
-        await Self.ephemeralThreadListAsync(limit: limit, matchingDirectory: matchingDirectory)
+        await CodexThreadCoordinator.ephemeralThreadListAsync(limit: limit, matchingDirectory: matchingDirectory)
     }
 
     static func renameChatSession(id: String, name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        Task {
-            try? await CodexThreadCoordinator.ephemeralRename(threadId: id, name: trimmed)
-        }
+        CodexSessionPersistence.renameChatSession(id: id, name: name)
     }
 
     static func toolIconName(for toolName: String) -> String {
@@ -2968,14 +2767,11 @@ extension CodexAppServerProvider: HeadlessChatProviding {
     private func disconnectAndReset() async {
         connectTask?.cancel()
         connectTask = nil
-        clearAssistantDeltaWork()
-        clearMarkdownPreRenderWork()
+        toolEventReducer.reset(messages: &messages)
         rpc?.terminate()
         rpc = nil
         initialized = false
         threadCoordinator.clearRuntimeState()
-        currentAssistantMessageIndex = nil
-        lastRetryStatusMessage = nil
         session = SessionInfo()
         sessionCustomInstructionsText = ""
         chatReviewStateDescription = nil
@@ -2986,8 +2782,6 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         pendingApprovalRequest = nil
         approvalCoordinator.reset()
         currentRun.reset()
-        itemToolUseMessageIndex.removeAll()
-        itemOutputBuffers.removeAll()
     }
 
     private func resumeThread(id: String) async {
@@ -3045,337 +2839,16 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         }
     }
 
-    private static func ephemeralRename(threadId: String, name: String) async throws {
-        await MainActor.run {
-            ClaudeIDEBridgeService.shared.startIfNeeded()
-            CanopeContextFiles.writeClaudeIDEMcpConfig()
-        }
-        let args = buildAppServerArguments(bridgeURL: resolvedBridgeStatic())
-        let session = CodexAppServerRPCSession()
-        let env = buildProcessEnvironment()
-        try session.startProcess(arguments: codexLaunchArguments() + args, environment: env)
-        _ = try await session.call(
-            method: "initialize",
-            params: [
-                "clientInfo": ["name": "canope_rename", "title": "Canope", "version": "1.0.0"],
-                "capabilities": ["experimentalApi": true] as [String: Any],
-            ],
-            requestId: 0
-        )
-        try session.notify(method: "initialized", params: [:])
-        _ = try await session.call(
-            method: "thread/name/set",
-            params: ["threadId": threadId, "name": name]
-        )
-        session.terminate()
-    }
-
     nonisolated static func ephemeralThreadList(limit: Int, matchingDirectory: URL?) -> [ChatSessionListItem] {
-        final class Box: @unchecked Sendable {
-            var rows: [ChatSessionListItem] = []
-        }
-        let box = Box()
-        let sem = DispatchSemaphore(value: 0)
-        Task {
-            box.rows = await ephemeralThreadListAsync(limit: limit, matchingDirectory: matchingDirectory)
-            sem.signal()
-        }
-        sem.wait()
-        return box.rows
-    }
-
-    private static func ephemeralThreadListAsync(limit: Int, matchingDirectory: URL?) async -> [ChatSessionListItem] {
-        await MainActor.run {
-            ClaudeIDEBridgeService.shared.startIfNeeded()
-            CanopeContextFiles.writeClaudeIDEMcpConfig()
-        }
-        let args = buildAppServerArguments(bridgeURL: resolvedBridgeStatic())
-        let rpcSession = CodexAppServerRPCSession()
-        let env = buildProcessEnvironment()
-        do {
-            try rpcSession.startProcess(arguments: codexLaunchArguments() + args, environment: env)
-            _ = try await rpcSession.call(
-                method: "initialize",
-                params: [
-                    "clientInfo": ["name": "canope_list", "title": "Canope", "version": "1.0.0"],
-                    "capabilities": ["experimentalApi": true] as [String: Any],
-                ],
-                requestId: 0
-            )
-            try rpcSession.notify(method: "initialized", params: [:])
-            var params: [String: Any] = [
-                "limit": limit,
-                "sortKey": "updated_at",
-                "sourceKinds": ["appServer", "cli", "vscode", "exec"],
-            ]
-            if let d = matchingDirectory {
-                params["cwd"] = d.path
-            }
-            guard let res = try await rpcSession.call(method: "thread/list", params: params) as? [String: Any],
-                  let data = res["data"] as? [[String: Any]]
-            else {
-                rpcSession.terminate()
-                return []
-            }
-            let cwdPath = matchingDirectory?.path ?? ""
-            let proj = (cwdPath as NSString).lastPathComponent
-            var out: [ChatSessionListItem] = []
-            for t in data {
-                let id = (t["id"] as? String) ?? ""
-                let name = (t["name"] as? String) ?? (t["preview"] as? String) ?? ""
-                let date = parseCodexThreadDate(t["updatedAt"] ?? t["createdAt"])
-                out.append(ChatSessionListItem(id: id, name: name, project: proj, date: date))
-            }
-            rpcSession.terminate()
-            return out
-        } catch {
-            rpcSession.terminate()
-            return []
-        }
-    }
-
-    private static func parseCodexThreadDate(_ value: Any?) -> Date? {
-        guard let d = value as? Double else { return nil }
-        if d > 1_000_000_000_000 {
-            return Date(timeIntervalSince1970: d / 1000)
-        }
-        return Date(timeIntervalSince1970: d)
-    }
-
-    private static func resolvedBridgeStatic() -> String {
-        if let v = ProcessInfo.processInfo.environment["CANOPE_IDE_BRIDGE_URL"], !v.isEmpty { return v }
-        if let v = ProcessInfo.processInfo.environment["CANOPE_CLAUDE_IDE_BRIDGE_URL"], !v.isEmpty { return v }
-        return CanopeContextFiles.claudeIDEBridgeURL
-    }
-
-    nonisolated private static func reviewTarget(from command: String?) -> [String: Any] {
-        let trimmed = command?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !trimmed.isEmpty else {
-            return ["type": "uncommittedChanges"]
-        }
-
-        if trimmed.hasPrefix("branch ") {
-            let branch = String(trimmed.dropFirst("branch ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !branch.isEmpty else { return ["type": "uncommittedChanges"] }
-            return [
-                "type": "baseBranch",
-                "branch": branch,
-            ]
-        }
-
-        if trimmed.hasPrefix("commit ") {
-            let sha = String(trimmed.dropFirst("commit ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !sha.isEmpty else { return ["type": "uncommittedChanges"] }
-            return [
-                "type": "commit",
-                "sha": sha,
-            ]
-        }
-
-        return [
-            "type": "custom",
-            "instructions": trimmed,
-        ]
+        CodexSessionPersistence.ephemeralThreadList(limit: limit, matchingDirectory: matchingDirectory)
     }
 
     static func historySnapshot(fromThreadReadResult result: [String: Any]) -> CodexThreadHistorySnapshot? {
-        guard let thread = result["thread"] as? [String: Any] else { return nil }
-        let turns = thread["turns"] as? [[String: Any]] ?? []
-        var messages: [ChatMessage] = []
-        var reviewStateDescription: String?
-        var reviewStatusBadge: ChatStatusBadge?
-
-        for turn in turns {
-            for item in turn["items"] as? [[String: Any]] ?? [] {
-                messages.append(contentsOf: historyMessages(
-                    for: item,
-                    reviewStateDescription: &reviewStateDescription,
-                    reviewStatusBadge: &reviewStatusBadge
-                ))
-            }
-        }
-
-        return CodexThreadHistorySnapshot(
-            name: thread["name"] as? String,
-            turns: turns.count,
-            messages: messages,
-            reviewStateDescription: reviewStateDescription,
-            reviewStatusBadge: reviewStatusBadge
-        )
+        CodexSessionPersistence.historySnapshot(fromThreadReadResult: result)
     }
 
-    private static func historyMessages(
-        for item: [String: Any],
-        reviewStateDescription currentReviewStateDescription: inout String?,
-        reviewStatusBadge currentReviewStatusBadge: inout ChatStatusBadge?
-    ) -> [ChatMessage] {
-        guard let type = item["type"] as? String else { return [] }
-
-        switch type {
-        case "userMessage":
-            guard let text = historyUserMessageText(from: item) else { return [] }
-            var message = ChatMessage(
-                role: .user,
-                content: text,
-                timestamp: Date(),
-                isStreaming: false,
-                isCollapsed: false
-            )
-            message.isFromHistory = true
-            return [message]
-
-        case "agentMessage":
-            let text = sanitizeAssistantDisplayText((item["text"] as? String) ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return [] }
-            var message = ChatMessage(
-                role: .assistant,
-                content: text,
-                timestamp: Date(),
-                isStreaming: false,
-                isCollapsed: false
-            )
-            message.isFromHistory = true
-            return [message]
-
-        case "plan":
-            let text = ((item["text"] as? String) ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return [] }
-            var message = ChatMessage(
-                role: .assistant,
-                content: text,
-                timestamp: Date(),
-                isStreaming: false,
-                isCollapsed: false,
-                presentationKind: .plan
-            )
-            message.isFromHistory = true
-            return [message]
-
-        case "commandExecution":
-            return [historyToolMessage(
-                toolName: "Bash",
-                content: commandExecutionSummary(item),
-                toolInput: jsonString(item["command"] ?? item["commandActions"] ?? item),
-                toolOutput: completedCommandExecutionSummary(item, bufferedOutput: item["aggregatedOutput"] as? String)
-            )]
-
-        case "fileChange":
-            return [historyToolMessage(
-                toolName: "Edit",
-                content: fileChangeSummary(item),
-                toolInput: jsonString(item["changes"] ?? item),
-                toolOutput: completedFileChangeSummary(item, bufferedOutput: item["aggregatedOutput"] as? String)
-            )]
-
-        case "mcpToolCall":
-            let name = (item["tool"] as? String) ?? "mcp"
-            let summary = (item["server"] as? String).map { "\($0) · \(name)" } ?? name
-            return [historyToolMessage(
-                toolName: name,
-                content: summary,
-                toolInput: jsonString(item["arguments"]),
-                toolOutput: completedDynamicToolCallSummary(item)
-            )]
-
-        case "dynamicToolCall":
-            return [historyToolMessage(
-                toolName: (item["tool"] as? String) ?? "dynamicTool",
-                content: dynamicToolCallSummary(item),
-                toolInput: dynamicToolCallInputPreview(item) ?? jsonString(item["arguments"] ?? item),
-                toolOutput: completedDynamicToolCallSummary(item)
-            )]
-
-        case "webSearch":
-            return [historyToolMessage(
-                toolName: "WebSearch",
-                content: webSearchSummary(item),
-                toolInput: webSearchInputPreview(item) ?? jsonString(["query": item["query"] as? String ?? "", "action": item["action"] as Any]),
-                toolOutput: completedWebSearchSummary(item)
-            )]
-
-        case "imageView":
-            return [historyToolMessage(
-                toolName: "ImageView",
-                content: imageViewSummary(item),
-                toolInput: jsonString(["path": item["path"] as? String ?? ""]),
-                toolOutput: completedImageViewSummary(item)
-            )]
-
-        case "collabAgentToolCall":
-            return [historyToolMessage(
-                toolName: "Agent",
-                content: collabAgentToolCallSummary(item),
-                toolInput: collabAgentToolCallInputPreview(item) ?? jsonString(item),
-                toolOutput: completedCollabAgentToolCallSummary(item)
-            )]
-
-        case "enteredReviewMode":
-            currentReviewStateDescription = reviewStateDescription(item)
-            currentReviewStatusBadge = ChatStatusBadge(kind: .reviewActive, text: currentReviewStateDescription ?? "Review active")
-            return []
-
-        case "exitedReviewMode":
-            currentReviewStateDescription = nil
-            currentReviewStatusBadge = ChatStatusBadge(kind: .reviewDone, text: "Review terminee")
-            guard let rendered = (item["review"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !rendered.isEmpty
-            else {
-                return []
-            }
-            let parsed = parseReviewOutput(rendered)
-            var renderedMessages: [ChatMessage] = []
-            if let summary = parsed.summary, !summary.isEmpty {
-                var summaryMessage = ChatMessage(
-                    role: .assistant,
-                    content: summary,
-                    timestamp: Date(),
-                    isStreaming: false,
-                    isCollapsed: false
-                )
-                summaryMessage.isFromHistory = true
-                renderedMessages.append(summaryMessage)
-            }
-            for finding in parsed.findings {
-                var findingMessage = ChatMessage(
-                    role: .assistant,
-                    content: finding.body,
-                    timestamp: Date(),
-                    isStreaming: false,
-                    isCollapsed: false,
-                    presentationKind: .reviewFinding,
-                    reviewFinding: finding
-                )
-                findingMessage.isFromHistory = true
-                renderedMessages.append(findingMessage)
-            }
-            return renderedMessages
-
-        default:
-            return []
-        }
-    }
-
-    private static func historyToolMessage(
-        toolName: String,
-        content: String,
-        toolInput: String?,
-        toolOutput: String?
-    ) -> ChatMessage {
-        var message = ChatMessage(
-            role: .toolUse,
-            content: content,
-            timestamp: Date(),
-            toolName: toolName,
-            toolInput: toolInput,
-            toolOutput: toolOutput,
-            isStreaming: false,
-            isCollapsed: true
-        )
-        message.isFromHistory = true
-        return message
+    nonisolated static func reviewTarget(from command: String?) -> [String: Any] {
+        CodexSessionPersistence.reviewTarget(from: command)
     }
 
     nonisolated static func cleanedResumedUserMessage(_ text: String) -> String {
@@ -3394,41 +2867,6 @@ extension CodexAppServerProvider: HeadlessChatProviding {
         let contentRange = match.range(at: 1)
         guard contentRange.location != NSNotFound else { return text }
         return nsText.substring(with: contentRange).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func historyUserMessageText(from item: [String: Any]) -> String? {
-        let content = item["content"] as? [[String: Any]] ?? []
-        let fragments = content.compactMap { fragment -> String? in
-            let type = (fragment["type"] as? String) ?? ""
-            switch type {
-            case "text":
-                return (fragment["text"] as? String)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .nilIfEmpty
-            case "localImage":
-                if let path = (fragment["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
-                    return "[Image jointe: \((path as NSString).lastPathComponent)]"
-                }
-                return "[Image jointe]"
-            case "image":
-                if let url = (fragment["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
-                    return "[Image jointe: \(url)]"
-                }
-                return "[Image jointe]"
-            case "mention", "skill":
-                let name = (fragment["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                return name?.nilIfEmpty.map { "[\($0)]" } ?? "[Contexte joint]"
-            default:
-                if let text = (fragment["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-                    return text
-                }
-                return nil
-            }
-        }
-
-        let text = fragments.joined(separator: "\n\n").nilIfEmpty
-        let cleaned = text.map(cleanedResumedUserMessage(_:))
-        return cleaned?.nilIfEmpty
     }
 }
 
@@ -3451,12 +2889,12 @@ extension CodexAppServerProvider {
     }
 
     func testFlushPendingAssistantDelta() {
-        flushPendingAssistantDelta()
-        clearAssistantDeltaWork()
+        toolEventReducer.flushPendingAssistantDelta(messages: &messages)
+        toolEventReducer.clearAssistantDeltaWork()
     }
 
     func testFlushMarkdownPreRender() {
-        flushMarkdownPreRender()
+        toolEventReducer.flushMarkdownPreRender(into: &messages)
     }
 
     func testHandleServerRequest(id: Int, method: String, params: [String: Any]) {
@@ -3478,21 +2916,11 @@ extension CodexAppServerProvider {
     }
 
     func testResolvePendingMarkdownSynchronously() {
-        guard !pendingMarkdown.isEmpty else { return }
-        let batch = pendingMarkdown
-        pendingMarkdown.removeAll()
-        for (id, text) in batch {
-            let attr = MarkdownBlockView.renderAttributedPreviewForBackground(text)
-            if let idx = messages.firstIndex(where: { $0.id == id }) {
-                messages[idx].preRenderedMarkdown = attr
-                ChatMarkdownPolicy.applyPreRenderedMarkdownRetentionBudget(to: &messages)
-            }
-        }
-        markdownTask = nil
+        toolEventReducer.flushMarkdownPreRender(into: &messages)
     }
 
     var testPendingMarkdownCount: Int {
-        pendingMarkdown.count
+        toolEventReducer.pendingMarkdownCount
     }
 
     static func testServerRequestFields(method: String, params: [String: Any]) -> [ChatInteractiveField] {

@@ -67,6 +67,39 @@ final class PDFSolidificationTests: XCTestCase {
         XCTAssertEqual(Double(annotation.font?.pointSize ?? 0), 18, accuracy: 0.1)
     }
 
+    @MainActor
+    func testPDFKitCoordinatorTeardownIsSafeAndIdempotent() {
+        let view = PDFKitView(
+            document: PDFDocument(),
+            fileURL: URL(fileURLWithPath: "/tmp/test.pdf"),
+            currentTool: .constant(.pointer),
+            currentColor: .constant(.systemYellow),
+            selectedAnnotation: .constant(nil),
+            selectedText: .constant(""),
+            restoredPageIndex: nil,
+            searchState: PDFSearchUIState(),
+            onDocumentChanged: {},
+            onCurrentPageChanged: { _ in },
+            onMarkupAppearanceNeedsRefresh: {},
+            clearSelectionAction: .constant(nil),
+            undoAction: .constant(nil),
+            fitToWidthAction: .constant(nil),
+            applyBridgeAnnotation: .constant(nil),
+            onUserInteraction: {}
+        )
+
+        let coordinator = view.makeCoordinator()
+        coordinator.pdfView = InteractivePDFView()
+        coordinator.overlay = SelectionOverlayView()
+        coordinator.cursorView = CursorTrackingView()
+        coordinator.assignControllerViews()
+
+        coordinator.teardown()
+        coordinator.teardown()
+
+        XCTAssertTrue(true)
+    }
+
     private func makeBlankPage() -> PDFPage {
         let image = NSImage(size: NSSize(width: 200, height: 200))
         image.lockFocus()

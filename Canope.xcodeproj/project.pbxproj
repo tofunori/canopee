@@ -14,6 +14,7 @@
 		05DC7906E8C40724A4AD9E41 /* RecentTeXFilesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CCFB1D31C977634472B234D /* RecentTeXFilesStore.swift */; };
 		068F8F649D14185E05258883 /* TextNoteEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9374D4066FF6C281C46D277 /* TextNoteEditorView.swift */; };
 		06EE728427877B00AFBB8D0A /* PaperRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F5330808F861EA6C2686A88 /* PaperRowView.swift */; };
+		071576095650BF2E1B1AA0C8 /* ChatComposerState.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76135D5CFA27719FEF983E8 /* ChatComposerState.swift */; };
 		085341ECE38ECACB0EC9A1E7 /* CodeOutputWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2168A22984A0573806D7375 /* CodeOutputWorkspace.swift */; };
 		08926612CCC6A55BF2B361C5 /* BibliographyCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC183AA81BFC67D388569EAC /* BibliographyCommands.swift */; };
 		08C11D9AD3D55B9EEECCD694 /* AnnotationTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 083BC2D172129785C6152114 /* AnnotationTool.swift */; };
@@ -22,6 +23,7 @@
 		11C7CAFDE5222CAEB518DCE8 /* AnnotationColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAA8E9FC6B60137A6822B07A /* AnnotationColor.swift */; };
 		14482E7BB530827BBA82E7B1 /* PDFReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2088594C9985A874B328F3 /* PDFReaderView.swift */; };
 		14C11C156E76DB228DADD104 /* CodexApprovalCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A82BBCBB237E27B00533D0 /* CodexApprovalCoordinator.swift */; };
+		188B0BBB2555ED83AA6DEBC9 /* ChatHeaderState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2239743BB5ACF5B20BB0A65E /* ChatHeaderState.swift */; };
 		197D9DDD43AACFF32FEA8A22 /* PaperCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 990C6DE7DF5D83B0FEF46EE9 /* PaperCollection.swift */; };
 		1AA76DACF312E642C925E857 /* PDFSolidificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2880ED764C9CE73438152F8D /* PDFSolidificationTests.swift */; };
 		1B24B40C25F526C875AF959A /* ClaudeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F0E3A4CBD7E0C8753DA44D0 /* ClaudeService.swift */; };
@@ -53,11 +55,13 @@
 		563C0ED08E10FB592419D207 /* LaTeXCompiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD312ECC61638F9C7416BE7 /* LaTeXCompiler.swift */; };
 		5758CFDE7E5BD7CDB63CE42D /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA67F9267B7A075D1567ECE /* MainWindow.swift */; };
 		58BE54C5E0F8743CAD064A0B /* BridgeCommandWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65641D21C00AF173744B276C /* BridgeCommandWatcher.swift */; };
+		59779F7F88F4D4CF81F3179E /* CodexNotificationRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC2D75757C816ACAA4D561BA /* CodexNotificationRouter.swift */; };
 		5A5C3C970350B253F747E628 /* ClaudeIDESelectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE7CABB496A722FDA2F4D18E /* ClaudeIDESelectionState.swift */; };
 		5C28940D18AE2A973DBCCA3C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CF070FD58C3AF62DE1BB997D /* Assets.xcassets */; };
 		5D74AA253AD2BD102297AA51 /* MarkdownFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E2E074A291DEEC80A5C0346 /* MarkdownFormatting.swift */; };
 		5EA34618AC4F89063DB1971C /* CodexCurrentRunState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 958FBB2472EEFF4B4B484C85 /* CodexCurrentRunState.swift */; };
 		5F0DBB2FD861D5AD77E6ADC2 /* MarkdownEditorPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8747D09D0D2598E0346790 /* MarkdownEditorPreviewView.swift */; };
+		6185F0AC6A919431EC409518 /* ClaudeStreamReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A87BFBF0F417D4C5E98E9892 /* ClaudeStreamReducer.swift */; };
 		676D9C605B9AB759B62B8459 /* ShapeAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E472B4EC8C837F4FB0A749 /* ShapeAnnotations.swift */; };
 		6A172AE0DDA83B7FF8F8B41D /* UnifiedEditorFileOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 012CED37B0EE64872AC05361 /* UnifiedEditorFileOperations.swift */; };
 		6E893E157652FF2DAAB5111D /* BibliographyCommandRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82008C95D05B12E56942D883 /* BibliographyCommandRouter.swift */; };
@@ -65,6 +69,7 @@
 		70C75ABE02D9FD0C5D3AF412 /* HeadlessChatProviding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DA16CAB845F1F4C1A1223DD /* HeadlessChatProviding.swift */; };
 		71496CA6969B323D91F23F1A /* PDFAnnotationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6383933396031BE34ED69B29 /* PDFAnnotationController.swift */; };
 		739882E43B9635963527D1DA /* AppStrings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8916363DC1E3690D34899077 /* AppStrings.swift */; };
+		7419E09D2A7FE3F77926475C /* CodexToolEventReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECC0AEFB0EA076234EBFC978 /* CodexToolEventReducer.swift */; };
 		777E23C22D1D291C6EF3A714 /* UnifiedEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F170D57B17CC00EA3EC557CD /* UnifiedEditorView.swift */; };
 		79A7DFD471B0B7B6D32CB264 /* ChatApprovalFormModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D3A04DA3CBBC01276FC8FD1 /* ChatApprovalFormModel.swift */; };
 		7C8E8AF16DD8ABF9EF0C6FAE /* DiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888AB1D2ECB6F588E3C27898 /* DiffEngine.swift */; };
@@ -77,6 +82,7 @@
 		949854277CCAA69A13D285BF /* AnnotationCursorFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FD75E4A5D68AC9725D6DFD /* AnnotationCursorFactory.swift */; };
 		992B2AE06A1940F4E500F096 /* WorkspaceSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C57612B1DBD072F8ECA3D83D /* WorkspaceSessionStore.swift */; };
 		9954FA03F5616D657AB55EA2 /* CanopeContextFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B877091A70654C98A33D25D /* CanopeContextFiles.swift */; };
+		99A61D92991F8BAAF3CD48B8 /* ClaudeSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F899962953DD8E3EE4D407 /* ClaudeSessionStore.swift */; };
 		9AD824E4E9A070E1BC8936A1 /* ChatSelectionContextStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E1194D732259B52B5A6E066 /* ChatSelectionContextStore.swift */; };
 		9B97BD5EED1DE5B084284D09 /* LaTeXUIState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10CEB9D3C002C939383D24AB /* LaTeXUIState.swift */; };
 		9D883E9407E041B255B54B3C /* PDFAnnotationMarkdownExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC4699D30A80C554574BB3A /* PDFAnnotationMarkdownExporter.swift */; };
@@ -94,6 +100,7 @@
 		B029D2C9BAE9A10FEF614973 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6863275D849EA554D73845B /* ChatMessage.swift */; };
 		B16CD80407DDAF29CB6A131C /* PDFFileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A4DC9894C16B5FB4C79B498 /* PDFFileManager.swift */; };
 		B19CA309BF8858244F4FDCE8 /* LaTeXEditorAnnotationExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B57071B4DCB48AFE3F0C4E19 /* LaTeXEditorAnnotationExport.swift */; };
+		B6131CF0C4066F1E6D5172AB /* ChatMessageActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 605EB21F456696A56E186B42 /* ChatMessageActions.swift */; };
 		BA1CC7C393692A6F0E92B75E /* ClaudeIDEBridgeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46E0CF6500C50097F0D77FF5 /* ClaudeIDEBridgeService.swift */; };
 		BA26CC6387AE6CC2E7447200 /* LaTeXTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64494B3369625558447F0913 /* LaTeXTextEditor.swift */; };
 		BA4F8E1EC05941E3D78F64CF /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB6807CBA5694C83AE1A3317 /* LibraryView.swift */; };
@@ -105,6 +112,7 @@
 		C143C9F848CA1F82B914653C /* AnnotationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1190F7AF51184A02BE7D55D /* AnnotationService.swift */; };
 		C25702DEDC310E8351CFB2B1 /* ChatCommandRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6035403BA3B30324A5BAEC7 /* ChatCommandRouter.swift */; };
 		C3EC5DE351A6001DAF0CFE2B /* LaTeXEditorTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46B7B5349924068C037B75EE /* LaTeXEditorTypes.swift */; };
+		C4A75134B44546818DD6F8F9 /* CodexSessionPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F050CA5FAF75C5FAAE69474 /* CodexSessionPersistence.swift */; };
 		C4B0A31E20E8982DDFE35719 /* PDFTextBoxEditingController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B120D85F6EA57AD190ED3362 /* PDFTextBoxEditingController.swift */; };
 		C5F0ACCCC4A8CA7C4127C5C7 /* CodeRunService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A9B7478F30A459BFAEEA8F7 /* CodeRunService.swift */; };
 		C6B70CAEA7F3EDC17BEFCE75 /* ClaudeCLIWrapperService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79F2AFB9672171E0D8B26550 /* ClaudeCLIWrapperService.swift */; };
@@ -118,6 +126,7 @@
 		D7290357A05443F17B944144 /* ChatMarkdownViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0859BF98C5E6A5439606E6F6 /* ChatMarkdownViews.swift */; };
 		D7B195A5A096BA88266FA781 /* BibTeXSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A829CED977845DDB8042D45C /* BibTeXSerializer.swift */; };
 		DC524768FC0FE9132D96AF41 /* CodeSyntaxSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 455079B786FB26CBD1E28853 /* CodeSyntaxSupport.swift */; };
+		E18E192636EF074D20013D8D /* ClaudeSendPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E1C28639659B275190EB1E5 /* ClaudeSendPipeline.swift */; };
 		E282F51EE6ACB9CE12273AF4 /* LaTeXLandingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60D85B0F6F272FE9FB671B5B /* LaTeXLandingView.swift */; };
 		E2B72C2390C87872E4893FA2 /* ClipboardCitationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84F5E69EE7A3B0F720B83B8C /* ClipboardCitationService.swift */; };
 		E3D04912305A19669C61147F /* StandalonePDFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293F7C980E5E160F1348EB20 /* StandalonePDFView.swift */; };
@@ -128,6 +137,7 @@
 		E961DA6526A566628D970803 /* LaTeXEditorContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04324231EDCC41DC5B45C566 /* LaTeXEditorContainer.swift */; };
 		EC76229730BAB292488280B9 /* AppChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97A471E5ABAA4E7B828E80D /* AppChrome.swift */; };
 		ECAC94B276E45F53265E9302 /* Paper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A821013C94B5DDD27B1BDB9 /* Paper.swift */; };
+		ED9B026EAC01446C89C012C5 /* ClaudeTranscriptLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = D39DD641A56FCA0E85C34169 /* ClaudeTranscriptLoader.swift */; };
 		EEB926D196BA940638B631E0 /* LaTeXEditorBibliographyActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6A6381BF5995C25448277AE /* LaTeXEditorBibliographyActions.swift */; };
 		F14246A9D812FF0E8F672034 /* MainWindowTitleBarBehavior.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0124D8B26DAB0457F43AB2B1 /* MainWindowTitleBarBehavior.swift */; };
 		F1CC6A76F1AC90294F252EC5 /* AnnotationSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB1A62E7F2F664FEE636B9C /* AnnotationSidebarView.swift */; };
@@ -173,6 +183,7 @@
 		1ED6A374731ADD1C494DCDEB /* DirectoryEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectoryEventMonitor.swift; sourceTree = "<group>"; };
 		1F0E3A4CBD7E0C8753DA44D0 /* ClaudeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeService.swift; sourceTree = "<group>"; };
 		221ACF8C5634C933DA0ACD86 /* RichMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichMarkdownView.swift; sourceTree = "<group>"; };
+		2239743BB5ACF5B20BB0A65E /* ChatHeaderState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHeaderState.swift; sourceTree = "<group>"; };
 		25C8AD5714D9F162D915F899 /* PaperContextWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperContextWriter.swift; sourceTree = "<group>"; };
 		27294933C87499758E8F72AD /* MainWindowTabController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowTabController.swift; sourceTree = "<group>"; };
 		2880ED764C9CE73438152F8D /* PDFSolidificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFSolidificationTests.swift; sourceTree = "<group>"; };
@@ -197,6 +208,8 @@
 		59B07E152FE9E2BF485A696A /* ProcessSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessSupport.swift; sourceTree = "<group>"; };
 		5B29836069A5EA8CAA41CDDE /* CodeTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeTextEditor.swift; sourceTree = "<group>"; };
 		5BA67F9267B7A075D1567ECE /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
+		5F050CA5FAF75C5FAAE69474 /* CodexSessionPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSessionPersistence.swift; sourceTree = "<group>"; };
+		605EB21F456696A56E186B42 /* ChatMessageActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessageActions.swift; sourceTree = "<group>"; };
 		60D85B0F6F272FE9FB671B5B /* LaTeXLandingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXLandingView.swift; sourceTree = "<group>"; };
 		6383933396031BE34ED69B29 /* PDFAnnotationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFAnnotationController.swift; sourceTree = "<group>"; };
 		64494B3369625558447F0913 /* LaTeXTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXTextEditor.swift; sourceTree = "<group>"; };
@@ -238,11 +251,13 @@
 		9AD029C9213831829CA33D75 /* SelectionOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionOverlayView.swift; sourceTree = "<group>"; };
 		9B877091A70654C98A33D25D /* CanopeContextFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanopeContextFiles.swift; sourceTree = "<group>"; };
 		9D3A04DA3CBBC01276FC8FD1 /* ChatApprovalFormModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApprovalFormModel.swift; sourceTree = "<group>"; };
+		9E1C28639659B275190EB1E5 /* ClaudeSendPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSendPipeline.swift; sourceTree = "<group>"; };
 		A1190F7AF51184A02BE7D55D /* AnnotationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationService.swift; sourceTree = "<group>"; };
 		A22CE0F3F75B2FB0F7F0FB46 /* CanopeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanopeApp.swift; sourceTree = "<group>"; };
 		A6A6381BF5995C25448277AE /* LaTeXEditorBibliographyActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXEditorBibliographyActions.swift; sourceTree = "<group>"; };
 		A829CED977845DDB8042D45C /* BibTeXSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibTeXSerializer.swift; sourceTree = "<group>"; };
 		A8393C957EA461C35DBDFAC6 /* PDFSearchController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFSearchController.swift; sourceTree = "<group>"; };
+		A87BFBF0F417D4C5E98E9892 /* ClaudeStreamReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeStreamReducer.swift; sourceTree = "<group>"; };
 		AAA8E9FC6B60137A6822B07A /* AnnotationColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnotationColor.swift; sourceTree = "<group>"; };
 		AC183AA81BFC67D388569EAC /* BibliographyCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographyCommands.swift; sourceTree = "<group>"; };
 		B120D85F6EA57AD190ED3362 /* PDFTextBoxEditingController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFTextBoxEditingController.swift; sourceTree = "<group>"; };
@@ -257,6 +272,9 @@
 		CAED9E2A18A12DF28633AD06 /* CursorTrackingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorTrackingView.swift; sourceTree = "<group>"; };
 		CE7CABB496A722FDA2F4D18E /* ClaudeIDESelectionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeIDESelectionState.swift; sourceTree = "<group>"; };
 		CF070FD58C3AF62DE1BB997D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D0F899962953DD8E3EE4D407 /* ClaudeSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSessionStore.swift; sourceTree = "<group>"; };
+		D39DD641A56FCA0E85C34169 /* ClaudeTranscriptLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeTranscriptLoader.swift; sourceTree = "<group>"; };
+		D76135D5CFA27719FEF983E8 /* ChatComposerState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposerState.swift; sourceTree = "<group>"; };
 		D85697D00C8144CC24AF7621 /* UnifiedEditorAnnotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEditorAnnotations.swift; sourceTree = "<group>"; };
 		D8657BF0DDDC9F324F468B8F /* CodexCustomInstructionsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexCustomInstructionsStore.swift; sourceTree = "<group>"; };
 		D8B83A592C289026BD042DF0 /* BibliographicRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BibliographicRecord.swift; sourceTree = "<group>"; };
@@ -265,9 +283,11 @@
 		D9374D4066FF6C281C46D277 /* TextNoteEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextNoteEditorView.swift; sourceTree = "<group>"; };
 		DB6807CBA5694C83AE1A3317 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		DBE937CC6E9F3F88708FD66B /* ChatMarkdownPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMarkdownPolicy.swift; sourceTree = "<group>"; };
+		DC2D75757C816ACAA4D561BA /* CodexNotificationRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexNotificationRouter.swift; sourceTree = "<group>"; };
 		DD29038B45F072F61CB07A2F /* ChatSpinner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSpinner.swift; sourceTree = "<group>"; };
 		E33D2548F1DC7AA906538177 /* MarkdownPreviewRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPreviewRenderer.swift; sourceTree = "<group>"; };
 		E6035403BA3B30324A5BAEC7 /* ChatCommandRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatCommandRouter.swift; sourceTree = "<group>"; };
+		ECC0AEFB0EA076234EBFC978 /* CodexToolEventReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexToolEventReducer.swift; sourceTree = "<group>"; };
 		ED0AD2020FB30E831985E99C /* UnifiedEditorExecutionActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEditorExecutionActions.swift; sourceTree = "<group>"; };
 		EFB6E522EEF43A3E8AF22C24 /* PDFDocumentRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFDocumentRepository.swift; sourceTree = "<group>"; };
 		F170D57B17CC00EA3EC557CD /* UnifiedEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEditorView.swift; sourceTree = "<group>"; };
@@ -433,6 +453,9 @@
 				9B877091A70654C98A33D25D /* CanopeContextFiles.swift */,
 				9D3A04DA3CBBC01276FC8FD1 /* ChatApprovalFormModel.swift */,
 				E6035403BA3B30324A5BAEC7 /* ChatCommandRouter.swift */,
+				D76135D5CFA27719FEF983E8 /* ChatComposerState.swift */,
+				2239743BB5ACF5B20BB0A65E /* ChatHeaderState.swift */,
+				605EB21F456696A56E186B42 /* ChatMessageActions.swift */,
 				2E1194D732259B52B5A6E066 /* ChatSelectionContextStore.swift */,
 				4BF6482676052643C5005496 /* ChildProcessRegistry.swift */,
 				07E3E32FED9791404F430AF7 /* CitationKeyService.swift */,
@@ -440,7 +463,11 @@
 				9516CD22BCEDBB5CEC7272F9 /* ClaudeHeadlessProvider.swift */,
 				46E0CF6500C50097F0D77FF5 /* ClaudeIDEBridgeService.swift */,
 				CE7CABB496A722FDA2F4D18E /* ClaudeIDESelectionState.swift */,
+				9E1C28639659B275190EB1E5 /* ClaudeSendPipeline.swift */,
 				1F0E3A4CBD7E0C8753DA44D0 /* ClaudeService.swift */,
+				D0F899962953DD8E3EE4D407 /* ClaudeSessionStore.swift */,
+				A87BFBF0F417D4C5E98E9892 /* ClaudeStreamReducer.swift */,
+				D39DD641A56FCA0E85C34169 /* ClaudeTranscriptLoader.swift */,
 				84F5E69EE7A3B0F720B83B8C /* ClipboardCitationService.swift */,
 				1A9B7478F30A459BFAEEA8F7 /* CodeRunService.swift */,
 				455079B786FB26CBD1E28853 /* CodeSyntaxSupport.swift */,
@@ -448,8 +475,11 @@
 				132E2E5C613948B597078E88 /* CodexAppServerProvider.swift */,
 				958FBB2472EEFF4B4B484C85 /* CodexCurrentRunState.swift */,
 				D8657BF0DDDC9F324F468B8F /* CodexCustomInstructionsStore.swift */,
+				DC2D75757C816ACAA4D561BA /* CodexNotificationRouter.swift */,
 				817AB4575BB2FD6737478233 /* CodexPromptComposer.swift */,
+				5F050CA5FAF75C5FAAE69474 /* CodexSessionPersistence.swift */,
 				0C70D5B8CDFDB995D924C5B0 /* CodexThreadCoordinator.swift */,
+				ECC0AEFB0EA076234EBFC978 /* CodexToolEventReducer.swift */,
 				888AB1D2ECB6F588E3C27898 /* DiffEngine.swift */,
 				1ED6A374731ADD1C494DCDEB /* DirectoryEventMonitor.swift */,
 				770C8EA54B75DAA627BCA017 /* ImageArtifactRepository.swift */,
@@ -703,9 +733,12 @@
 				79A7DFD471B0B7B6D32CB264 /* ChatApprovalFormModel.swift in Sources */,
 				C25702DEDC310E8351CFB2B1 /* ChatCommandRouter.swift in Sources */,
 				3234529B94EC384D46A7D572 /* ChatComponents.swift in Sources */,
+				071576095650BF2E1B1AA0C8 /* ChatComposerState.swift in Sources */,
+				188B0BBB2555ED83AA6DEBC9 /* ChatHeaderState.swift in Sources */,
 				C970873C07645D6703C384B6 /* ChatMarkdownPolicy.swift in Sources */,
 				D7290357A05443F17B944144 /* ChatMarkdownViews.swift in Sources */,
 				B029D2C9BAE9A10FEF614973 /* ChatMessage.swift in Sources */,
+				B6131CF0C4066F1E6D5172AB /* ChatMessageActions.swift in Sources */,
 				9AD824E4E9A070E1BC8936A1 /* ChatSelectionContextStore.swift in Sources */,
 				8FBB128A8486932DA0C8BCDC /* ChatSpinner.swift in Sources */,
 				4C5AB91C6BB49CDBBDFE77CE /* ChildProcessRegistry.swift in Sources */,
@@ -714,7 +747,11 @@
 				9F067A1CA62636C40A701D9C /* ClaudeHeadlessProvider.swift in Sources */,
 				BA1CC7C393692A6F0E92B75E /* ClaudeIDEBridgeService.swift in Sources */,
 				5A5C3C970350B253F747E628 /* ClaudeIDESelectionState.swift in Sources */,
+				E18E192636EF074D20013D8D /* ClaudeSendPipeline.swift in Sources */,
 				1B24B40C25F526C875AF959A /* ClaudeService.swift in Sources */,
+				99A61D92991F8BAAF3CD48B8 /* ClaudeSessionStore.swift in Sources */,
+				6185F0AC6A919431EC409518 /* ClaudeStreamReducer.swift in Sources */,
+				ED9B026EAC01446C89C012C5 /* ClaudeTranscriptLoader.swift in Sources */,
 				E2B72C2390C87872E4893FA2 /* ClipboardCitationService.swift in Sources */,
 				085341ECE38ECACB0EC9A1E7 /* CodeOutputWorkspace.swift in Sources */,
 				C5F0ACCCC4A8CA7C4127C5C7 /* CodeRunService.swift in Sources */,
@@ -724,8 +761,11 @@
 				14C11C156E76DB228DADD104 /* CodexApprovalCoordinator.swift in Sources */,
 				5EA34618AC4F89063DB1971C /* CodexCurrentRunState.swift in Sources */,
 				F3C43512517FB876D0D24B8A /* CodexCustomInstructionsStore.swift in Sources */,
+				59779F7F88F4D4CF81F3179E /* CodexNotificationRouter.swift in Sources */,
 				AA871B0AA95462FF4259B4D7 /* CodexPromptComposer.swift in Sources */,
+				C4A75134B44546818DD6F8F9 /* CodexSessionPersistence.swift in Sources */,
 				9F4DDDB7665AEAD409CD1C37 /* CodexThreadCoordinator.swift in Sources */,
+				7419E09D2A7FE3F77926475C /* CodexToolEventReducer.swift in Sources */,
 				C93CB667735089A3825C9E48 /* CompilationErrorView.swift in Sources */,
 				0362F30C6A3AB582D90240D1 /* CursorTrackingView.swift in Sources */,
 				7C8E8AF16DD8ABF9EF0C6FAE /* DiffEngine.swift in Sources */,

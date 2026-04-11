@@ -192,9 +192,7 @@ struct PDFKitView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        coordinator.removeMouseUpMonitor()
-        coordinator.removeMagnifyMonitor()
-        coordinator.dismissTextBoxEditing()
+        coordinator.teardown()
     }
 
     func makeCoordinator() -> Coordinator {
@@ -811,6 +809,19 @@ struct PDFKitView: NSViewRepresentable {
 
         func dismissTextBoxEditing() {
             textBoxController.dismissTextBoxEditing()
+        }
+
+        func teardown() {
+            removeMouseUpMonitor()
+            removeMagnifyMonitor()
+            NotificationCenter.default.removeObserver(self)
+            dismissTextBoxEditing()
+            searchController.pdfView = nil
+            annotationController.pdfView = nil
+            annotationController.cursorView = nil
+            textBoxController.pdfView = nil
+            textBoxController.overlay = nil
+            textBoxController.cursorView = nil
         }
 
         private func configureControllers() {
